@@ -53,9 +53,18 @@ product_evidence = false
 revision = "working-tree tests/cwr 2026-11-06"
 command = "python3 tests/cwr/check_evidence.py --status CWR-NNN"
 exit_code = 0
-log = "recomputed_assertions of every attempt record: UNVERIFIED, no independent oracle"
-observed = "No case except CWR-019 has its independent oracle tests/cwr/oracles/CWR_NNN.py. Every registered assertion of CWR-001, CWR-002, CWR-003, CWR-004, CWR-005, CWR-006, CWR-007, CWR-008, CWR-009, CWR-010, CWR-011, CWR-012, CWR-013, CWR-014, CWR-015, CWR-016, CWR-017, CWR-018, CWR-020 is recomputed UNVERIFIED, so none of these cases can be PASS. The drivers report their assertions through tests/cwr/cases/protocol.py, but most do not yet name the Builds, Instances, ledgers and final state an oracle would recompute from."
-assumption = "An oracle rederives each assertion from the ledgers and final state alone, so it needs the drivers to hand those artifacts to the runner first. Resolving the deviation needs, per case, the owning task's driver to declare its Instances through protocol.py and an oracle module that passes the checker's separation audit; tests/cwr/cases/0_2.py fails while a case has neither an oracle nor an entry here."
+log = "recomputed_assertions of attempt records: UNVERIFIED where the case has no independent oracle"
+observed = "CWR-006, CWR-010 and CWR-019 have independent oracles (tests/cwr/oracles/CWR_006.py, tests/cwr/oracles/CWR_010.py and the checker's built-in CWR-019 oracle), and the task 2.1 and 2.4 drivers hand the runner the Instances, ledgers, final states and scenario files those oracles recompute from. No other case has its oracle tests/cwr/oracles/CWR_NNN.py: every registered assertion of CWR-001, CWR-002, CWR-003, CWR-004, CWR-005, CWR-007, CWR-008, CWR-009, CWR-011, CWR-012, CWR-013, CWR-014, CWR-015, CWR-016, CWR-017, CWR-018, CWR-020 is recomputed UNVERIFIED, so none of these cases can be PASS, and their drivers do not yet declare Builds, Instances or final state through tests/cwr/cases/protocol.py."
+assumption = "An oracle rederives each assertion from the ledgers and final state alone, so it needs the driver to hand those artifacts to the runner first. Resolving the deviation needs, per case, the owning task's driver to declare its Instances and scenario files through protocol.py (add_instance, add_final_state), as tests/cwr/cases/2_1.py and tests/cwr/cases/2_4.py do, and an oracle module that passes the checker's separation audit; tests/cwr/cases/0_2.py fails while a case has neither an oracle nor an entry here."
+product_evidence = false
+
+[finding.qualification_campaign_task_identity]
+revision = "working-tree tests/cwr 2026-11-06"
+command = "python3 tests/cwr/check_evidence.py RECORD.json (campaign_matrix_problems)"
+exit_code = 0
+log = "benchmark/results/h1: 60 suite tasks define 55 distinct initial states; every adapter request of every H1, H2 and H3 ledger is in its task's cassette"
+observed = "The ledger header carries no task field. The checker binds a campaign task label to recorded data through the suite: tasks whose benchmark/tasks/<task>/initial.kvx define one state must start from one ledger initial state, tasks whose definitions differ never from the same one, and in replay mode every adapter request must be in the labelled task's cassette for the header seed. Swapping the labels of all Instances of two tasks that call no adapter and define different initial states keeps every rule satisfied, so that relabelling is not detected."
+assumption = "Closing the gap needs the kernel to stamp the task identity (or the digest of the task directory) into the ledger header at instance create, which is a change to crates/cwr-kernel and benchmark/harness outside task 0.2. Until then H1 to H3 task labels are verified as far as initial state and cassettes reach."
 product_evidence = false
 
 # Deviation of the qualification records (task 0.2) from the publication rule of CLAUDE.md.
@@ -570,15 +579,15 @@ assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests
 product_evidence = true
 evidence = "tests/cwr/evidence/CWR-005/20261106T153025Z-1.json"
 
-[progress.attempt_0037_2_1]
-revision = "index seq 37; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:e714b2b863ba365cfd1f565016af664df65498e4e0e019541952c96af3541875; kernel sha256:fc367c48b3045b3f219438fd3442e9fd279b89d062c93c3c3ca9cbe1cc42b855; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
-command = "python3 tests/cwr/qualify.py --case CWR-006 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_1.py)"
+[progress.attempt_0055_2_1]
+revision = "index seq 55; spec sha256:68382b29c9e41fd70d6b529cdd659b6f3f10862fe92688413a951fe01670d61c; compiler sha256:8d4fdf2b4c02f7f88e28304d81cb0b30cb99d52189dabb04d35adc3512132a5a; kernel sha256:88fdf48d1bf1d810b36a510814c27c5e69c98adb36f43b5723ca150d0b87f067; sdk sha256:6b4d789a3414ef8028c7c213d790ed4d09883d2a3d556426912325cae607f279"
+command = "python3 tests/cwr/qualify.py --case CWR-006 (driver: python3 tests/cwr/cases/2_1.py)"
 exit_code = 0
-log = "tests/cwr/evidence/CWR-006/20261106T153351Z-1/2.1/driver.stdout.log"
-observed = "task 2.1 driver for CWR-006 (case scope): exit 0; record outcome FAIL, checker accepted True; 5 of 5 observed assertions PASS for 5 registered; diagnostics: independent oracle: CWR-006.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); independent oracle: CWR-006.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); independent oracle: CWR-006.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist)"
+log = "tests/cwr/evidence/CWR-006/20261106T165333Z-1/2.1/driver.stdout.log"
+observed = "task 2.1 driver for CWR-006 (case scope): exit 0; record outcome FAIL, checker accepted True; 5 of 5 observed assertions PASS for 5 registered; diagnostics: independent checker: claims PASS but the evidence does not support it: Build hash sha256:6b171e07d6a84f8891e934109355654bc66c6b54e3c98633e0e64bc79d916be0 differs from the registered Build(s) none registered; independent checker: Build hash sha256:6b171e07d6a84f8891e934109355654bc66c6b54e3c98633e0e64bc79d916be0 differs from the registered Build(s) none registered"
 assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
 product_evidence = true
-evidence = "tests/cwr/evidence/CWR-006/20261106T153351Z-1.json"
+evidence = "tests/cwr/evidence/CWR-006/20261106T165333Z-1.json"
 
 [progress.attempt_0038_0_2]
 revision = "index seq 38; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:e714b2b863ba365cfd1f565016af664df65498e4e0e019541952c96af3541875; kernel sha256:fc367c48b3045b3f219438fd3442e9fd279b89d062c93c3c3ca9cbe1cc42b855; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
@@ -630,15 +639,15 @@ assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests
 product_evidence = true
 evidence = "tests/cwr/evidence/CWR-009/20261106T153822Z-1.json"
 
-[progress.attempt_0042_2_4]
-revision = "index seq 42; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:8d4fdf2b4c02f7f88e28304d81cb0b30cb99d52189dabb04d35adc3512132a5a; kernel sha256:d99ebe0fe0cff7f520a1b15685a2aa97fcd47ad9caaa076678397558d0fa7818; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
-command = "python3 tests/cwr/qualify.py --case CWR-010 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_4.py)"
+[progress.attempt_0053_2_4]
+revision = "index seq 53; spec sha256:68382b29c9e41fd70d6b529cdd659b6f3f10862fe92688413a951fe01670d61c; compiler sha256:8d4fdf2b4c02f7f88e28304d81cb0b30cb99d52189dabb04d35adc3512132a5a; kernel sha256:88fdf48d1bf1d810b36a510814c27c5e69c98adb36f43b5723ca150d0b87f067; sdk sha256:6b4d789a3414ef8028c7c213d790ed4d09883d2a3d556426912325cae607f279"
+command = "python3 tests/cwr/qualify.py --case CWR-010 (driver: python3 tests/cwr/cases/2_4.py)"
 exit_code = 0
-log = "tests/cwr/evidence/CWR-010/20261106T154419Z-1/2.4/driver.stdout.log"
-observed = "task 2.4 driver for CWR-010 (case scope): exit 0; record outcome FAIL, checker accepted True; 4 of 4 observed assertions PASS for 4 registered; diagnostics: independent oracle: CWR-010.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist); independent oracle: CWR-010.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist); independent oracle: CWR-010.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist)"
+log = "tests/cwr/evidence/CWR-010/20261106T164935Z-1/2.4/driver.stdout.log"
+observed = "task 2.4 driver for CWR-010 (case scope): exit 0; record outcome FAIL, checker accepted True; 4 of 4 observed assertions PASS for 4 registered; diagnostics: independent checker: claims PASS but the evidence does not support it: Build hash sha256:6541bedab375b38fda1137b40239e057227e54947e1e1155961f89757e2f3b2b differs from the registered Build(s) none registered; independent checker: Build hash sha256:6541bedab375b38fda1137b40239e057227e54947e1e1155961f89757e2f3b2b differs from the registered Build(s) none registered"
 assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
 product_evidence = true
-evidence = "tests/cwr/evidence/CWR-010/20261106T154419Z-1.json"
+evidence = "tests/cwr/evidence/CWR-010/20261106T164935Z-1.json"
 
 [progress.attempt_0043_2_5]
 revision = "index seq 43; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:8d4fdf2b4c02f7f88e28304d81cb0b30cb99d52189dabb04d35adc3512132a5a; kernel sha256:d99ebe0fe0cff7f520a1b15685a2aa97fcd47ad9caaa076678397558d0fa7818; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"

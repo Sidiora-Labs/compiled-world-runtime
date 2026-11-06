@@ -15,17 +15,27 @@ working directory or the order the file system lists entries in.
 Process groups. A driver starts kernels, sandbox workers, stub servers and cargo. run_group starts a
 program as the leader of a new session and, however the wait ends (normal exit, timeout, an
 exception or an interrupt), terminates the whole process group: SIGTERM first, SIGKILL after a grace
-period. No child outlives the call.
+period. A descendant that left the group (a driver may start a kernel in a session of its own so it
+can kill the kernel's whole tree) is not reached by the group signal, so on Linux the caller first
+becomes a child subreaper: every orphaned descendant is re-parented to it instead of to init, and
+after the group is reaped run_group kills and waits for every process re-parented to it, repeating
+until none is left. No descendant outlives the call. The caller must not run other children
+concurrently with run_group, since any process re-parented to it during the call is swept. Where the
+subreaper is unavailable (not Linux) only the group is reaped.
 
 The independent checker tests/cwr/check_evidence.py never imports this module.
 """
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import hashlib
 import os
 import signal
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +68,8 @@ HARNESS_TIERS = {"integration", "campaign"}
 SKIP_PARTS = {"target", "__pycache__", ".git", ".ruff_cache", ".pytest_cache"}
 SKIP_SUFFIXES = (".swp", ".swo", ".pyc", ".pyo", ".orig", ".rej", ".tmp", "~")
 GRACE_SECONDS = 5.0
+PR_SET_CHILD_SUBREAPER = 36
+SWEEP_ROUNDS = 100
 
 
 def git_blob_id(data: bytes) -> str:
@@ -152,12 +164,63 @@ def compared_revisions(tier: str | None) -> tuple[str, ...]:
 
 @dataclass
 class GroupResult:
-    """How a process-group run ended: exit code (None on timeout), whether it timed out, output."""
+    """How a process-group run ended: exit code (None on timeout), whether it timed out, output, and
+    how many descendants outside the group were still alive afterwards and were killed."""
 
     returncode: int | None
     timed_out: bool
     stdout: str | bytes | None
     stderr: str | bytes | None
+    orphans_killed: int = 0
+
+
+def become_subreaper() -> bool:
+    """Make orphaned descendants of this process re-parent to it (Linux); False where unsupported."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        return libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0
+    except (OSError, AttributeError):
+        return False
+
+
+def _children() -> list[int]:
+    """Process ids whose parent is this process, read from /proc (empty where /proc is absent)."""
+    me, out = os.getpid(), []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return out
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", "rb") as handle:
+                stat = handle.read().decode("ascii", errors="replace")
+        except OSError:
+            continue
+        fields = stat.rpartition(")")[2].split()
+        if len(fields) > 1 and fields[1].isdigit() and int(fields[1]) == me:
+            out.append(int(name))
+    return sorted(out)
+
+
+def sweep_orphans() -> int:
+    """Kill and wait for every process re-parented to this subreaper, until none is left."""
+    killed = 0
+    for _ in range(SWEEP_ROUNDS):
+        pids = _children()
+        if not pids:
+            break
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGKILL)
+        for pid in pids:
+            with contextlib.suppress(ChildProcessError, OSError):
+                os.waitpid(pid, 0)
+        killed += len(pids)
+    return killed
 
 
 def _signal_group(pgid: int, signum: int) -> bool:
@@ -193,7 +256,9 @@ def run_group(
     stderr=subprocess.PIPE,
     text: bool = False,
 ) -> GroupResult:
-    """Run command as the leader of a new session with stdin closed; the whole group is always reaped."""
+    """Run command as the leader of a new session with stdin closed; the whole group, and on Linux
+    every descendant that left it, is always reaped."""
+    subreaper = become_subreaper()
     process = subprocess.Popen(
         command,
         cwd=cwd,
@@ -204,15 +269,34 @@ def run_group(
         text=text,
         start_new_session=True,
     )
+    # Pipes are drained by threads and the wait is on the process, not on end of file: a descendant
+    # that still holds a pipe can never stall the call, and it is killed below.
+    sinks: dict[str, list] = {}
+    threads = []
+    for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        if stream is not None:
+            sink = sinks[name] = []
+            thread = threading.Thread(
+                target=lambda s=stream, k=sink: k.append(s.read()), daemon=True
+            )
+            thread.start()
+            threads.append(thread)
+    timed_out = False
+    orphans = 0
     try:
-        out, err = process.communicate(timeout=timeout)
-        return GroupResult(process.returncode, False, out, err)
+        process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        reap_group(process)
-        out, err = process.communicate()
-        return GroupResult(None, True, out, err)
+        timed_out = True
     finally:
         reap_group(process)
+        orphans = sweep_orphans() if subreaper else 0
+        for thread in threads:
+            thread.join(timeout=2 * GRACE_SECONDS)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not any(t.is_alive() for t in threads):
+                stream.close()
+    out, err = (sinks[k][0] if sinks.get(k) else None for k in ("stdout", "stderr"))
+    return GroupResult(None if timed_out else process.returncode, timed_out, out, err, orphans)
 
 
 def raise_on_sigterm() -> None:

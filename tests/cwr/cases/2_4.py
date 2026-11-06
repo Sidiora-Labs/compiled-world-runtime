@@ -27,7 +27,6 @@ passes. Honours CARGO_TARGET_DIR (default: the workspace target dir). Python 3.1
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
@@ -67,19 +66,18 @@ class Results:
 
 R = Results()
 OBS = protocol.Observer("2.4", protocol.ok_bad(R))
+# What the independent CWR-010 oracle recomputes from: per crash scenario the Instance and the publish
+# stub's own request log (at the crash and at the end), and the 40-turn replay pair. Handed to the
+# runner as the attempt-level final state cwr010-scenarios.json next to the Instances' ledgers.
+EVIDENCE: dict = {"format": "cwr.cwr010-scenarios", "boundaries": {}, "replay": None}
+DECLARED: list[tuple[str, Path | None]] = []
 
 
 def run(cmd, env: dict | None = None, timeout: int = TIMEOUT, **kw) -> subprocess.CompletedProcess:
+    """Run a cwr command in a session of its own; protocol.run kills the group if it outlives the
+    driver, times out or is interrupted."""
     full = None if env is None else {**os.environ, **env}
-    return subprocess.run(
-        [str(c) for c in cmd],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=full,
-        start_new_session=True,
-        **kw,
-    )
+    return protocol.run(cmd, timeout=timeout, env=full, **kw)
 
 
 def target_dir() -> Path:
@@ -279,12 +277,11 @@ class World:
         return p.returncode, envl, p.stderr
 
     def spawn(self, iid: str, script: str, **kw) -> subprocess.Popen:
-        return subprocess.Popen(
-            [str(c) for c in self.turn_cmd(iid, script, **kw)],
+        return protocol.spawn(
+            self.turn_cmd(iid, script, **kw),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=True,
         )
 
     def ledger_path(self, iid: str, home: Path | None = None) -> Path:
@@ -311,9 +308,7 @@ class World:
 
 
 def kill_group(p: subprocess.Popen) -> None:
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(p.pid, signal.SIGKILL)
-    p.wait(30)
+    protocol.kill_group(p)
 
 
 def wait_for(pred, limit: float = 30.0, step: float = 0.02) -> bool:
@@ -460,7 +455,8 @@ def boundary(wd: World, label: str) -> None:
         pub.schedule([])
     crashed_raw = wd.ledger_path(iid).read_bytes()
     crashed = wd.ledger(iid)
-    sent_at_crash = len(pub.log(iid))
+    log_at_crash = pub.log(iid)
+    sent_at_crash = len(log_at_crash)
     R.check(
         "8.3", killed, f"[{label}] kernel process SIGKILLed mid-turn ({time.monotonic() - t0:.1f}s)"
     )
@@ -546,6 +542,14 @@ def boundary(wd: World, label: str) -> None:
         want_via, want = "store", (got or {}).get("code") == "UNAVAILABLE"
     else:
         want_via, want = "store", ("ok" in (got or {}))
+    EVIDENCE["boundaries"][label] = {
+        "instance": iid,
+        "interrupted_turn": n,
+        "retry_turn": n + 1,
+        "stub_at_crash": log_at_crash,
+        "stub_final": pub.log(iid),
+    }
+    DECLARED.append((iid, None))
     R.check(
         "8.3",
         rc2 == 0 and env2 and env2["status"] == "ok" and via == want_via and want and total == 1,
@@ -892,6 +896,16 @@ def replay_checks(wd: World) -> None:
         1 for a, b in zip(orig, replayed, strict=False) if a["host_ts"] != b["host_ts"]
     )
     _new_state, new_digest = wd.state(new, home=into) if new else (None, "")
+    if new:
+        EVIDENCE["replay"] = {
+            "original": iid,
+            "replayed": new,
+            "turns": REPLAY_TURNS,
+            "stub_requests_before": pub_before + search_before,
+            "stub_requests_after": len(wd.stubs["publish"].log()) + len(wd.stubs["search"].log()),
+            "stub_requests_of_replayed": wd.stubs["publish"].log(new) + wd.stubs["search"].log(new),
+        }
+        DECLARED.extend([(iid, None), (new, into)])
     no_traffic = (
         len(wd.stubs["publish"].log()) == pub_before
         and len(wd.stubs["search"].log()) == search_before
@@ -1146,6 +1160,30 @@ def message_replay(wd: World) -> None:
     )
 
 
+def declare_evidence(wd: World) -> None:
+    """Hand the scenario Instances (ledger and `cwr instance state`) and the scenario map to the
+    runner; outside the runner the observer copies nothing."""
+    out = wd.scratch / "evidence"
+    out.mkdir(exist_ok=True)
+    for iid, home in DECLARED:
+        ledger = wd.ledger_path(iid, home)
+        header = wd.ledger(iid, home)[0]
+        p = run([wd.cwr, "instance", "state", iid, "--home", home or wd.home])
+        state = out / f"{iid}.state.json"
+        state.write_text(p.stdout)
+        OBS.add_instance(
+            iid,
+            ledger,
+            seed=header["seed"],
+            tail_size=header["tail_size"],
+            build=header["build"],
+            final_state=state if p.returncode == 0 else None,
+        )
+    scenarios = out / "cwr010-scenarios.json"
+    scenarios.write_text(canonical(EVIDENCE) + "\n")
+    OBS.add_final_state(scenarios, "cwr010-scenarios.json")
+
+
 def main() -> int:
     cwr, tests_ok, tests_ev = build_binaries()
     R.check("8.3", tests_ok, tests_ev)
@@ -1173,6 +1211,7 @@ def main() -> int:
         with OBS.observe("CWR-010.a4", match="replay|final state digest"):
             replay_checks(wd)
             message_replay(wd)
+        declare_evidence(wd)
     finally:
         for s in stubs.values():
             s.stop()

@@ -702,8 +702,9 @@ def sanitise(manifest: dict, task: str) -> tuple[dict, list[str]]:
 
 def inside(base: Path, rel) -> Path | None:
     """The regular file rel names inside base, or None. Absolute paths, `..`, a symbolic link at any
-    component and the runner's own file names are refused, so a driver can never make the runner copy
-    a file from outside its evidence directory into published evidence."""
+    component, a file with more than one hard link and the runner's own file names are refused, so a
+    driver can never make the runner copy a file from outside its evidence directory (linked in by
+    name or by inode) into published evidence."""
     if not isinstance(rel, str) or not rel:
         return None
     pure = PurePosixPath(rel)
@@ -713,12 +714,12 @@ def inside(base: Path, rel) -> Path | None:
     for part in pure.parts:
         path = path / part
         try:
-            mode = os.lstat(path).st_mode
+            info = os.lstat(path)
         except OSError:
             return None
-        if stat.S_ISLNK(mode):
+        if stat.S_ISLNK(info.st_mode):
             return None
-    if not stat.S_ISREG(mode):
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         return None
     try:
         if not path.resolve(strict=True).is_relative_to(base.resolve(strict=True)):

@@ -11,8 +11,20 @@ prints one line per assertion of every registered subset the task owns:
 
 An assertion passes only when at least one check was attributed to it and every attributed check
 passed. A registered assertion that no block observed is printed as FAIL, so a driver always reports
-its whole subset and a mapping gap can never pass silently. `observer.blocked(reason)` prints a
-`BLOCKED <reason>` line for a missing resource.
+its whole subset and a mapping gap can never pass silently. A failing check that the driver attributes
+to no assertion fails every assertion of the subset: a failure the driver cannot place never leaves
+an assertion PASS.
+
+`observer.blocked(reason)` prints a `BLOCKED <reason>` line for a missing resource. A blocked driver
+reports only the assertions it observed; the ones it could not reach are left out, so the runner sees
+them missing and records BLOCKED. An observed FAIL (or an unattributed failing check) still makes the
+attempt FAIL: FAIL is decided before BLOCKED.
+
+Process groups. A driver that must signal a whole process tree (a kernel and its sandbox workers)
+starts it with `protocol.run` or `protocol.spawn`, which lead a new session and remember its group
+while it has members. Creating an Observer turns SIGTERM into SystemExit and registers an exit hook,
+so when the runner terminates the driver its `finally` blocks run and every remembered group is
+killed; `protocol.run` also kills its group when the call times out or is interrupted.
 
 The observer also writes $CWR_EVIDENCE_DIR/attempt.json from the Builds, Instances and final state a
 driver declares: ledgers and final state files are copied into the evidence directory and named by
@@ -25,10 +37,14 @@ imports the runner, the checker or the product.
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
+import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -44,6 +60,86 @@ DIAGNOSTIC_LIMIT = 1500
 # outcome is the second element of its key (for example (clause, True) for a passing check), or an
 # (ok, label) pair.
 Snapshot = Callable[[], dict]
+
+# Process groups started by run() or spawn() and not yet known to be gone.
+_GROUPS: set[int] = set()
+_CLEANUP_INSTALLED = False
+
+
+def _kill_group(pgid: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(pgid, signal.SIGKILL)
+
+
+def reap_groups() -> None:
+    """SIGKILL every process group started by run() or spawn() that may still have members."""
+    for pgid in sorted(_GROUPS):
+        _kill_group(pgid)
+    _GROUPS.clear()
+
+
+def install_cleanup() -> None:
+    """Make SIGTERM raise SystemExit (so finally blocks run) and kill remembered groups at exit."""
+    global _CLEANUP_INSTALLED
+    if _CLEANUP_INSTALLED:
+        return
+
+    def terminated(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminated)
+    atexit.register(reap_groups)
+    _CLEANUP_INSTALLED = True
+
+
+def spawn(command, **kwargs) -> subprocess.Popen:
+    """Start command as the leader of a new session whose whole group is killed when the driver exits
+    or is terminated; the caller may signal it with os.killpg(process.pid, ...)."""
+    install_cleanup()
+    process = subprocess.Popen([str(c) for c in command], start_new_session=True, **kwargs)
+    _GROUPS.add(process.pid)
+    return process
+
+
+def kill_group(process: subprocess.Popen, wait: float = 30) -> None:
+    """SIGKILL the whole group of a process started by spawn() and wait for its leader."""
+    _kill_group(process.pid)
+    process.wait(wait)
+    _GROUPS.discard(process.pid)
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def run(command, *, timeout: float, env: dict | None = None, **kwargs):
+    """subprocess.run with captured text output for a program that leads its own session. On a
+    timeout or an interruption the whole group is killed; after a normal return a group that still
+    has members stays remembered and is killed when the driver exits."""
+    process = spawn(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        **kwargs,
+    )
+    finished = False
+    try:
+        out, err = process.communicate(timeout=timeout)
+        finished = True
+    finally:
+        if not finished:
+            _kill_group(process.pid)
+            process.kill()
+            process.communicate()
+        if not _group_alive(process.pid):
+            _GROUPS.discard(process.pid)
+    return subprocess.CompletedProcess(process.args, process.returncode, out, err)
 
 
 def registered_subsets(task: str, registry: Path = REGISTRY) -> dict[str, list[str]]:
@@ -92,6 +188,9 @@ class Observer:
         self.snapshot = snapshot
         self.subsets = registered_subsets(task, registry)
         self.checks: dict[str, list[tuple[bool, str]]] = {}
+        # (snapshot key, position) of every recorded check attributed to some assertion
+        self.placed: set[tuple] = set()
+        self.blocked_reason: str | None = None
         self.qualifying = os.environ.get("CWR_QUALIFY") == "1"
         directory = os.environ.get("CWR_EVIDENCE_DIR")
         self.evidence = Path(directory) if self.qualifying and directory else None
@@ -100,16 +199,18 @@ class Observer:
         self.final_states: list[str] = []
         self.builds: list[str] = []
         self.flags: list[str] = []
+        install_cleanup()
 
     # ------------------------------------------------------------------ attribution
 
     def _lengths(self) -> dict:
         return {key: len(items) for key, items in self.snapshot().items()}
 
-    def _since(self, before: dict) -> list[tuple[bool, str]]:
+    def _since(self, before: dict) -> list[tuple[tuple, bool, str]]:
         out = []
         for key, items in self.snapshot().items():
-            out += [_check(key, item) for item in items[before.get(key, 0) :]]
+            start = before.get(key, 0)
+            out += [((key, start + n), *_check(key, item)) for n, item in enumerate(items[start:])]
         return out
 
     @contextmanager
@@ -125,9 +226,10 @@ class Observer:
         finally:
             new = self._since(before)
             if match is not None:
-                new = [(ok, label) for ok, label in new if re.search(match, label)]
+                new = [(where, ok, label) for where, ok, label in new if re.search(match, label)]
+            self.placed.update(where for where, _, _ in new)
             for ident in assertions:
-                self.checks.setdefault(ident, []).extend(new)
+                self.checks.setdefault(ident, []).extend((ok, label) for _, ok, label in new)
 
     def attribute(self, assertion: str, ok: bool, label: str) -> None:
         """Attribute one observation directly (for a check that is not recorded per clause)."""
@@ -147,22 +249,44 @@ class Observer:
             key_clause = key[0] if isinstance(key, tuple) else key
             if clause is not None and key_clause != clause:
                 continue
-            for item in items:
+            for position, item in enumerate(items):
                 ok, label = _check(key, item)
                 if match is None or re.search(match, label):
                     picked.append((ok, label))
+                    self.placed.add((key, position))
         for ident in assertions:
             self.checks.setdefault(ident, []).extend(picked)
 
+    def unplaced_failures(self) -> list[str]:
+        """Labels of failing recorded checks that no observe block or claim attributed to an assertion."""
+        out = []
+        for key, items in self.snapshot().items():
+            for position, item in enumerate(items):
+                ok, label = _check(key, item)
+                if not ok and (key, position) not in self.placed:
+                    clause = key[0] if isinstance(key, tuple) else key
+                    out.append(f"{clause}: {label}")
+        return out
+
     def outcomes(self) -> dict[str, tuple[bool, str]]:
-        """assertion id -> (passed, diagnostic) for every assertion of the task's registered subsets."""
+        """assertion id -> (passed, diagnostic) for every assertion of the task's registered subsets.
+        After blocked(), an assertion no check reached is left out (the runner sees it missing)."""
         out = {}
+        unplaced = self.unplaced_failures()
         for case, keys in sorted(self.subsets.items()):
             for key in keys:
                 ident = f"{case}.{key}"
                 checks = self.checks.get(ident, [])
                 failed = [label for ok, label in checks if not ok]
-                if not checks:
+                if unplaced:
+                    out[ident] = (
+                        False,
+                        f"{len(unplaced)} failing checks of the task {self.task} driver are "
+                        "attributed to no assertion: " + " | ".join(unplaced),
+                    )
+                elif not checks and self.blocked_reason is not None:
+                    continue
+                elif not checks:
                     out[ident] = (False, f"no check of the task {self.task} driver observed it")
                 elif failed:
                     out[ident] = (
@@ -258,15 +382,18 @@ class Observer:
     # ------------------------------------------------------------------ protocol lines
 
     def blocked(self, reason: str) -> None:
+        """Report a missing resource; emit() then leaves out the assertions no check reached."""
+        self.blocked_reason = " ".join(str(reason).split()) or "unspecified resource"
         if self.qualifying:
-            print(f"BLOCKED {reason}", flush=True)
+            print(f"BLOCKED {self.blocked_reason}", flush=True)
 
     def emit(self) -> bool:
-        """Print the ASSERT lines (under the runner) and write attempt.json; True when all passed."""
+        """Print the ASSERT lines (under the runner) and write attempt.json; True when every
+        assertion passed and the driver was not blocked."""
         outcomes = self.outcomes()
         if self.qualifying:
             self._write_attempt()
             for ident, (ok, diagnostic) in outcomes.items():
                 line = " ".join(diagnostic.split())[:DIAGNOSTIC_LIMIT]
                 print(f"ASSERT {ident} {'PASS' if ok else 'FAIL'} {line}", flush=True)
-        return all(ok for ok, _ in outcomes.values())
+        return self.blocked_reason is None and all(ok for ok, _ in outcomes.values())

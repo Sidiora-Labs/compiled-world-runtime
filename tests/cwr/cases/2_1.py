@@ -88,6 +88,12 @@ class Results:
 
 R = Results()
 OBS = protocol.Observer("2.1", protocol.ok_bad(R))
+# What the independent CWR-006 oracle recomputes from, handed to the runner as the attempt-level final
+# state cwr006-scenarios.json: the primitive results each scenario printed, the snapshot file, the
+# strace of one turn, the torn ledger and the refusals. Instances are copied as they are when kept.
+EVIDENCE: dict = {"format": "cwr.cwr006-scenarios"}
+EVIDENCE_FILES: dict[str, bytes] = {}
+KEPT: list[tuple[str, Path, Path | None]] = []
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -279,6 +285,41 @@ class Kernel:
         if p.returncode != 0:
             raise RuntimeError(f"tail failed: {p.stderr}")
         return p.stdout.splitlines()
+
+
+def keep(k: Kernel, iid: str) -> None:
+    """Copy an Instance's ledger and `cwr instance state` now, for the runner: the Instance may change
+    or be destroyed later in the scenario."""
+    out = k.work / "evidence"
+    out.mkdir(exist_ok=True)
+    ledger = out / f"{iid}.jsonl"
+    ledger.write_bytes(k.ledger_bytes(iid))
+    st = k("state", iid)
+    state = out / f"{iid}.state.json" if st.returncode == 0 else None
+    if state is not None:
+        state.write_text(st.stdout)
+    KEPT.append((iid, ledger, state))
+
+
+def declare_evidence(k: Kernel) -> None:
+    """Name the kept Instances and the scenario files to the runner (nothing is written outside it)."""
+    out = k.work / "evidence"
+    out.mkdir(exist_ok=True)
+    for iid, ledger, state in KEPT:
+        header = json.loads(ledger.read_text().splitlines()[0])
+        OBS.add_instance(
+            iid,
+            ledger,
+            seed=header["seed"],
+            tail_size=header["tail_size"],
+            build=header["build"],
+            final_state=state,
+        )
+    for name, data in sorted(EVIDENCE_FILES.items()):
+        (out / name).write_bytes(data)
+        OBS.add_final_state(out / name, name)
+    (out / "cwr006-scenarios.json").write_text(canonical(EVIDENCE) + "\n")
+    OBS.add_final_state(out / "cwr006-scenarios.json", "cwr006-scenarios.json")
 
 
 def strip_host(rec: dict) -> dict:
@@ -477,6 +518,12 @@ def scenario_clock_and_host_time(k: Kernel, base: Path, ticks: Path, ticks_hash:
     b = k.create("--build", str(base), "--seed", "11")
     time.sleep(1.2)
     lb1, rb1 = k.probe(b, *ALL_FACILITIES)
+    EVIDENCE["host_time"] = {
+        "instances": [a, b],
+        "probes": {a: {"calls": la1, "result": ra1}, b: {"calls": lb1, "result": rb1}},
+    }
+    keep(k, a)
+    keep(k, b)
     same = (
         [x["returned"] for x in la1] == [x["returned"] for x in lb1]
         and ra1["returned"] == rb1["returned"]
@@ -570,6 +617,9 @@ def scenario_rng(k: Kernel, base: Path, base_hash: str) -> dict:
     lb, _ = k.probe(b, *seq)
     la2, _ = k.probe(a, "world.random", "world.random")
     lb2, _ = k.probe(b, "world.random", "world.random")
+    EVIDENCE["rng"] = {"pair": [a, b], "calls": {a: la + la2, b: lb + lb2}}
+    keep(k, a)
+    keep(k, b)
     da, db = draws_of(la) + draws_of(la2), draws_of(lb) + draws_of(lb2)
     R.check(
         "6.6",
@@ -617,6 +667,8 @@ def scenario_rng(k: Kernel, base: Path, base_hash: str) -> dict:
     )
     d = k.create(base_hash, "--seed", str(seed + 1))
     ld, _ = k.probe(d, *seq)
+    EVIDENCE["rng"]["other_seed"] = {"instance": d, "calls": ld}
+    keep(k, d)
     R.check(
         "6.6",
         draws_of(ld) != draws_of(la) and draws_of(ld) == pcg_draws(seed + 1, 3),
@@ -767,6 +819,13 @@ def scenario_ledger(
             ok = ok and pending == 0 and synced_since_out >= 1
             synced_since_out = 0
     seq = "".join(events)
+    EVIDENCE["durability"] = {
+        "instance": iid,
+        "returncode": p.returncode,
+        "stdout": [json.loads(ln) for ln in p.stdout.splitlines() if ln.strip().startswith("{")],
+    }
+    EVIDENCE_FILES["cwr006-strace.txt"] = st.read_bytes() if st.exists() else b""
+    EVIDENCE_FILES["cwr006-durability-ledger.jsonl"] = k.ledger_bytes(iid)
     R.check(
         "8.1",
         p.returncode == 0 and ok and outs == 4 and seq.count("L") == 4,
@@ -795,6 +854,12 @@ def scenario_ledger(
     refused["create --from-snapshot"] = k("create", base_hash, "--from-snapshot", str(snap_file))
     refused["replay"] = k("replay", iid)
     rc = {c: (p.returncode, "truncated" in p.stderr) for c, p in refused.items()}
+    EVIDENCE["truncation"] = {
+        "instance": iid,
+        "refusals": {c: [p.returncode, p.stderr.strip()[-300:]] for c, p in refused.items()},
+        "after_refusals_sha256": "sha256:" + hashlib.sha256(k.ledger_bytes(iid)).hexdigest(),
+    }
+    EVIDENCE_FILES["cwr006-torn.jsonl"] = torn
     R.check(
         "8.1",
         all(r[0] != 0 and r[1] for r in rc.values())
@@ -809,6 +874,9 @@ def scenario_ledger(
     rec = json.loads(rp.stdout) if rp.returncode == 0 else {}
     retained = (k.dir(iid) / rec["retained"]).read_bytes() if rec.get("retained") else b""
     after = k("ledger", iid)
+    EVIDENCE["truncation"]["restore"] = {"returncode": rp.returncode, "report": rec}
+    EVIDENCE_FILES["cwr006-retained.bin"] = retained
+    keep(k, iid)
     R.check(
         "8.1",
         rp.returncode == 0
@@ -949,6 +1017,26 @@ def scenario_snapshots(k: Kernel, base: Path, base_hash: str, work: Path) -> Non
     )
     branch2, res2 = k.probe(iid, *probe_seq)
     branch2b, res2b = k.probe(iid, "world.random", "world.now")
+    restored = k("state", iid)
+    EVIDENCE["snapshot"] = {
+        "instance": iid,
+        "snapshot": s1,
+        "restore": rec,
+        "state_after_restore": json.loads(restored.stdout) if restored.returncode == 0 else None,
+        "branch_before_restore": {
+            "calls": branch1 + branch1b,
+            "worlds": [res1["world"], res1b["world"]],
+        },
+        "branch_after_restore": {
+            "calls": branch2 + branch2b,
+            "worlds": [res2["world"], res2b["world"]],
+        },
+    }
+    EVIDENCE_FILES["cwr006-snapshot.json"] = sp.read_bytes()
+    EVIDENCE_FILES["cwr006-abandoned.jsonl"] = (
+        (d / rec["retained"]).read_bytes() if rec.get("retained") else b""
+    )
+    keep(k, iid)
     R.check(
         "8.2",
         [x["returned"] for x in branch2] == [x["returned"] for x in branch1]
@@ -1191,6 +1279,7 @@ def main() -> int:
         with OBS.observe("CWR-006.a1", match="restore|snapshot"):
             scenario_snapshots(k, base, base_hash, work)
         scenario_tail(k, base_hash)
+        declare_evidence(k)
     except Exception as e:  # a crash is a failure of every clause not yet judged, with the reason
         import traceback
 

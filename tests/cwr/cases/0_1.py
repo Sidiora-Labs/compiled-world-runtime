@@ -7,11 +7,13 @@ Exercises clauses 13.1, 13.5 and 14.1 against the real validator
 (spec/cwr/tools/validate_spec.py), run as a subprocess:
 
 * the real pack validates (exit 0, PASS report, 14 requirements / 76 clauses /
-  21 tasks / 20 cases, every task pending, every case UNRUN);
+  21 tasks / 20 cases; at the design stage every task pending and every case UNRUN,
+  at the implementation stage task statuses equal an independent recount);
 * --render leaves implementation-plan.md and traceability.md byte-identical;
 * every local markdown link in the pack resolves (independent scan);
 * the validator executes no compiler, kernel, model or driver: an audit hook
-  records every process, socket, exec, import and file-open event;
+  records every process, socket, exec, import and file-open event (from the
+  implementation stage on only the evidence checker and its vetted oracles run);
 * tampered copies of the pack (case status, task status, stale views, broken
   coverage, broken references, broken examples, broken links, malformed KVX)
   make the validator exit nonzero with the expected diagnostic.
@@ -190,8 +192,26 @@ def local_links(pack: Path) -> tuple[int, list[str]]:
 
 
 def fresh_copy(work: Path, name: str) -> Path:
+    """A temporary copy of the pack reset to the design stage (every task pending, every case UNRUN,
+    only the authoring entry in qualification.kvx) with its derived views rendered, so the tamper
+    matrix starts from a valid design-stage pack whatever stage the checkout has reached."""
     root = work / name
     shutil.copytree(PACK, root / PACK_REL, ignore=shutil.ignore_patterns("__pycache__", REPORT))
+    spec = root / PACK_REL / "spec.kvx"
+    text = spec.read_text()
+    if independent_census(text)["stage"] != "design":
+        text = set_key(set_key(text, "meta", "stage", "design"), "meta", "status", "pending")
+        for ident in re.findall(r"^\[task\.(\d+\.\d+)\]", text, re.M):
+            text = set_key(text, f"task.{ident}", "status", "pending")
+        for ident in re.findall(r"^\[case\.(CWR-\d{3})\]", text, re.M):
+            text = set_key(text, f"case.{ident}", "status", "UNRUN")
+        spec.write_text(text)
+        qual = root / PACK_REL / "qualification.kvx"
+        body = qual.read_text()
+        keep = re.search(r"^\[progress\.authoring_validation\]\n.*?(?=^\[|\Z)", body, re.M | re.S)
+        head = "".join(ln for ln in body.splitlines(keepends=True)[:2] if ln.startswith("#"))
+        qual.write_text(head + "\n" + (keep.group(0).rstrip("\n") + "\n" if keep else ""))
+        run_validator(root, "--render")
     return root
 
 
@@ -253,13 +273,24 @@ def main() -> int:
         statuses = written.get("task_statuses")
         case_status = sorted({c.get("status") for c in census["case_map"].values()})
         task_status = sorted({t.get("status") for t in census["task_map"].values()})
-        ok = (
-            census["stage"] == "design"
-            and statuses == {"pending": 21}
-            and task_status == ["pending"]
-            and case_status == ["UNRUN"]
-            and written.get("product_qualification") == "UNRUN"
-        )
+        recount = {}
+        for task in census["task_map"].values():
+            recount[task.get("status")] = recount.get(task.get("status"), 0) + 1
+        if census["stage"] == "design":
+            ok = (
+                statuses == {"pending": 21}
+                and task_status == ["pending"]
+                and case_status == ["UNRUN"]
+                and written.get("product_qualification") == "UNRUN"
+            )
+        else:
+            # implementation stage: the report's task statuses equal an independent recount, and
+            # every case status is an outcome the registry can back
+            ok = (
+                census["stage"] == "implementation"
+                and statuses == recount
+                and set(case_status) <= {"UNRUN", "PASS", "FAIL", "BLOCKED"}
+            )
         results.add(
             "13.1",
             ok,
@@ -278,6 +309,24 @@ def main() -> int:
                 for p in {sys.base_prefix, sys.prefix, os.path.dirname(os.__file__)}
             )
             validator_path = str((REPO / VALIDATOR_REL).resolve())
+            # From the implementation stage on the validator has the independent evidence checker
+            # verify every record it relies on; the checker and its vetted case oracles run, and
+            # they read only the evidence, the registry and the campaign suite inputs. No product
+            # code (crates, sdk, benchmark harness) may run or be read.
+            implementation = census["stage"] != "design"
+            checker_code = (
+                {str((REPO / "tests/cwr/check_evidence.py").resolve())} if implementation else set()
+            )
+            oracle_dir = str((REPO / "tests/cwr/oracles").resolve()) + os.sep
+            evidence_inputs = tuple(
+                str((REPO / rel).resolve()) + suffix
+                for rel, suffix in (
+                    ("tests/cwr", os.sep),
+                    ("benchmark/suite.kvx", ""),
+                    ("benchmark/tasks", os.sep),
+                    ("benchmark/cassettes/suite", os.sep),
+                )
+            )
             bad_exec = sorted(
                 {
                     f
@@ -286,16 +335,24 @@ def main() -> int:
                         f.startswith("<")
                         or str(Path(f).resolve()) == validator_path
                         or str(Path(f).resolve()).startswith(stdlib_dirs)
+                        or str(Path(f).resolve()) in checker_code
+                        or (implementation and str(Path(f).resolve()).startswith(oracle_dir))
                     )
                 }
             )
+            bad_imports = [m for m in bad_imports if not (implementation and m == "check_evidence")]
             pack = str(PACK.resolve())
             repo = str(REPO.resolve())
             outside = sorted(
                 {
                     p
                     for p in audit["reads"]
-                    if p.startswith(repo + os.sep) and not p.startswith(pack + os.sep)
+                    if p.startswith(repo + os.sep)
+                    and not p.startswith(pack + os.sep)
+                    and not (
+                        implementation
+                        and (p == evidence_inputs[1] or p.startswith(evidence_inputs))
+                    )
                 }
             )
             writes = {Path(p).resolve() for p in audit["writes"]}

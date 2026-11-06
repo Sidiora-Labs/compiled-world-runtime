@@ -3,8 +3,8 @@
 
 # Qualification: registry, runner, checker and evidence
 
-Status: only CWR-019 has its independent oracle, so no other case can PASS yet; the gap is the
-recorded deviation `finding.qualification_oracles_missing` in
+Status: only CWR-006, CWR-010 and CWR-019 have independent oracles, so no other case can PASS yet;
+the gap is the recorded deviation `finding.qualification_oracles_missing` in
 [qualification.kvx](../../spec/cwr/qualification.kvx), and [registry.kvx](registry.kvx) holds the
 current status of every case.
 
@@ -25,6 +25,7 @@ never trusts the driver's own verdict. The contract is
 | `closure.py` | Assembles release closure from accepted records and lists every item that blocks a release claim |
 | `runner_support.py` | Revision digests and process-group execution shared by the runner and closure; the checker never imports it |
 | `cases/protocol.py` | The driver side of the protocol: attributes driver checks to registered assertions, prints `ASSERT` and `BLOCKED` lines and writes `attempt.json` |
+| `oracles/CWR_NNN.py` | The independent oracle of a case: `recompute(ctx)` rederives every registered assertion from the record's verified ledgers and final state; the checker vets it (standard library only, no process, network or file access) before loading it |
 | `evidence.schema.json` | The schema every attempt record must match, with every field required and nothing extra |
 | `cases/W_N.py` | One driver per specification task, run as `python3 tests/cwr/cases/W_N.py` from the repository root |
 | `evidence/` | Attempt records, their artifacts and the hash-chained attempt index `evidence/index.jsonl` |
@@ -78,18 +79,24 @@ BLOCKED <missing resource>
 Every driver uses [cases/protocol.py](cases/protocol.py). It wraps each group of checks in
 `observe("CWR-NNN.aK")` and prints one `ASSERT` line for every assertion of the subsets the registry
 assigns to the task. An assertion passes only when at least one check was attributed to it and all of
-them passed; an assertion no check observed is printed FAIL.
+them passed; an assertion no check observed is printed FAIL. A failing check the driver attributes to
+no assertion fails every assertion of the subset. After `blocked(reason)` the driver prints only the
+assertions it observed, so the ones the missing resource kept it from reaching stay missing.
 
 A driver that touched Builds or Instances writes `$CWR_EVIDENCE_DIR/attempt.json`, naming the Build
 hashes, world, cassette digest, gateway mode, sandbox, and for each Instance its seed, arm, task,
 ledger and final state. Ledgers and final states are regular files inside the evidence directory. The
-runner refuses symbolic links and its own file names. Experimental flags are named as the kernel
+runner refuses symbolic links, files with more than one hard link and its own file names. Experimental flags are named as the kernel
 stamps them on ledger records, `x-<flag>`.
 
 The outcome is FAIL when any assertion was observed or recomputed FAIL, a driver timed out, or a
 driver exited non-zero without a `BLOCKED` line. It is BLOCKED only when nothing failed and registered
 assertions of the blocked driver are missing. Each driver leads its own process group, which the runner
-terminates when the driver exits, times out or the runner is interrupted.
+terminates when the driver exits, times out or the runner is interrupted. On Linux the runner is also a
+child subreaper: a process a driver started in a session of its own is re-parented to the runner when
+its parent dies and is killed with the rest. A driver that signals a whole process tree starts it with
+`protocol.run` or `protocol.spawn`, and the observer turns SIGTERM into a normal exit so the driver's
+cleanup runs.
 
 ## What makes a PASS
 
@@ -105,7 +112,10 @@ terminates when the driver exits, times out or the runner is interrupted.
 - A campaign PASS also needs the complete arm matrix and a registered pre-registration. Hypothesis and
   arm come from each ledger header arm (`H1/drift-3`), compared with the registry matrix in lower case
   with only letters, digits and `-`. A task label must be a task of `benchmark/suite.kvx` (`u<n>-...`
-  for H4) and must match the ledger header's initial-state digest; two tasks never share one.
+  for H4) and must match the ledger header's initial-state digest. Tasks whose
+  `benchmark/tasks/<task>/initial.kvx` define the same state must start from one ledger initial state,
+  tasks whose definitions differ never from the same one, and in replay mode every adapter request in
+  the ledger must be in the cassette of the labelled task and seed.
 
 A driver's exit code or `ASSERT` line alone never makes a PASS. A task-scope (component) record never
 changes a case's status.

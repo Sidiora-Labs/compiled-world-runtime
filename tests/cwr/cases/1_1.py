@@ -15,6 +15,11 @@ Exercises clauses 2.1, 2.2, 3.1, 3.5 and 4.1 against the real implementation. It
   duplicate primitive, missing module) and further fixtures so that every lint code listed in
   spec/cwr/compiler.md section 3 (CWR-V001 through CWR-M001) is triggered at least once,
   each asserted for its exact code, stage, exit code and location;
+* the routes around lib/ closure (clause 3.5): dynamic and reflective builtins, re-exported host
+  modules, interpreter dunders, Unicode spellings Python NFKC-normalises to a banned name,
+  string-evaluating APIs of the permitted modules (typing.get_type_hints, ForwardRef,
+  dataclasses._create_fn), private module internals and class factories, each refused at its
+  own line, with the main escapes first proven real by running them in an isolated interpreter;
 * `cwr build --out <scratch>` over the clean source (all eight stages pass in order and the
   Build is written under the scratch root) and over a defect only contract tests can see (the
   run stops at contract_tests, later stages are not_run and nothing is written). Every build
@@ -1088,6 +1093,111 @@ def imports() -> None:
         f"dataclasses.inspect, re._parser, setattr, breakpoint, __loader__): {len(flagged)} lines refused "
         f"as CWR-L001"
         + (f" MISSING lines {[evasions[i - first] for i in missing]}" if missing else ""),
+    )
+    # Second-generation routes (fix round 2): Unicode spellings that Python NFKC-normalises to
+    # a banned name, string-evaluating APIs of the permitted modules, private internals of the
+    # permitted modules, and class factories whose annotation keys @dataclass would exec.
+    escapes = [
+        '_n1 = \uff45\uff58\uff45\uff43("import os")',
+        '_n2 = \uff45val("1")',
+        "import \uff4f\uff53 as _n3",
+        "_n4 = typing.\uff53\uff59\uff53",
+        '_n5 = \uff47\uff45\uff54\uff41\uff54\uff54\uff52(typing, "sys")',
+        "_s1 = typing.get_type_hints(_f)",
+        "from typing import get_type_hints as _s2",
+        "_s3 = typing.ForwardRef(\"__import__('os')\")",
+        "_s4 = typing.get_args(typing.List[\"__import__('os').getpid\"])[0]._evaluate(None, None, recursive_guard=frozenset())",
+        "_s5 = typing._eval_type",
+        '_s6 = dataclasses._create_fn("g", [], ["import os"], globals={})',
+        "from dataclasses import _create_fn as _s7",
+        "_p1 = json._default_decoder",
+        "_p2 = re._compile",
+        "from collections import _count_elements as _p3",
+        '_c1 = type("X", (), {"__annotations__": {"a=1": int}})',
+        '_c2 = typing.TypedDict("T", {"a=1": int})',
+        "_c3 = collections.abc.ABCMeta",
+        "_c4 = typing.NamedTupleMeta",
+        "class _C5(metaclass=_m): pass",
+        "from typing import TypedDict as _c6",
+        "_c7 = TypedDict",
+        "from typing import *",
+        'if False: raise ValueError from exec("import os")',
+        "def __getattr__(name): pass",
+        "def __reduce_ex__(self, p): pass",
+    ]
+    root = fresh("escapes")
+    prefix = "import typing\nimport dataclasses\nimport re\nimport json\nimport collections.abc\n"
+    first = (
+        insert_after(
+            root,
+            "lib/kv.py",
+            "from typing import TYPE_CHECKING, Any, TypedDict",
+            prefix + "\n".join(escapes),
+        )
+        + prefix.count("\n")
+    )
+    rc, rep, _ = cwr("lint", root)
+    d = [x for x in stage_diags(rep, "lint") if x["file"] == "lib/kv.py"]
+    flagged = {x["line"] for x in d if x["code"] == "CWR-L001"}
+    want = set(range(first, first + len(escapes)))
+    missing = sorted(want - flagged)
+    for x in d:
+        TRIGGERED.setdefault(x["code"], []).append("normalisation and string-evaluation escapes")
+    R.check(
+        "3.5",
+        rc == 3
+        and rep.get("stopped_at") == "lint"
+        and not missing
+        and flagged == want
+        and all(x["code"] == "CWR-L001" for x in stage_diags(rep, "lint")),
+        f"{len(escapes)} further routes in lib/kv.py (fullwidth exec/eval/os/sys/getattr, "
+        f"typing.get_type_hints, ForwardRef, ForwardRef._evaluate via get_args, typing._eval_type, "
+        f"dataclasses._create_fn, private module attributes and imports, builtin type, functional "
+        f"TypedDict, ABCMeta, NamedTupleMeta, metaclass=, TypedDict aliases, star import, 'raise .. from "
+        f"exec', def __getattr__/__reduce_ex__): {len(flagged)} lines refused as CWR-L001"
+        + (f" MISSING lines {[escapes[i - first] for i in missing]}" if missing else ""),
+    )
+    # The routes above are real: under this Python each one reaches os.getpid() (run in an
+    # isolated interpreter in the scratch tree, never inside World Source).
+    proofs = {
+        "fullwidth exec": '\uff45\uff58\uff45\uff43("import os; _r = os.getpid()")',
+        "typing.get_type_hints": "import typing\ndef _f(x: \"__import__('os').getpid\"): pass\n"
+        "_r = typing.get_type_hints(_f)['x']()",
+        "ForwardRef._evaluate": "import typing\n_r = typing.get_args(typing.List[\"__import__('os').getpid\"])"
+        "[0]._evaluate(None, None, recursive_guard=frozenset())()",
+        "dataclasses._create_fn": "import dataclasses\n_r = dataclasses._create_fn('g', [], "
+        "['import os', 'return os.getpid()'], globals={})()",
+    }
+    real = []
+    for name, code in proofs.items():
+        p = run(
+            [sys.executable, "-I", "-c", code + "\nimport os\nprint(_r == os.getpid())"],
+            cwd=str(SCRATCH),
+        )
+        if p.returncode == 0 and p.stdout.strip() == "True":
+            real.append(name)
+    R.check(
+        "3.5",
+        len(real) == len(proofs),
+        f"each refused route is a genuine escape under Python {sys.version.split()[0]}: "
+        f"{len(real)}/{len(proofs)} reach os.getpid() ({', '.join(real)})",
+    )
+    root = fresh("escape_lookalikes")
+    insert_after(
+        root,
+        "lib/kv.py",
+        "from typing import TYPE_CHECKING, Any, TypedDict",
+        "import typing\ntype _Alias = int\n_U = \"\uff45\uff58\uff45\uff43 in a string\"  # \uff4f\uff53 in a comment\n"
+        "_V = dict(type=1)\n\n\nclass _D(TypedDict, total=False):\n    a: int\n\n\n"
+        "class _E(typing.TypedDict):\n    b: str\n\n\ndef _private_helper(x):\n    return x\n",
+    )
+    rc, rep, _ = cwr("lint", root)
+    R.check(
+        "3.5",
+        rc == 0,
+        f"look-alikes of the further routes (type alias statement, non-ASCII inside a string and a "
+        f"comment, keyword argument type=, TypedDict class bases bare and dotted, a module-level private "
+        f"def): exit {rc} [{brief(rep)}]",
     )
     root = fresh("lookalikes")
     insert_after(

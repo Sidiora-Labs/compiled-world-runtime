@@ -44,11 +44,34 @@
 //!   `dataclasses.inspect`, `re.enum.bltns`, ...), host-facility names, CPython frame
 //!   attributes and the generated SDK's private transport modules.
 //!
-//! Imports of a private submodule (`re._parser`, `cwr._rpc`) are refused as well. The
-//! attribute list was derived by walking every module and class reachable from the permitted
-//! modules under Python 3.12 without passing a banned name or a non-allowed dunder: what
-//! remains reachable is only `typing`, `dataclasses`, `json` (and its decoder, encoder and
-//! scanner), `re`, `math`, `collections` (and `abc`), `itertools`, `abc`, `copy` and `cwr`.
+//! The same closed-list discipline covers the further routes:
+//!
+//! * [`EVAL_NAMES`]: names through which a permitted module evaluates a string as code or
+//!   builds a class from an arbitrary namespace (`typing.get_type_hints` and
+//!   `typing.ForwardRef` evaluate string annotations; `ForwardRef._evaluate`,
+//!   `typing._eval_type` and `dataclasses._create_fn` reach `eval`/`exec`; `ABCMeta`,
+//!   `NamedTupleMeta`, the `metaclass=` keyword and the builtin `type` build classes whose
+//!   `__annotations__` keys `@dataclass` would paste into `exec`'d source), refused bare, as
+//!   an attribute or as an imported name. `type` stays usable as the soft keyword of a
+//!   `type X = ...` statement;
+//! * every private attribute (`x._name`, `from m import _name`): the internals of a
+//!   permitted module are not part of its closed surface. Imports of a private submodule
+//!   (`re._parser`, `cwr._rpc`) are refused as well;
+//! * `typing.TypedDict` anywhere except an import (without `as`) or a class base: its
+//!   functional form takes arbitrary string keys that `@dataclass` would `exec`;
+//! * `def` of a special method outside [`DUNDER_ALLOWED`] (`__prepare__`, `__new__`,
+//!   `__init_subclass__`, `__reduce_ex__`, `__getattr__`, ...), and `from m import *`;
+//! * any character outside ASCII in code (outside string literals and comments): Python
+//!   NFKC-normalises identifiers, so the fullwidth `ｅｘｅｃ` *is* `exec` and `ｏｓ` *is*
+//!   `os`. Code is ASCII-only, so every spelling the lists compare is the one Python runs.
+//!
+//! The lists were derived by walking every module and class reachable from the permitted
+//! modules under Python 3.12 without passing a banned name, a private name or a non-allowed
+//! dunder, and by reading every `eval`/`exec` call site in those modules: what remains
+//! reachable is only `typing`, `dataclasses`, `json` (and its decoder, encoder and scanner),
+//! `re`, `math`, `collections` (and `abc`), `itertools`, `abc`, `copy` and `cwr`, and the
+//! remaining `eval`/`exec` sites (`collections.namedtuple`, `@dataclass`) receive only
+//! validated identifiers.
 
 /// The standard-library modules every World Source Python file may import.
 pub const STDLIB_ALLOWED: [&str; 7] = [
@@ -89,9 +112,11 @@ pub const FORBIDDEN_HOST: [&str; 17] = [
     "importlib",
 ];
 
-/// Builtins refused as bare names: they run code, reach the host, or look up names
-/// dynamically (and so can reach `__import__` or any re-exported host module).
-pub const BANNED_BUILTINS: [&str; 15] = [
+/// Builtins refused as bare names: they run code, reach the host, look up names
+/// dynamically (and so can reach `__import__` or any re-exported host module), or (`type`)
+/// build a class from an arbitrary namespace. `type` as the soft keyword of a `type X = ...`
+/// statement is not the builtin and is permitted.
+pub const BANNED_BUILTINS: [&str; 16] = [
     "exec",
     "eval",
     "compile",
@@ -107,7 +132,30 @@ pub const BANNED_BUILTINS: [&str; 15] = [
     "getattr",
     "setattr",
     "delattr",
+    "type",
 ];
+
+/// Names refused in every position (bare, attribute, imported name, keyword argument):
+/// they evaluate a string as code, reach `eval`/`exec` inside a permitted module, or build a
+/// class from an arbitrary namespace (whose annotation keys `@dataclass` pastes into
+/// `exec`'d source).
+pub const EVAL_NAMES: [&str; 11] = [
+    "get_type_hints",
+    "ForwardRef",
+    "evaluate_forward_ref",
+    "get_annotations",
+    "_eval_type",
+    "_evaluate",
+    "_create_fn",
+    "_FuncBuilder",
+    "ABCMeta",
+    "NamedTupleMeta",
+    "metaclass",
+];
+
+/// The class factory whose functional form takes arbitrary string keys; usable only in an
+/// import (without `as`) or as a class base.
+pub const TYPED_DICT: &str = "TypedDict";
 
 /// The dunder names World Source Python may use: special methods of its own classes and
 /// module metadata. Every other dunder (`__builtins__`, `__globals__`, `__class__`, ...) is
@@ -219,6 +267,23 @@ pub const BUILTIN_MARK: &str = "builtin:";
 /// Marker prefix of an [`Import`] that records a banned attribute, imported name or dunder.
 pub const ATTR_MARK: &str = "attr:";
 
+/// Marker prefix of an [`Import`] that records an [`EVAL_NAMES`] name or a misuse of
+/// [`TYPED_DICT`].
+pub const EVAL_MARK: &str = "eval:";
+
+/// Marker prefix of an [`Import`] that records a private attribute or imported name.
+pub const PRIVATE_MARK: &str = "private:";
+
+/// Marker prefix of an [`Import`] that records a `def` of a special method outside
+/// [`DUNDER_ALLOWED`].
+pub const SPECIAL_MARK: &str = "special:";
+
+/// Marker prefix of an [`Import`] that records a non-ASCII token in code.
+pub const NONASCII_MARK: &str = "nonascii:";
+
+/// The [`Import`] module recorded for `from m import *`.
+pub const STAR_IMPORT: &str = "*";
+
 fn is_dunder(name: &str) -> bool {
     name.len() > 4 && name.starts_with("__") && name.ends_with("__")
 }
@@ -238,8 +303,11 @@ pub enum Policy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
     /// The module as written: `a.b.c`, `.`, `..pkg`, `__import__` for the builtin,
-    /// `builtin:<name>` for a [`BANNED_BUILTINS`] name, or `attr:<name>` for a
-    /// [`BANNED_ATTRS`] name or a dunder outside [`DUNDER_ALLOWED`].
+    /// `builtin:<name>` for a [`BANNED_BUILTINS`] name, `attr:<name>` for a
+    /// [`BANNED_ATTRS`] name or a dunder outside [`DUNDER_ALLOWED`], `eval:<name>` for an
+    /// [`EVAL_NAMES`] name or a misused `TypedDict`, `private:<name>` for a private attribute,
+    /// `special:<name>` for a refused special-method `def`, `nonascii:<token>` for code
+    /// outside ASCII, and `*` for a star import.
     pub module: String,
     /// One-based line of the module name (or of `__import__`).
     pub line: usize,
@@ -283,6 +351,31 @@ pub fn refusal(policy: Policy, import: &Import) -> Option<String> {
     if let Some(name) = import.module.strip_prefix(BUILTIN_MARK) {
         return Some(format!(
             "the builtin {name} runs code, reaches the host or looks names up dynamically; it is outside the closed import list"
+        ));
+    }
+    if import.module == STAR_IMPORT {
+        return Some("from ... import * binds names the closed import list cannot see".to_string());
+    }
+    if let Some(tok) = import.module.strip_prefix(NONASCII_MARK) {
+        return Some(format!(
+            "{tok:?} is not ASCII: Python NFKC-normalises identifiers (a fullwidth exec is exec), so code outside string literals and comments must be ASCII"
+        ));
+    }
+    if let Some(name) = import.module.strip_prefix(EVAL_MARK) {
+        return Some(if name == TYPED_DICT {
+            "TypedDict outside an import or a class base: its functional form takes arbitrary keys that @dataclass pastes into exec'd source".to_string()
+        } else {
+            format!("{name} evaluates strings as code or builds classes from arbitrary namespaces; it is outside the closed import list")
+        });
+    }
+    if let Some(name) = import.module.strip_prefix(PRIVATE_MARK) {
+        return Some(format!(
+            "the private name {name} reaches the internals of a module; only public names of the closed import list are permitted"
+        ));
+    }
+    if let Some(name) = import.module.strip_prefix(SPECIAL_MARK) {
+        return Some(format!(
+            "defining the special method {name} hooks interpreter machinery (class creation, pickling, attribute lookup); it is outside the closed import list"
         ));
     }
     if let Some(name) = import.module.strip_prefix(ATTR_MARK) {
@@ -601,6 +694,9 @@ fn is_op(t: &Tok, text: &str) -> bool {
 /// The marker module for a banned dynamic or reflective use at token `k`, if any.
 fn reflective(toks: &[Tok], k: usize) -> Option<String> {
     let t = &toks[k];
+    if t.kind != Kind::Str && !t.text.is_ascii() {
+        return Some(format!("{NONASCII_MARK}{}", t.text));
+    }
     if t.kind != Kind::Name {
         return None;
     }
@@ -609,35 +705,85 @@ fn reflective(toks: &[Tok], k: usize) -> Option<String> {
     let after_def = prev.is_some_and(|p| is_name(p, "def") || is_name(p, "class"));
     let name = t.text.as_str();
     if is_dunder(name) {
-        if name == "__import__" || after_def || DUNDER_ALLOWED.contains(&name) {
+        if name == "__import__" || DUNDER_ALLOWED.contains(&name) {
             return None;
+        }
+        if after_def {
+            return Some(format!("{SPECIAL_MARK}{name}"));
         }
         return Some(format!("{ATTR_MARK}{name}"));
     }
-    // An attribute, or a name imported by `from X import name`: the import statement's own
-    // module path (`from a.b import`, `import a.b`) is judged by `refusal`, not here.
-    let in_import = toks[..k]
+    // The statement this token belongs to (back to the previous `;`).
+    let stmt_start = toks[..k]
         .iter()
-        .rev()
-        .take_while(|p| !is_op(p, ";"))
-        .any(|p| is_name(p, "import") || is_name(p, "from"));
-    if BANNED_ATTRS.contains(&name) {
-        let imported_name = in_import
-            && toks[..k].iter().any(|p| is_name(p, "import"))
-            && toks[..k].iter().any(|p| is_name(p, "from"));
-        if (after_dot && !in_import) || imported_name {
-            return Some(format!("{ATTR_MARK}{name}"));
-        }
+        .rposition(|p| is_op(p, ";"))
+        .map_or(0, |p| p + 1);
+    // An attribute, or a name imported by `from X import name`: the import statement's own
+    // module path (`from a.b import`, `import a.b`) is judged by `refusal`, not here. Only a
+    // `from`/`import` heading a statement (or a compound clause after `:`) makes one;
+    // `raise E from err` and `yield from it` are not imports.
+    let head = import_head(toks, stmt_start, k);
+    let in_import = head.is_some();
+    // The local name after `as` is a binding, not a name taken from the module.
+    let after_as = prev.is_some_and(|p| is_name(p, "as"));
+    let imported_name = !after_as
+        && head.is_some_and(|h| {
+            is_name(&toks[h], "from") && toks[h..k].iter().any(|p| is_name(p, "import"))
+        });
+    if EVAL_NAMES.contains(&name) && !after_def {
+        return Some(format!("{EVAL_MARK}{name}"));
+    }
+    if name.starts_with('_') && !after_def && ((after_dot && !in_import) || imported_name) {
+        return Some(format!("{PRIVATE_MARK}{name}"));
+    }
+    if name == TYPED_DICT && !typed_dict_ok(toks, stmt_start, head, k) {
+        return Some(format!("{EVAL_MARK}{name}"));
+    }
+    if BANNED_ATTRS.contains(&name) && ((after_dot && !in_import) || imported_name) {
+        return Some(format!("{ATTR_MARK}{name}"));
     }
     if BANNED_BUILTINS.contains(&name) && !after_dot && !after_def && !in_import {
         // `name = ...` and keyword arguments `f(name=...)` bind or label, they do not use.
         let binds = toks.get(k + 1).is_some_and(|n| is_op(n, "="))
             && !toks.get(k + 2).is_some_and(|n| is_op(n, "="));
-        if !binds {
+        // `type X = ...` / `type X[T] = ...` is the type-alias statement, not the builtin.
+        let alias_stmt = name == "type"
+            && k == stmt_start
+            && toks.get(k + 1).is_some_and(|n| n.kind == Kind::Name);
+        if !binds && !alias_stmt {
             return Some(format!("{BUILTIN_MARK}{name}"));
         }
     }
     None
+}
+
+/// The index of the `from`/`import` keyword heading the import statement that token `k` is
+/// part of, if any: the keyword must open the statement or follow a compound clause's `:`.
+fn import_head(toks: &[Tok], stmt_start: usize, k: usize) -> Option<usize> {
+    (stmt_start..k).rev().find(|&i| {
+        (is_name(&toks[i], "from") || is_name(&toks[i], "import"))
+            && (i == stmt_start || is_op(&toks[i - 1], ":"))
+    })
+}
+
+/// Whether the `TypedDict` token at `k` is an imported name without `as`, or a whole class
+/// base (`class X(TypedDict, ...)`, `class X(typing.TypedDict)`).
+fn typed_dict_ok(toks: &[Tok], stmt_start: usize, head: Option<usize>, k: usize) -> bool {
+    let next = toks.get(k + 1);
+    if head.is_some() {
+        return !next.is_some_and(|n| is_name(n, "as"));
+    }
+    if !is_name(&toks[stmt_start], "class") {
+        return false;
+    }
+    // Walk back over a dotted prefix (`typing.`) to the token before the base expression.
+    let mut b = k;
+    while b >= stmt_start + 2 && is_op(&toks[b - 1], ".") && toks[b - 2].kind == Kind::Name {
+        b -= 2;
+    }
+    let before_ok = b > stmt_start && (is_op(&toks[b - 1], "(") || is_op(&toks[b - 1], ","));
+    let after_ok = next.is_some_and(|n| is_op(n, ",") || is_op(n, ")"));
+    before_ok && after_ok
 }
 
 /// Every import in a Python source text, in source order.
@@ -681,6 +827,13 @@ pub fn scan(src: &str) -> Vec<Import> {
                 break;
             }
             if let Some(f) = from_at {
+                if toks.get(k + 1).is_some_and(|n| is_op(n, "*")) {
+                    out.push(Import {
+                        module: STAR_IMPORT.into(),
+                        line: toks[k + 1].line,
+                        col: toks[k + 1].col,
+                    });
+                }
                 if f + 1 < k {
                     let module: String = toks[f + 1..k].iter().map(|t| t.text.as_str()).collect();
                     out.push(Import {
@@ -886,6 +1039,64 @@ mod tests {
             if !matches!(m.as_str(), "typing" | "json") {
                 assert!(lib(m).is_some(), "{m}");
             }
+        }
+    }
+
+    #[test]
+    fn normalisation_string_evaluation_and_private_internals() {
+        let src = concat!(
+            "_x = \u{ff45}\u{ff58}\u{ff45}\u{ff43}(\"import os\")\n", // 1
+            "import \u{ff4f}\u{ff53}\n",                              // 2
+            "h = typing.get_type_hints(f); from typing import ForwardRef\n", // 3
+            "c = dataclasses._create_fn; from dataclasses import _MISSING_TYPE as _g; d = self._k\n", // 4
+            "r = typing.get_args(a)[0]._evaluate(None, None, frozenset())\n", // 5
+            "T = TypedDict(\"T\", {\"a=1\": int}); X = type(\"X\", (), {})\n", // 6
+            "class M(collections.abc.ABCMeta): pass\n",                       // 7
+            "class K(metaclass=M):\n    def __prepare__(m, n, b): pass\n",    // 8, 9
+            "from typing import *\n",                                         // 10
+            "raise E from exec(\"x\")\n",                                     // 11
+            "class D(typing.TypedDict, total=False):\n    def __init__(self): pass\n", // 12, 13
+            "type Alias = int; from typing import TypedDict\n",               // 14
+            "s = \"\u{ff45}x\"  # \u{ff45}\n",                                // 15
+        );
+        let got: Vec<(String, usize)> = scan(src).into_iter().map(|i| (i.module, i.line)).collect();
+        let want: Vec<(String, usize)> = [
+            ("nonascii:\u{ff45}\u{ff58}\u{ff45}\u{ff43}", 1),
+            ("\u{ff4f}\u{ff53}", 2),
+            ("nonascii:\u{ff4f}\u{ff53}", 2),
+            ("eval:get_type_hints", 3),
+            ("typing", 3),
+            ("eval:ForwardRef", 3),
+            ("eval:_create_fn", 4),
+            ("dataclasses", 4),
+            ("private:_MISSING_TYPE", 4),
+            ("private:_k", 4),
+            ("eval:_evaluate", 5),
+            ("eval:TypedDict", 6),
+            ("builtin:type", 6),
+            ("eval:ABCMeta", 7),
+            ("eval:metaclass", 8),
+            ("special:__prepare__", 9),
+            ("typing", 10),
+            ("*", 10),
+            ("builtin:exec", 11),
+            ("typing", 14),
+        ]
+        .iter()
+        .map(|(m, l)| (m.to_string(), *l))
+        .collect();
+        assert_eq!(got, want);
+        for (m, _) in &want {
+            let imp = Import {
+                module: m.clone(),
+                line: 1,
+                col: 1,
+            };
+            assert_eq!(
+                refusal(Policy::Lib, &imp).is_none(),
+                matches!(m.as_str(), "typing" | "dataclasses"),
+                "{m}"
+            );
         }
     }
 

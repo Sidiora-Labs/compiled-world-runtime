@@ -27,8 +27,10 @@ Language-level layer (the kernel-level layer, namespaces and rlimits, is set up 
 1. Only ``/cwr/sdk`` (the Build's generated SDK) and the interpreter's stdlib are on ``sys.path`` while the SDK
    is imported; afterwards a script may import only the Build's world modules, ``cwr`` and ``cwr.errors``.
 2. The RPC channel is handed to the SDK as a file object, not a socket, so the script has no socket API.
-3. Every callable of ``posix``/``os``, ``time``, ``_thread``, ``_signal`` and ``_imp`` is replaced in place
-   by a refusing stub, so a reference reached by walking the object graph is refused too.
+3. Every callable of ``posix``/``os``, ``time``, ``_thread``, ``_signal`` and ``_imp`` is replaced by a
+   refusing stub, in its module and in every container that captured it before the guard (for example
+   ``threading._time``, the sets of ``os.supports_fd``, closure cells), so a reference reached by walking
+   the object graph is refused too. If any reference cannot be rewritten, the script is not run.
 4. ``builtins.__import__`` and ``builtins.open`` are replaced; an audit hook (which cannot be removed) refuses
    file, socket, process, clock, frame-introspection and module-load events.
 5. A ``sys.monitoring`` RAISE callback turns any MemoryError into ``LIMIT memory_mb`` even if the script
@@ -295,6 +297,97 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
                     facility, what, ImportError if facility == "sandbox.import" else PermissionError
                 )
 
+    def neuter_all(neuter):
+        """Replace every callable of the given modules, wherever it is referenced, by a refusing stub.
+
+        Rebinding a module's attributes is not enough: a module that ran ``from time import monotonic``
+        (``threading._time``), filled a set with ``os`` callables (``os.supports_fd``) or closed over one
+        still holds the original. Every container the garbage collector tracks that refers to an
+        original is rewritten to hold the stub: dicts, lists, sets and cells in place, tuples and
+        frozensets by rebuilding them and rewriting their own holders (function defaults included).
+        Returns a description of every reference that could not be rewritten; the runner then refuses to
+        run the script rather than run it with a host facility reachable.
+        """
+        import gc
+
+        replaced = {}
+        for mod, facility in neuter:
+            if mod is None:
+                continue
+            for name, value in list(vars(mod).items()):
+                if name.startswith("__") or isinstance(value, type) or not callable(value):
+                    continue
+                new = replaced[id(value)][1] if id(value) in replaced else stub(facility, name)
+                with contextlib.suppress(AttributeError, TypeError):
+                    setattr(mod, name, new)
+                    replaced[id(value)] = (value, new)
+                del value, new
+        frames = set()
+        f = sys._getframe()
+        while f is not None:
+            frames.add(id(f))
+            f = f.f_back
+        mapping = {k: new for k, (_old, new) in replaced.items()}
+        originals = [old for old, _new in replaced.values()]
+        replaced.clear()
+        rebuilt = []
+        work = list(originals)
+        batches = []
+        bookkeeping = {id(mapping), id(originals), id(rebuilt), id(work), id(batches)}
+
+        def holders(obj):
+            return [
+                h
+                for h in gc.get_referrers(obj)
+                if id(h) not in bookkeeping and id(h) not in frames and h is not obj
+            ]
+
+        rounds = 0
+        while work and rounds < 8:
+            rounds += 1
+            batch = list(work)
+            work.clear()
+            batches.append(batch)
+            bookkeeping.add(id(batch))
+            for old in batch:
+                new = mapping[id(old)]
+                for h in holders(old):
+                    kind = type(h)
+                    if kind is dict:
+                        for k, v in list(h.items()):
+                            if v is old:
+                                h[k] = new
+                    elif kind is list:
+                        for i, v in enumerate(h):
+                            if v is old:
+                                h[i] = new
+                    elif kind is set:
+                        h.discard(old)
+                        h.add(new)
+                    elif kind.__name__ == "cell":
+                        h.cell_contents = new
+                    elif kind is tuple or kind is frozenset:
+                        if id(h) not in mapping:
+                            mapping[id(h)] = kind(mapping.get(id(v), v) for v in h)
+                            rebuilt.append(h)
+                            work.append(h)
+                    elif kind.__name__ == "function" and h.__defaults__ is old:
+                        h.__defaults__ = new
+        leftover = set()
+        if work:
+            leftover.add("references nested deeper than 8 containers")
+        checked = originals + rebuilt
+        bookkeeping.add(id(checked))
+        for old in checked:
+            for h in holders(old):
+                if type(h) in (tuple, frozenset) and id(h) in mapping:
+                    continue
+                name = getattr(old, "__qualname__", type(old).__name__)
+                leftover.add(f"{name} held by {type(h).__name__}")
+        for held in (mapping, originals, rebuilt, batches, checked):
+            held.clear()
+        return leftover
+
     # ------------------------------------------------------------------ MemoryError is LIMIT memory_mb
 
     limit_payload = json.dumps(
@@ -351,14 +444,17 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
             (_signal, "sandbox.process"),
             (_imp, "sandbox.import"),
         )
-        for mod, facility in neuter:
-            if mod is None:
-                continue
-            for name, value in list(vars(mod).items()):
-                if name.startswith("__") or isinstance(value, type) or not callable(value):
-                    continue
-                with contextlib.suppress(AttributeError, TypeError):
-                    setattr(mod, name, stub(facility, name))
+        leftover = neuter_all(neuter)
+        clock = sys.modules.get("time")
+        if clock is not None:
+            # Host facts the clock module carries as data: the timezone is reported as UTC.
+            for name, value in (("timezone", 0), ("altzone", 0), ("daylight", 0)):
+                setattr(clock, name, value)
+            clock.tzname = ("UTC", "UTC")
+            del clock, name, value
+        if leftover:
+            compile_error = "sandbox closure incomplete: " + ", ".join(sorted(leftover))[:300]
+            code = None
         for name in ("os", "socket"):
             _rpc.__dict__.pop(name, None)
         for name in (
@@ -456,6 +552,8 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
             "exception": exception,
         }
     )
+    # Interpreter shutdown would call threading's neutered callables; the turn is over, skip it.
+    sys.modules.pop("threading", None)
 
 
 _cwr_main()

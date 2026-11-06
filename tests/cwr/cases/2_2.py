@@ -17,7 +17,9 @@ outcome of every precondition (evaluated by the script itself through read_only 
 determinism audit over ledgers of kernel.md section 8. Durability before return is observed with strace.
 
 Hostile scripts: network (import, object-graph socket, kernel-level connect), file escape (open, graph walk,
-kernel-level view), clock (time import, graph walk to a file timestamp), process and frame introspection,
+kernel-level view), clock (time import, graph walk to a file timestamp, the monotonic clock threading
+captured, a walk of every module, class and closure for surviving host built-ins), threads, process and
+frame introspection,
 resource bombs (CPU loop, blocked wall clock, large and gradual memory, caught MemoryError), primitive and
 adapter budgets.
 
@@ -322,6 +324,9 @@ def check_closure(world: World, ctl: Path) -> None:
         "import_datetime": "import datetime",
         "dunder_import_time": "__import__('time')",
         "graph_clock_stat": "w = [k for k in ().__class__.__base__.__subclasses__() if k.__name__ == '_wrap_close'][0]\nw.__init__.__globals__['stat']('/').st_mtime",
+        "graph_threading_clock": "cw = [k for k in ().__class__.__base__.__subclasses__() if k.__name__ == 'catch_warnings'][0]\ncw.__init__.__globals__['sys'].modules['threading']._time()",
+        "graph_supports_fd_stat": "w = [k for k in ().__class__.__base__.__subclasses__() if k.__name__ == '_wrap_close'][0]\nnext(f for f in w.__init__.__globals__['supports_fd'] if f.__name__ == 'stat')('/')",
+        "graph_thread_start": "cw = [k for k in ().__class__.__base__.__subclasses__() if k.__name__ == 'catch_warnings'][0]\ncw.__init__.__globals__['sys'].modules['threading'].Thread(target=int).start()",
         "import_os": "import os",
         "import_sys": "import sys",
         "import_json": "import json",
@@ -360,6 +365,9 @@ def check_closure(world: World, ctl: Path) -> None:
         "import_datetime": "sandbox.import",
         "dunder_import_time": "sandbox.import",
         "graph_clock_stat": "sandbox.os",
+        "graph_threading_clock": "sandbox.clock",
+        "graph_supports_fd_stat": "sandbox.os",
+        "graph_thread_start": "sandbox.thread",
         "import_os": "sandbox.import",
         "import_sys": "sandbox.import",
         "import_json": "sandbox.import",
@@ -403,6 +411,79 @@ def check_closure(world: World, ctl: Path) -> None:
             in ("sandbox.import", "sandbox.filesystem", "sandbox.os", "sandbox.network")
         ),
         "closure refusals are typed INVALID exceptions that are also ImportError or PermissionError",
+    )
+
+    # Captured host callables: walk every module, class and closure reachable from the script and
+    # list each built-in of time, posix, _thread, _signal or _imp still bound to its module, then call
+    # every clock-named callable found. The same walk without the guard is the positive control.
+    walk = """
+cw = [k for k in ().__class__.__base__.__subclasses__() if k.__name__ == 'catch_warnings'][0]
+mods = cw.__init__.__globals__['sys'].modules
+host = {'time', 'posix', '_thread', '_signal', '_imp'}
+found = []
+seen = {}
+def visit(v, where, depth):
+    if id(v) in seen or depth > 5:
+        return
+    seen[id(v)] = v
+    s = getattr(v, '__self__', None)
+    if type(v).__name__ == 'builtin_function_or_method' and type(s).__name__ == 'module' and s.__name__ in host:
+        found.append(where)
+        return
+    if isinstance(v, dict):
+        for k, x in list(v.items()):
+            visit(x, f'{where}[{k!r}]', depth + 1)
+    elif isinstance(v, (list, tuple, set, frozenset)):
+        for i, x in enumerate(list(v)):
+            visit(x, f'{where}<{i}>', depth + 1)
+    elif type(v).__name__ == 'function':
+        for i, c in enumerate(v.__closure__ or ()):
+            try:
+                visit(c.cell_contents, f'{where}.cell{i}', depth + 1)
+            except ValueError:
+                pass
+    elif isinstance(v, type):
+        visit(dict(vars(v)), f'{where}.__dict__', depth + 1)
+for name, m in list(mods.items()):
+    visit(dict(vars(m)), name, 0)
+for k in ().__class__.__base__.__subclasses__():
+    visit(k, k.__qualname__, 0)
+b = __builtins__
+visit(dict(b) if isinstance(b, dict) else dict(vars(b)), 'builtins', 0)
+clock = []
+names = ('time', 'monotonic', 'perf_counter', 'process_time', 'thread_time', 'time_ns', 'monotonic_ns', 'perf_counter_ns', '_time', 'clock_gettime')
+for name, m in list(mods.items()):
+    for attr in names:
+        fn = getattr(m, attr, None)
+        if callable(fn) and not isinstance(fn, type):
+            try:
+                clock.append([name, attr, repr(fn(1) if attr == 'clock_gettime' else fn())[:40]])
+            except BaseException:
+                pass
+return {'found': found[:10], 'n': len(found), 'clock': clock}
+"""
+    _rc, wenv, _ = world.turn(iid, walk)
+    _rc, wdiag, _ = world.turn(iid, walk, "--diagnostic-no-language-guard")
+    w_on = (wenv or {}).get("returned") or {}
+    w_off = (wdiag or {}).get("returned") or {}
+    walk_ok = (
+        wenv is not None
+        and wenv["status"] == "ok"
+        and w_on.get("n") == 0
+        and w_on.get("clock") == []
+        and wdiag is not None
+        and (w_off.get("n") or 0) > 0
+        and any(c[1] == "_time" and c[0] == "threading" for c in w_off.get("clock") or [])
+    )
+    R.check(
+        "6.1",
+        walk_ok,
+        f"no host clock or host callable survives in any module, class or closure: guard on {w_on.get('n')} host built-ins, clock reads {w_on.get('clock')}; guard off (control, kernel layer only) {w_off.get('n')} host built-ins, clock reads {[c[:2] for c in w_off.get('clock') or []]}",
+    )
+    R.check(
+        "1.1",
+        walk_ok,
+        "facilities the Build does not enumerate are unreachable even through references captured before the guard (threading._time, os.supports_fd, closure cells)",
     )
 
     # Kernel-level layer alone (diagnostic switch disables only the in-interpreter guard).
@@ -514,14 +595,25 @@ def check_limits(world: World, tight: Path, budget: Path) -> None:
         "memory_mb": "x = bytearray(512 * 1024 * 1024)\n",
     }
     for limit, script in cases.items():
-        rc, env, _ = world.turn(iid, script)
+        rc, env, stderr = world.turn(iid, script, "--verbose")
         res = (env or {}).get("resources", {})
+        peak = next(
+            (
+                int(ln.rsplit("peak_rss_kb=", 1)[1].split()[0])
+                for ln in stderr.splitlines()
+                if "peak_rss_kb=" in ln
+            ),
+            None,
+        )
+        detail = ((env or {}).get("error") or {}).get("detail", "")
         bound = {
             "cpu_ms": res.get("cpu_ms", 0) >= TIGHT["cpu_ms"]
             and res.get("cpu_ms", 10**9) < TIGHT["cpu_ms"] + 700,
             "wall_ms": res.get("wall_ms", 0) >= TIGHT["wall_ms"]
             and res.get("wall_ms", 10**9) < TIGHT["wall_ms"] + 2000,
-            "memory_mb": True,
+            "memory_mb": peak is not None
+            and 0 < peak <= TIGHT["memory_mb"] * 1024
+            and f"{TIGHT['memory_mb']} MiB" in detail,
         }[limit]
         R.check(
             "6.1",
@@ -529,8 +621,17 @@ def check_limits(world: World, tight: Path, budget: Path) -> None:
             and err(env) == ("LIMIT", "sandbox.process", None, limit)
             and env["status"] == "error"
             and bound,
-            f"{limit} bomb: {summary(env)} cpu_ms={res.get('cpu_ms')} wall_ms={res.get('wall_ms')}",
+            f"{limit} bomb: {summary(env)} cpu_ms={res.get('cpu_ms')} wall_ms={res.get('wall_ms')} peak_rss_kb={peak}",
         )
+    under = TIGHT["memory_mb"] // 3
+    rc, env, stderr = world.turn(
+        iid, f"x = bytearray({under} * 1024 * 1024)\nx[-1] = 1\nreturn len(x)\n", "--verbose"
+    )
+    R.check(
+        "6.1",
+        rc == 0 and env and env["status"] == "ok" and env["returned"] == under * 1024 * 1024,
+        f"memory_mb is the Build's cap of {TIGHT['memory_mb']} MiB: a {under} MiB allocation succeeds ({summary(env)}) while 512 MiB ends with LIMIT memory_mb",
+    )
     rc, env, _ = world.turn(
         iid,
         "try:\n    x = bytearray(512 * 1024 * 1024)\nexcept MemoryError:\n    return 'survived'\n",
@@ -1320,7 +1421,12 @@ def home_root_dir() -> str | None:
         return None
     for ln in mounts:
         f = ln.split()
-        if len(f) >= 3 and f[1] == "/dev/shm" and f[2] == "tmpfs" and os.access("/dev/shm", os.W_OK):
+        if (
+            len(f) >= 3
+            and f[1] == "/dev/shm"
+            and f[2] == "tmpfs"
+            and os.access("/dev/shm", os.W_OK)
+        ):
             return "/dev/shm"
     return None
 

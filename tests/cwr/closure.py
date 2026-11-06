@@ -12,9 +12,14 @@
       compiler, kernel, SDK or, for integration and campaign cases, harness revision that is no longer
       the current tree; a PASS judged by a checker revision that is no longer current; for CWR-019,
       which qualifies the checker rather than the product, a registry or schema that changed since; a
-      record the checker reports stale) or disagrees with
-      the registry; when a clause maps to no PASS case; when a hypothesis report or its pre-registration
-      is missing; or when owner acceptance is not recorded. Exit 0 ACCEPTED, 1 REFUSED, 2 unusable.
+      record the checker reports stale) or disagrees with the registry; when spec.kvx records a case
+      status the checker does not derive, or qualification.kvx claims product evidence the checker
+      does not accept; when a clause maps to no PASS case; when a hypothesis report, its
+      pre-registration or its analysis is missing, or the analysis lacks part of the registered arm
+      matrix (arms x tasks x seeds), a pre-registered metric in any cell or a registered direction;
+      when the acceptance journey is not recorded complete for the current compiler, kernel and SDK
+      on the Builds benchmark/release.kvx pins; or when owner acceptance is not recorded over exactly
+      that journey's Build hashes. Exit 0 ACCEPTED, 1 REFUSED, 2 unusable.
 
   python3 tests/cwr/closure.py --run [--case CWR-NNN ...] [--timeout S]
       Run tests/cwr/qualify.py --case for every case (or the named ones) in order, so every task
@@ -34,11 +39,14 @@
   python3 tests/cwr/closure.py --journey [--cwr BIN]
       Run the owner's acceptance journey with the real cwr CLI (build refworld, create an Instance,
       run a long task, upgrade across pair U1, replay) and record it, with the exact Build hashes,
-      in spec/cwr/qualification.kvx as [progress.acceptance_journey]. Exit 0 when every step ran.
+      in spec/cwr/qualification.kvx as [progress.acceptance_journey] (every step with its exit code,
+      the labelled Build hashes and the compiler, kernel and SDK revisions). Exit 0 when every step
+      ran and exited 0.
 
   python3 tests/cwr/closure.py --accept --owner NAME
-      Record the owner's acceptance of the recorded journey as [progress.owner_acceptance]. This is
-      the owner's act; nothing in this repository invokes it on the owner's behalf.
+      Record the owner's acceptance of the recorded journey as [progress.owner_acceptance]. Refused
+      (exit 2) unless the journey is recorded complete for the current tree. This is the owner's
+      act; nothing in this repository invokes it on the owner's behalf.
 
 The authoring validator and its report are never an input to closure: an authoring PASS is not
 product evidence. Python 3.12, standard library only; no network.
@@ -75,6 +83,9 @@ QUALIFY_REL = "tests/cwr/qualify.py"
 CLOSURE_LOG_REL = "tests/cwr/evidence/closure"
 PREREG_REL = "benchmark/preregistration.kvx"
 RELEASE_REL = "benchmark/release.kvx"
+SUITE_REL = "benchmark/suite.kvx"
+UPGRADES_REL = "benchmark/upgrades.kvx"
+ANALYSIS_REL = "benchmark/results/h{n}/analysis.json"
 DEFAULT_REPORTS = {
     "H1": "research/h1-stability.md",
     "H2": "research/h2-direct-action.md",
@@ -90,6 +101,17 @@ SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
 CASE_RE = re.compile(r"^CWR-\d{3}$")
 ACCEPTANCE = "progress.owner_acceptance"
 JOURNEY = "progress.acceptance_journey"
+JOURNEY_PAIR = "U1"
+JOURNEY_BUILDS = ("refworld", "U1-A", "U1-B")
+JOURNEY_STEPS = (
+    "build refworld",
+    "create Instance",
+    "run long task",
+    "build U1 side A",
+    "build U1 side B",
+    "upgrade across U1",
+    "replay the pre-upgrade ledger",
+)
 QUAL_HEADER = (
     "# Recorded runs for the CWR specification pack: authoring validation, every task driver run\n"
     "# through tests/cwr/qualify.py, blocked tasks and the owner's acceptance journey.\n"
@@ -240,8 +262,95 @@ def load_record(root: Path, rel: str) -> dict | None:
     return record if isinstance(record, dict) else None
 
 
+def registered_task_count(root: Path, task_set) -> int | None:
+    """Tasks a hypothesis' task set names, counted as benchmark/analyse.py counts them."""
+    if task_set == "suite:all":
+        rel, prefix = SUITE_REL, "task."
+    elif task_set == "upgrades:all":
+        rel, prefix = UPGRADES_REL, "pair."
+    else:
+        return None
+    if not (root / rel).is_file():
+        return None
+    return sum(1 for name in read_kvx(root, rel) if name.startswith(prefix))
+
+
+def analysis_problems(root: Path, prereg: dict, hypothesis: str, rel: str, digest: str) -> list:
+    """Why an analysis does not hold the complete registered arm matrix with every registered metric
+    and direction of one hypothesis, under the current pre-registration."""
+    body = prereg.get(f"hypothesis.{hypothesis}")
+    if not isinstance(body, dict):
+        return [f"{PREREG_REL} registers no [hypothesis.{hypothesis}]"]
+    record = load_record(root, rel)
+    if record is None:
+        return [f"analysis {rel} is missing or not a JSON object"]
+    problems = []
+    if record.get("registration") != "registered":
+        problems.append(f"analysis {rel} ran under registration {record.get('registration')!r}")
+    inputs = record.get("inputs") if isinstance(record.get("inputs"), dict) else {}
+    if inputs.get("preregistration") != digest:
+        problems.append(
+            f"analysis {rel} used pre-registration {inputs.get('preregistration')}, not {digest}"
+        )
+    result = (record.get("hypotheses") or {}).get(hypothesis)
+    if not isinstance(result, dict):
+        return [*problems, f"analysis {rel} holds no result for {hypothesis}"]
+    arms = body.get("arms") if isinstance(body.get("arms"), list) else []
+    seeds = (prereg.get("campaign") or {}).get("seeds")
+    tasks = registered_task_count(root, body.get("task_set"))
+    if not arms or not isinstance(seeds, list) or not seeds or not tasks:
+        problems.append(
+            f"the registered matrix of {hypothesis} cannot be derived (arms {arms}, task set "
+            f"{body.get('task_set')!r}, seeds {seeds})"
+        )
+        expected = None
+    else:
+        expected = len(arms) * len(seeds) * tasks
+    matrix = result.get("matrix") if isinstance(result.get("matrix"), dict) else {}
+    if not (
+        matrix.get("complete") is True
+        and matrix.get("missing_count") == 0
+        and expected is not None
+        and matrix.get("expected") == expected
+        and matrix.get("present") == expected
+    ):
+        problems.append(
+            f"incomplete arm matrix: {matrix.get('present')} of {expected} registered cells "
+            f"({len(arms)} arms x {tasks} tasks x {len(seeds or [])} seeds); the analysis states "
+            f"expected {matrix.get('expected')}, missing {matrix.get('missing_count')}"
+        )
+    metrics = [body.get("primary"), *(body.get("secondary") or [])]
+    cells = result.get("cells") if isinstance(result.get("cells"), dict) else {}
+    for arm in arms:
+        groups = cells.get(arm)
+        if not isinstance(groups, dict) or not groups:
+            problems.append(f"arm {arm} has no analysed cell")
+            continue
+        for group, cell in sorted(groups.items()):
+            keys = set((cell.get("metrics") or {}) if isinstance(cell, dict) else {})
+            absent = [
+                m for m in metrics if not (m in keys or any(k.startswith(f"{m}.") for k in keys))
+            ]
+            if absent:
+                problems.append(f"arm {arm} group {group} lacks registered metric(s) {absent}")
+    analysed = {
+        d.get("id")
+        for d in result.get("directions") or []
+        if isinstance(d, dict) and d.get("label")
+    }
+    missing_directions = [
+        d.get("id")
+        for d in body.get("directions") or []
+        if isinstance(d, dict) and d.get("id") not in analysed
+    ]
+    if missing_directions:
+        problems.append(f"registered direction(s) {missing_directions} carry no analysed label")
+    return problems
+
+
 def hypothesis_items(root: Path, registry: dict) -> tuple[dict, list[str]]:
-    """Each hypothesis report must exist and carry the registered pre-registration digest."""
+    """Each hypothesis report must exist, carry the registered pre-registration digest and rest on
+    an analysis of the complete registered arm matrix with every pre-registered metric."""
     reports = dict(DEFAULT_REPORTS)
     release = root / RELEASE_REL
     if release.is_file():
@@ -256,10 +365,12 @@ def hypothesis_items(root: Path, registry: dict) -> tuple[dict, list[str]]:
     prereg_path = root / PREREG_REL
     digest = sha256_bytes(prereg_path.read_bytes()) if prereg_path.is_file() else None
     prereg_status = None
+    prereg: dict = {}
     if digest is None:
         blocking.append(f"pre-registration {PREREG_REL} is missing")
     else:
-        prereg_status = parse_kvx(prereg_path.read_text(), PREREG_REL).get("meta", {}).get("status")
+        prereg = parse_kvx(prereg_path.read_text(), PREREG_REL)
+        prereg_status = prereg.get("meta", {}).get("status")
         if prereg_status != "registered":
             blocking.append(
                 f"pre-registration {PREREG_REL} has meta.status {prereg_status!r}, not 'registered'"
@@ -277,28 +388,131 @@ def hypothesis_items(root: Path, registry: dict) -> tuple[dict, list[str]]:
     status: dict = {"preregistration": PREREG_REL, "digest": digest, "status": prereg_status}
     for hypothesis, rel in sorted(reports.items()):
         path = root / rel
+        entry: dict = {
+            "report": rel,
+            "present": False,
+            "carries_preregistration": False,
+            "complete_matrix": False,
+        }
+        status[hypothesis] = entry
         if not path.is_file():
             blocking.append(f"{hypothesis} report {rel} is missing")
-            status[hypothesis] = {"report": rel, "present": False, "carries_preregistration": False}
             continue
+        entry["present"] = True
         text = path.read_text(errors="replace")
         carries = digest is not None and PREREG_REL in text and digest in text
+        entry["carries_preregistration"] = carries
         if not carries:
             blocking.append(
                 f"{hypothesis} report {rel} does not carry its pre-registration "
                 f"({PREREG_REL} and digest {digest})"
             )
-        status[hypothesis] = {"report": rel, "present": True, "carries_preregistration": carries}
+        cited = re.findall(r"benchmark/results/[A-Za-z0-9_./-]*analysis\.json", text)
+        analysis = cited[0] if cited else ANALYSIS_REL.format(n=hypothesis[1:])
+        entry["analysis"] = analysis
+        if not cited:
+            blocking.append(f"{hypothesis} report {rel} cites no analysis (expected {analysis})")
+            continue
+        problems = (
+            analysis_problems(root, prereg, hypothesis, analysis, digest)
+            if digest is not None
+            else [f"no pre-registration to check {analysis} against"]
+        )
+        entry["complete_matrix"] = not problems
+        blocking += [f"{hypothesis} result {analysis}: {p}" for p in problems]
     return status, blocking
 
 
-def acceptance_items(root: Path, pass_builds: set[str]) -> tuple[dict, list[str]]:
-    """Owner acceptance must be recorded and reference exact Build hashes that PASS evidence used."""
+def journey_revision(root: Path) -> str:
+    """The product revision a journey runs against: compiler, kernel and SDK of the tree at root."""
+    return "compiler {compiler_revision}; kernel {kernel_revision}; sdk {sdk_revision}".format(
+        **runner_support.revisions(root)
+    )
+
+
+def release_pins(root: Path) -> tuple[dict, list[str]]:
+    """The Build hashes benchmark/release.kvx pins for the journey's Builds: the refworld control
+    Build and both sides of pair U1."""
+    if not (root / RELEASE_REL).is_file():
+        return {}, [f"{RELEASE_REL} is missing, so the journey's Builds are pinned by no release"]
+    release = read_kvx(root, RELEASE_REL)
+    control = release.get("build.refworld_control", {}).get("hash")
+    pair = (release.get("build.upgrade_pairs", {}).get("hashes") or {}).get(JOURNEY_PAIR) or {}
+    pins = {
+        "refworld": control,
+        f"{JOURNEY_PAIR}-A": pair.get("a"),
+        f"{JOURNEY_PAIR}-B": pair.get("b"),
+    }
+    unpinned = sorted(label for label, value in pins.items() if not SHA.match(str(value)))
+    if unpinned:
+        return pins, [f"{RELEASE_REL} pins no Build hash for {unpinned}"]
+    return pins, []
+
+
+def journey_problems(root: Path, journey_block, release: bool = True) -> list[str]:
+    """Why the recorded acceptance journey is not a complete run of the current product (and, with
+    release, not a run on the Builds the release pins)."""
+    if not isinstance(journey_block, dict):
+        return [f"no acceptance journey is recorded ([{JOURNEY}] in {QUAL_REL})"]
+    problems = []
+    if journey_block.get("exit_code") != 0 or journey_block.get("complete") is not True:
+        problems.append(
+            f"the recorded journey is incomplete (exit_code {journey_block.get('exit_code')}): "
+            f"{str(journey_block.get('observed'))[:300]}"
+        )
+    steps = journey_block.get("steps")
+    if not (
+        isinstance(steps, list)
+        and [str(step).split(":")[0] for step in steps] == list(JOURNEY_STEPS)
+        and all(str(step).endswith(": exit 0") for step in steps)
+    ):
+        problems.append(
+            f"the recorded journey does not show every step {list(JOURNEY_STEPS)} with exit 0: {steps}"
+        )
+    labels = journey_block.get("build_labels")
+    if not isinstance(labels, dict) or not all(
+        SHA.match(str(labels.get(k))) for k in JOURNEY_BUILDS
+    ):
+        problems.append(
+            f"the recorded journey names no exact Build hash for each of {JOURNEY_BUILDS}"
+        )
+        labels = {}
+    elif sorted(labels.values()) != sorted(journey_block.get("builds") or []):
+        problems.append("the recorded journey's builds differ from its labelled Build hashes")
+    current = journey_revision(root)
+    if "None" in current:
+        problems.append(f"the tree has no compiler, kernel or SDK revision ({current})")
+    elif journey_block.get("revision") != current:
+        problems.append(
+            f"the journey ran against {journey_block.get('revision')}, not the current tree ({current})"
+        )
+    if not release:
+        return problems
+    pins, unpinned = release_pins(root)
+    problems += unpinned
+    if labels and not unpinned:
+        differing = sorted(k for k in JOURNEY_BUILDS if labels.get(k) != pins.get(k))
+        if differing:
+            problems.append(
+                "the journey's Builds differ from the release pins in "
+                f"{RELEASE_REL} for {differing}: "
+                + "; ".join(f"{k} ran {labels.get(k)}, pinned {pins.get(k)}" for k in differing)
+            )
+    return problems
+
+
+def acceptance_items(root: Path) -> tuple[dict, list[str]]:
+    """Owner acceptance must be recorded over a complete acceptance journey of the current tree, on
+    the release's Builds, and reference exactly the journey's Build hashes."""
     qual = root / QUAL_REL
-    block = parse_kvx(qual.read_text(), QUAL_REL).get(ACCEPTANCE) if qual.is_file() else None
+    sections = parse_kvx(qual.read_text(), QUAL_REL) if qual.is_file() else {}
+    block = sections.get(ACCEPTANCE)
+    journey_block = sections.get(JOURNEY)
+    blocking = [f"acceptance journey: {p}" for p in journey_problems(root, journey_block)]
     if block is None:
-        return {"recorded": False}, [
-            f"owner acceptance is not recorded ([{ACCEPTANCE}] in {QUAL_REL})"
+        return {"recorded": False, "journey_complete": not blocking}, [
+            *blocking,
+            f"owner acceptance is not recorded ([{ACCEPTANCE}] in {QUAL_REL})",
         ]
     problems = []
     if block.get("owner_acceptance") is not True:
@@ -313,16 +527,53 @@ def acceptance_items(root: Path, pass_builds: set[str]) -> tuple[dict, list[str]
     ):
         problems.append("builds must be a nonempty list of sha256:<64hex> Build hashes")
         builds = []
-    unbacked = sorted(b for b in builds if b not in pass_builds)
-    if unbacked:
-        problems.append(f"accepted Build hashes {unbacked} are not used by any PASS case evidence")
+    journey_builds = (journey_block or {}).get("builds") or []
+    if builds and sorted(builds) != sorted(journey_builds):
+        problems.append(
+            f"accepted Build hashes {sorted(builds)} are not the recorded journey's {sorted(journey_builds)}"
+        )
+    if journey_block is not None and block.get("revision") != journey_block.get("revision"):
+        problems.append("the acceptance names a revision other than the recorded journey's")
     summary = {
-        "recorded": not problems,
+        "recorded": not problems and not blocking,
+        "journey_complete": not blocking,
         "accepted_by": block.get("accepted_by"),
         "accepted_on": block.get("accepted_on"),
         "builds": builds,
     }
-    return summary, [f"owner acceptance in {QUAL_REL} is invalid: {p}" for p in problems]
+    return summary, blocking + [f"owner acceptance in {QUAL_REL} is invalid: {p}" for p in problems]
+
+
+def recorded_status_items(root: Path, spec_cases: dict, cases: list[dict]) -> list[str]:
+    """spec.kvx case statuses and qualification.kvx product-evidence claims, re-checked against the
+    independent checker: closure never trusts a status or a claim it did not derive."""
+    items = []
+    for case in cases:
+        recorded = spec_cases.get(case["case"], {}).get("status")
+        expected = case["status"] if case["status"] in ("PASS", "FAIL", "BLOCKED") else "UNRUN"
+        if recorded != expected:
+            items.append(
+                f"{case['case']}: {SPEC_REL} records {recorded} but the checker derives {expected}"
+            )
+    qual = root / QUAL_REL
+    sections = parse_kvx(qual.read_text(), QUAL_REL) if qual.is_file() else {}
+    claimed: dict[str, list[str]] = {}
+    for name, block in sections.items():
+        if block.get("product_evidence") is True:
+            claimed.setdefault(str(block.get("evidence")), []).append(name)
+    for rel, names in sorted(claimed.items()):
+        valid = (
+            rel.startswith("tests/cwr/evidence/")
+            and ".." not in Path(rel).parts
+            and (root / rel).is_file()
+        )
+        if not valid or not checker_accepts(root, rel):
+            items.append(
+                f"{QUAL_REL} [{names[0]}]"
+                + (f" and {len(names) - 1} more" if len(names) > 1 else "")
+                + f" claim product evidence {rel}, which the checker does not accept"
+            )
+    return items
 
 
 def assemble(root: Path) -> dict:
@@ -340,7 +591,6 @@ def assemble(root: Path) -> dict:
         )
     current = runner_support.revisions(root)
     cases: list[dict] = []
-    pass_builds: set[str] = set()
     for ident in sorted(spec_cases, key=case_key):
         derived = checker_status(root, ident)
         entry = registry_cases.get(ident, {})
@@ -412,8 +662,6 @@ def assemble(root: Path) -> dict:
                         + ": "
                         + "; ".join(stale)
                     )
-                else:
-                    pass_builds.update(builds)
         cases.append(
             {
                 "case": ident,
@@ -454,8 +702,9 @@ def assemble(root: Path) -> dict:
                 blocking.append(f"clause {clause}: no qualified PASS case among {mapped}")
     hypotheses, more = hypothesis_items(root, registry)
     blocking += more
-    acceptance, more = acceptance_items(root, pass_builds)
+    acceptance, more = acceptance_items(root)
     blocking += more
+    blocking += recorded_status_items(root, spec_cases, cases)
     counts: dict[str, int] = {}
     for case in cases:
         counts[str(case["status"])] = counts.get(str(case["status"]), 0) + 1
@@ -486,7 +735,8 @@ def render(report: dict) -> str:
         info = hyp.get(name, {})
         lines.append(
             f"CLOSURE HYPOTHESIS {name} report={info.get('report')} present={info.get('present')} "
-            f"preregistration={info.get('carries_preregistration')}"
+            f"preregistration={info.get('carries_preregistration')} "
+            f"complete_matrix={info.get('complete_matrix')}"
         )
     acc = report["owner_acceptance"]
     lines.append(
@@ -1035,7 +1285,7 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
 
     step("build refworld", lambda: build("refworld", "examples/refworld", builds_dir))
     step("create Instance", create)
-    step(f"run long task {task}", long_task)
+    step("run long task", long_task)
     step("build U1 side A", lambda: build("U1-A", "examples/refworld-upgrades/U1/A", pair_dir))
     step(
         "build U1 side B",
@@ -1056,20 +1306,24 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
 
 
 def record_journey(root: Path, result: dict) -> None:
-    summary = "; ".join(
+    steps = [
         f"{s['step']}: exit {s.get('exit_code')}" + (f" ({s.get('note')})" if s.get("note") else "")
         for s in result["steps"]
-    )
+    ]
     fields = {
-        "revision": "compiler {compiler_revision}; kernel {kernel_revision}; sdk {sdk_revision}".format(
-            **runner_support.revisions(root)
-        ),
+        "revision": journey_revision(root),
         "command": "python3 tests/cwr/closure.py --journey",
         "exit_code": 0 if result["complete"] else 1,
         "log": QUAL_REL,
-        "observed": f"acceptance journey {'complete' if result['complete'] else 'incomplete'}: {summary}",
+        "observed": (
+            f"acceptance journey {'complete' if result['complete'] else 'incomplete'} "
+            f"(long task {result['task']}, Instance {result['instance']}): " + "; ".join(steps)
+        ),
         "assumption": "The journey is recorded for the owner to accept; it is not owner acceptance and not a checker-accepted record.",
         "product_evidence": False,
+        "complete": result["complete"],
+        "steps": steps,
+        "build_labels": {k: v for k, v in sorted(result["builds"].items()) if v},
         "builds": sorted(h for h in result["builds"].values() if h),
     }
     rewrite_qualification(root, [(JOURNEY, fields)], (JOURNEY,))
@@ -1078,9 +1332,11 @@ def record_journey(root: Path, result: dict) -> None:
 def accept(root: Path, owner: str) -> None:
     qual = read_kvx(root, QUAL_REL)
     journey_block = qual.get(JOURNEY)
-    if journey_block is None or journey_block.get("exit_code") != 0:
+    problems = journey_problems(root, journey_block, release=False)
+    if problems:
         raise UnusableError(
-            f"no complete acceptance journey is recorded ([{JOURNEY}] in {QUAL_REL})"
+            f"the acceptance journey ([{JOURNEY}] in {QUAL_REL}) cannot be accepted: "
+            + "; ".join(problems)
         )
     fields = {
         "revision": journey_block["revision"],

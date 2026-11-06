@@ -2,9 +2,9 @@
 
 Generated from [spec.kvx](spec.kvx); regenerate with `python3 spec/cwr/tools/validate_spec.py --render`.
 
-Source digest (requirements, clauses, tasks and cases): `sha256:d56900a829b007d15b4b2b96b0d26393a94d787b46e711e1be83d74147a6bf62`.
+Source digest (requirements, clauses, tasks and cases): `sha256:98ec1050405efed0a789a63e355d87a51571192215e76c3c49257ac605f15351`.
 
-Task statuses below record authoring state. Verification drivers are task deliverables; a command being listed is not evidence that it exists or passes. No compiler, kernel, model or campaign has run.
+Task statuses below are written from registry outcomes by `python3 tests/cwr/closure.py --apply`: implemented when the task driver exists and its latest run through the qualification runner exited 0, otherwise blocked. Case statuses are the outcomes the independent checker derives from the attempt records named in [qualification.kvx](qualification.kvx).
 
 Dependencies determine eligibility. Wave numbers group integration obligations: contracts and evidence (0), compiler (1), kernel (2), model surface and ablation builds (3), reference world (4), experiments (5), release (6). Each package couples its implementation with a direct consumer and positive and negative checks. Component success does not qualify a complete case or a hypothesis.
 
@@ -48,7 +48,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/0_1.py`.
 
 Acceptance clauses: 13.1, 13.5, 14.1.
-Canonical cases: CWR-020 (UNRUN).
+Canonical cases: CWR-020 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -72,7 +72,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/0_2.py`.
 
 Acceptance clauses: 13.2, 13.3, 13.4.
-Canonical cases: CWR-019 (UNRUN).
+Canonical cases: CWR-019 (PASS).
 
 Implementation and qualification obligations:
 
@@ -101,7 +101,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/0_3.py`.
 
 Acceptance clauses: 2.3, 3.1, 3.2, 3.3, 3.4, 3.6.
-Canonical cases: CWR-001 (UNRUN).
+Canonical cases: CWR-001 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -129,7 +129,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/1_1.py`.
 
 Acceptance clauses: 2.1, 2.2, 3.1, 3.5, 4.1.
-Canonical cases: CWR-002 (UNRUN).
+Canonical cases: CWR-002 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -155,7 +155,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/1_2.py`.
 
 Acceptance clauses: 1.6, 3.6, 4.2, 4.3, 4.4, 5.5.
-Canonical cases: CWR-003, CWR-004 (UNRUN).
+Canonical cases: CWR-003 (FAIL), CWR-004 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -183,7 +183,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/1_3.py`.
 
 Acceptance clauses: 1.4, 2.4, 2.5, 4.5, 4.6, 9.2.
-Canonical cases: CWR-005 (UNRUN).
+Canonical cases: CWR-005 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -211,7 +211,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/2_1.py`.
 
 Acceptance clauses: 1.5, 6.6, 8.1, 8.2, 9.4.
-Canonical cases: CWR-006 (UNRUN).
+Canonical cases: CWR-006 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -222,7 +222,7 @@ Implementation and qualification obligations:
 
 ## 2.2: Sandboxed executor and atomic contract check
 
-Status: **blocked**. Owner: `kernel`. Dependencies: 2.1, 1.3.
+Status: **implemented**. Owner: `kernel`. Dependencies: 2.1, 1.3.
 
 Proposed implementation scope:
 
@@ -239,7 +239,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/2_2.py`.
 
 Acceptance clauses: 1.1, 1.2, 1.3, 1.6, 2.2, 2.6, 6.1, 6.2, 6.3, 6.4, 6.5.
-Canonical cases: CWR-007, CWR-008 (UNRUN).
+Canonical cases: CWR-007 (FAIL), CWR-008 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -266,7 +266,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/2_3.py`.
 
 Acceptance clauses: 1.3, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6.
-Canonical cases: CWR-009 (UNRUN).
+Canonical cases: CWR-009 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -290,7 +290,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/2_4.py`.
 
 Acceptance clauses: 6.6, 8.3, 8.4, 8.5.
-Canonical cases: CWR-010 (UNRUN).
+Canonical cases: CWR-010 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -316,7 +316,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/2_5.py`.
 
 Acceptance clauses: 3.6, 5.1, 5.2, 5.3, 5.4, 5.5.
-Canonical cases: CWR-011 (UNRUN).
+Canonical cases: CWR-011 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -342,7 +342,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/3_1.py`.
 
 Acceptance clauses: 2.4, 2.5, 9.1, 9.2, 9.3, 9.4, 9.5.
-Canonical cases: CWR-012 (UNRUN).
+Canonical cases: CWR-012 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -368,7 +368,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/3_2.py`.
 
 Acceptance clauses: 5.3, 10.1, 10.2, 10.3, 10.4, 10.5.
-Canonical cases: CWR-013 (UNRUN).
+Canonical cases: CWR-013 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -398,7 +398,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/4_1.py`.
 
 Acceptance clauses: 7.5, 11.1, 11.5.
-Canonical cases: CWR-009, CWR-014 (UNRUN).
+Canonical cases: CWR-009 (FAIL), CWR-014 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -421,7 +421,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/4_2.py`.
 
 Acceptance clauses: 11.2, 11.3.
-Canonical cases: CWR-015 (UNRUN).
+Canonical cases: CWR-015 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -448,7 +448,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/4_3.py`.
 
 Acceptance clauses: 5.2, 5.3, 11.4.
-Canonical cases: CWR-011, CWR-016 (UNRUN).
+Canonical cases: CWR-011 (FAIL), CWR-016 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -474,7 +474,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/5_1.py`.
 
 Acceptance clauses: 8.5, 12.1, 12.3, 12.4, 12.6.
-Canonical cases: CWR-017 (UNRUN).
+Canonical cases: CWR-017 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -500,7 +500,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/5_2.py`.
 
 Acceptance clauses: 10.2, 10.4, 12.2, 12.5.
-Canonical cases: CWR-018 (UNRUN).
+Canonical cases: CWR-018 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -526,7 +526,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/5_3.py`.
 
 Acceptance clauses: 5.3, 10.3, 12.2, 12.5.
-Canonical cases: CWR-018 (UNRUN).
+Canonical cases: CWR-018 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -555,7 +555,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/6_1.py`.
 
 Acceptance clauses: 14.2, 14.3.
-Canonical cases: CWR-020 (UNRUN).
+Canonical cases: CWR-020 (FAIL).
 
 Implementation and qualification obligations:
 
@@ -578,7 +578,7 @@ Proposed implementation scope:
 Future focused gate: `python3 tests/cwr/cases/6_2.py`.
 
 Acceptance clauses: 13.1, 13.4, 14.1, 14.4.
-Canonical cases: CWR-020 (UNRUN).
+Canonical cases: CWR-020 (FAIL).
 
 Implementation and qualification obligations:
 

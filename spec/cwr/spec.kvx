@@ -277,7 +277,7 @@ cases = ["CWR-006"]
 
 [task.2.2]
 title = "Sandboxed executor and atomic contract check"
-status = "blocked"
+status = "implemented"
 wave = 2
 requires = ["2.1", "1.3"]
 touches = ["crates/cwr-kernel/src/sandbox.rs", "crates/cwr-kernel/src/rpc.rs", "crates/cwr-kernel/src/executor.rs", "crates/cwr-kernel/src/contract_check.rs", "crates/cwr-kernel/src/limits.rs", "crates/cwr-kernel/src/envelope.rs", "sdk/python/cwr/_runner.py", "crates/cwr-cli/src/turn.rs", "tests/cwr/cases/2_2.py"]

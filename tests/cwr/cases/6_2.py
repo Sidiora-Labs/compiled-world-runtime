@@ -16,7 +16,16 @@ spec/cwr/tools/validate_spec.py, all run as subprocesses:
   component (task-scope) PASS for that case still leaves it missing; once the case is qualified,
   closure lists every case PASS with owner acceptance and accepts the release claim; tampered,
   stale-Build and zero-assertion evidence, a missing hypothesis report, a draft pre-registration,
-  missing or unbacked owner acceptance and an untraced clause each refuse it with a named item;
+  an analysis without the complete registered arm matrix, a pre-registered metric or a cited
+  analysis, a spec.kvx status or product-evidence claim the checker does not back, missing owner
+  acceptance, acceptance of other Builds than the journey's, a missing, incomplete or stale journey,
+  a journey on other Builds than the release pins and an untraced clause each refuse it with a
+  named item;
+* the owner's acceptance journey runs for real: closure.py --journey drives the cwr binary built
+  from this checkout (cargo honours CARGO_TARGET_DIR) through build refworld, create an Instance,
+  run a long task, upgrade across U1 and replay, records every step with exact Build hashes, and the
+  refworld hash equals an independent `cwr build`; --accept refuses before the journey is recorded
+  and over an incomplete journey;
 * closure --apply writes case statuses only from registry outcomes (an unexecuted case stays UNRUN),
   tasks implemented or blocked from their latest driver run, and qualification entries whose
   product evidence the validator re-checks; the validator then passes at the implementation stage,
@@ -28,7 +37,7 @@ checkout. CWR-019 in the temporary root is the real accepted attempt record of t
 (copied with its attempt directory and re-indexed), or, when none exists, a fresh run of the real
 task 0.2 driver. Prints "CHECK ..." per check, "ASSERT CWR-020.a6|a7 PASS|FAIL ..." (the protocol of
 tests/cwr/qualify.py) and one "CLAUSE <req.ac> PASS|FAIL <evidence>" line per owned clause. Exits 0
-only when every clause passes. Python 3.12, standard library only; nothing is compiled.
+only when every clause passes. Python 3.12, standard library only; the only build is the cwr CLI.
 """
 
 from __future__ import annotations
@@ -56,6 +65,7 @@ INDEX_REL = "tests/cwr/evidence/index.jsonl"
 SPEC_REL = "spec/cwr/spec.kvx"
 QUAL_REL = "spec/cwr/qualification.kvx"
 VALIDATOR_REL = "spec/cwr/tools/validate_spec.py"
+RELEASE_REL = "benchmark/release.kvx"
 TIMEOUT = 900
 CLAUSES = ("13.1", "13.4", "14.1", "14.4")
 B1 = "sha256:" + "b1" * 32
@@ -63,6 +73,24 @@ B2 = "sha256:" + "b2" * 32
 MODEL = {"identity": "fixture-model-id", "sampling": {"temperature": 0}}
 GENESIS = "sha256:" + "0" * 64
 MISSING = "CWR-014"
+CARGO_TIMEOUT = 3600
+JOURNEY_STEPS = (
+    "build refworld",
+    "create Instance",
+    "run long task",
+    "build U1 side A",
+    "build U1 side B",
+    "upgrade across U1",
+    "replay the pre-upgrade ledger",
+)
+# fixture hypotheses: arms, task set (counted from the copied suite or upgrade pairs), metrics
+FIXTURE_HYPOTHESES = {
+    "H1": (["frozen", "drift-1"], "suite:all"),
+    "H2": (["script", "one-primitive"], "suite:all"),
+    "H3": (["k5", "k20"], "suite:all"),
+    "H4": (["changelog", "silent"], "upgrades:all"),
+}
+FIXTURE_METRICS = ("task_success", "failure_rate")
 REPORTS = (
     "research/h1-stability.md",
     "research/h2-direct-action.md",
@@ -269,6 +297,10 @@ def checkout_closure() -> dict | None:
     spec_cases = sorted(k[5:] for k in kvx((REPO / SPEC_REL).read_text()) if k.startswith("case."))
     watched = [REGISTRY_REL, INDEX_REL, SPEC_REL, QUAL_REL]
     before = {rel: digest(REPO / rel) for rel in watched}
+    earlier = {}
+    for case in spec_cases:
+        derived = json.loads(py(REPO, CHECKER_REL, "--status", case).stdout)
+        earlier[case] = (derived["status"], derived["evidence"])
     code, report, tail = closure(REPO)
     code_text, text = closure_text(REPO)
     after = {rel: digest(REPO / rel) for rel in watched}
@@ -293,7 +325,11 @@ def checkout_closure() -> dict | None:
     for case in report["cases"]:
         proc = py(REPO, CHECKER_REL, "--status", case["case"])
         derived = json.loads(proc.stdout)
-        if (derived["status"], derived["evidence"]) != (case["status"], case["evidence"]):
+        # other qualification runs may write the shared store meanwhile: closure must equal the
+        # checker's derivation taken before it ran or the one taken after
+        if (derived["status"], derived["evidence"]) != (case["status"], case["evidence"]) and (
+            earlier.get(case["case"]) != (case["status"], case["evidence"])
+        ):
             mismatched.append((case["case"], derived["status"], case["status"]))
     R.add(
         ("13.1", "14.4"),
@@ -414,24 +450,26 @@ def build_root(work: Path) -> tuple[Path, dict, str]:
     ):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(f"# fixture source tree {rel}\n")
-    prereg = (
-        "# Fixture pre-registration of a temporary root.\n\n[meta]\n"
-        'format = "cwr.preregistration"\nstatus = "registered"\n'
-    )
+    prereg = fixture_prereg()
     (root / "benchmark").mkdir(parents=True)
     (root / "benchmark/preregistration.kvx").write_text(prereg)
-    # campaign task labels are verified against the suite
-    (root / "benchmark/suite.kvx").write_text(
-        '[task.t001-copy-readme]\nbin = "short"\n'
-        if not (REPO / "benchmark/suite.kvx").is_file()
-        else (REPO / "benchmark/suite.kvx").read_text()
-    )
+    # campaign task labels are verified against the suite; the suite, the upgrade pairs, the task
+    # definitions, reference solutions, predicate helpers and World Sources are what the real
+    # acceptance journey runs
+    for rel in ("benchmark/suite.kvx", "benchmark/upgrades.kvx"):
+        shutil.copyfile(REPO / rel, root / rel)
+    for rel in ("benchmark/tasks", "benchmark/solutions", "benchmark/predicates", "examples"):
+        shutil.copytree(
+            REPO / rel, root / rel, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+        )
     prereg_digest = sha_bytes(prereg.encode())
     for n, rel in enumerate(REPORTS, 1):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(
             f"# H{n} fixture report\n\nPre-registration: benchmark/preregistration.kvx {prereg_digest}\n"
+            f"Analysis: benchmark/results/h{n}/analysis.json\n"
         )
+        write_analysis(root, f"H{n}", prereg_digest)
     registry_text = (REPO / REGISTRY_REL).read_text()
     registry = kvx(registry_text)
     registry_text = set_key(
@@ -474,6 +512,98 @@ def build_root(work: Path) -> tuple[Path, dict, str]:
     return root, subsets_by_task, prereg_digest
 
 
+def fixture_prereg() -> str:
+    """A registered fixture pre-registration: one seed, and per hypothesis its arms, task set,
+    metrics and one direction."""
+    text = (
+        "# Fixture pre-registration of a temporary root.\n\n[meta]\n"
+        'format = "cwr.preregistration"\nstatus = "registered"\n\n[campaign]\nseeds = [1]\n'
+    )
+    for hypothesis, (arms, task_set) in FIXTURE_HYPOTHESES.items():
+        direction = {
+            "id": f"{hypothesis}.fixture",
+            "metric": FIXTURE_METRICS[0],
+            "a": arms[0],
+            "b": arms[1],
+            "expect": "a>b",
+        }
+        text += (
+            f"\n[hypothesis.{hypothesis}]\narms = {json.dumps(arms)}\n"
+            f"task_set = {json.dumps(task_set)}\nprimary = {json.dumps(FIXTURE_METRICS[0])}\n"
+            f"secondary = {json.dumps(list(FIXTURE_METRICS[1:]))}\n"
+            f"directions = {json.dumps([direction])}\n"
+        )
+    return text
+
+
+def fixture_task_count(task_set: str) -> int:
+    rel, prefix = (
+        ("benchmark/suite.kvx", "task.")
+        if task_set == "suite:all"
+        else ("benchmark/upgrades.kvx", "pair.")
+    )
+    return sum(1 for name in kvx((REPO / rel).read_text()) if name.startswith(prefix))
+
+
+def write_analysis(root: Path, hypothesis: str, prereg_digest: str, **change) -> None:
+    """A fixture analysis holding the complete registered matrix of one hypothesis; change drops
+    cells, a metric or a direction."""
+    arms, task_set = FIXTURE_HYPOTHESES[hypothesis]
+    expected = len(arms) * fixture_task_count(task_set)
+    present = expected - change.get("drop_cells", 0)
+    stat = {"mean": 0.5, "ci": [0.4, 0.6], "n": 1, "undefined": 0}
+    metrics = {"task_success": stat, "failure_rate.LIMIT": stat}
+    cells = {
+        arm: {"all": {"instances": expected // len(arms), "metrics": dict(metrics)}} for arm in arms
+    }
+    if change.get("drop_metric"):
+        del cells[arms[-1]]["all"]["metrics"][change["drop_metric"]]
+    directions = (
+        []
+        if change.get("drop_direction")
+        else [
+            {"id": f"{hypothesis}.fixture", "label": "inconclusive", "estimate": 0.0, "ci": [0, 0]}
+        ]
+    )
+    record = {
+        "schema": "cwr.analysis/1",
+        "registration": "registered",
+        "inputs": {"preregistration": prereg_digest},
+        "hypotheses": {
+            hypothesis: {
+                "matrix": {
+                    "complete": present == expected,
+                    "expected": expected,
+                    "present": present,
+                    "missing_count": expected - present,
+                    "missing": [],
+                },
+                "cells": cells,
+                "directions": directions,
+            }
+        },
+    }
+    path = root / f"benchmark/results/h{hypothesis[1:]}/analysis.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def cwr_binary() -> tuple[Path | None, str]:
+    """Build the cwr CLI of this checkout; cargo honours CARGO_TARGET_DIR when it is set."""
+    proc = subprocess.run(
+        ["cargo", "build", "-q", "-p", "cwr-cli"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=CARGO_TIMEOUT,
+        env=env(),
+    )
+    binary = Path(os.environ.get("CARGO_TARGET_DIR") or REPO / "target") / "debug" / "cwr"
+    if proc.returncode != 0 or not binary.is_file():
+        return None, f"cargo build -p cwr-cli exit {proc.returncode}: {proc.stderr[-600:]}"
+    return binary, f"built {binary}"
+
+
 def write_driver(root: Path, task: str, conf: dict) -> None:
     path = root / "tests/cwr/cases" / (task.replace(".", "_") + ".py")
     path.write_text(DRIVER_TEMPLATE.format(task=task, conf=json.dumps(conf)))
@@ -484,6 +614,11 @@ def import_cwr019(root: Path) -> str:
     proc = py(REPO, CHECKER_REL, "--status", "CWR-019")
     derived = json.loads(proc.stdout) if proc.stdout.strip() else {}
     rel = derived.get("evidence") if derived.get("status") == "PASS" else None
+    if rel:
+        # a record judged by an earlier checker revision is stale for closure: qualify afresh
+        record = json.loads((REPO / rel).read_text())
+        if (record.get("checker") or {}).get("revision") != digest(REPO / CHECKER_REL):
+            rel = None
     if rel:
         entry = next(
             json.loads(line)
@@ -502,7 +637,12 @@ def import_cwr019(root: Path) -> str:
         text = set_key(text, "case.CWR-019", "evidence", rel)
         (root / REGISTRY_REL).write_text(text)
         return f"imported {rel}"
-    shutil.copyfile(REPO / "tests/cwr/cases/0_2.py", root / "tests/cwr/cases/0_2.py")
+    # the real task 0.2 driver runs against this checkout; its output is qualified in the root
+    (root / "tests/cwr/cases/0_2.py").write_text(
+        "import os, subprocess, sys\n"
+        f"sys.exit(subprocess.call([sys.executable, {str(REPO / 'tests/cwr/cases/0_2.py')!r}], "
+        "env=os.environ))\n"
+    )
     qproc = py(root, QUALIFY_REL, "--case", "CWR-019")
     return f"qualified afresh with the real task 0.2 driver: exit {qproc.returncode}"
 
@@ -513,19 +653,71 @@ def qualify(root: Path, case: str, task: str | None = None) -> tuple[int, str]:
     return proc.returncode, proc.stdout[-400:] + proc.stderr[-400:]
 
 
-def record_journey_fixture(root: Path) -> None:
-    text = (root / QUAL_REL).read_text()
-    text += (
-        "\n[progress.acceptance_journey]\n"
-        'revision = "fixture"\ncommand = "python3 tests/cwr/closure.py --journey"\nexit_code = 0\n'
-        f'log = "{QUAL_REL}"\nobserved = "fixture journey"\nassumption = "fixture"\n'
-        f"product_evidence = false\nbuilds = {json.dumps([B1])}\n"
+def write_release(root: Path, labels: dict) -> None:
+    """Fixture release pins for the Builds the journey ran: the refworld control and pair U1."""
+    pair = {"U1": {"a": labels.get("U1-A"), "b": labels.get("U1-B")}}
+    (root / RELEASE_REL).write_text(
+        "# Fixture release pins of a temporary root built by tests/cwr/cases/6_2.py.\n\n"
+        f"[build.refworld_control]\nhash = {json.dumps(labels.get('refworld'))}\n\n"
+        f"[build.upgrade_pairs]\nhashes = {json.dumps(pair)}\n"
     )
-    (root / QUAL_REL).write_text(text)
+
+
+def acceptance_journey(root: Path, binary: Path | None, how: str) -> dict:
+    """Run the real acceptance journey in the temporary root and check what it records."""
+    refused = py(root, CLOSURE_REL, "--accept", "--owner", "fixture-owner")
+    R.add(
+        ("14.4",),
+        ("a7",),
+        refused.returncode == 2
+        and "progress.owner_acceptance" not in (root / QUAL_REL).read_text(),
+        "closure --accept is refused while no acceptance journey is recorded",
+        f"exit={refused.returncode} {refused.stderr[-300:]}",
+    )
+    if binary is None:
+        R.add(("14.4",), ("a7",), False, "the cwr CLI of this checkout builds", how)
+        return {}
+    proc = py(root, CLOSURE_REL, "--journey", "--cwr", str(binary))
+    block = kvx((root / QUAL_REL).read_text()).get("progress.acceptance_journey", {})
+    labels = block.get("build_labels") or {}
+    steps = block.get("steps") or []
+    R.add(
+        ("14.4",),
+        ("a7",),
+        proc.returncode == 0
+        and block.get("exit_code") == 0
+        and block.get("complete") is True
+        and [str(step).split(":")[0] for step in steps] == list(JOURNEY_STEPS)
+        and all(str(step).endswith(": exit 0") for step in steps)
+        and sorted(labels) == ["U1-A", "U1-B", "refworld"]
+        and all(re.fullmatch(r"sha256:[0-9a-f]{64}", str(h)) for h in labels.values())
+        and sorted(labels.values()) == sorted(block.get("builds") or []),
+        "closure --journey runs the real cwr CLI through build refworld, create an Instance, run a "
+        "long task, upgrade across U1 and replay, and records every step with exact Build hashes",
+        f"exit={proc.returncode} block={json.dumps(block)[:600]} {proc.stderr[-400:]}",
+    )
+    out = Path(tempfile.mkdtemp(prefix="cwr-6-2-build-"))
+    try:
+        built = run(
+            [str(binary), "build", "examples/refworld", "--out", str(out), "--json"], cwd=REPO
+        )
+        independent = json.loads(built.stdout)["build"]["hash"] if built.returncode == 0 else None
+    except (ValueError, KeyError):
+        independent = None
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+    R.add(
+        ("14.4",),
+        ("a7",),
+        independent is not None and independent == labels.get("refworld"),
+        "the journey's refworld Build hash equals an independent `cwr build examples/refworld`",
+        f"journey={labels.get('refworld')} independent={independent}",
+    )
+    return labels
 
 
 def synthetic(work: Path) -> None:
-    root, subsets, _ = build_root(work)
+    root, subsets, prereg_digest = build_root(work)
     how = import_cwr019(root)
     status019 = json.loads(py(root, CHECKER_REL, "--status", "CWR-019").stdout)
     R.add(
@@ -535,16 +727,33 @@ def synthetic(work: Path) -> None:
         f"CWR-019 evidence in the temporary root is an accepted PASS ({how})",
         json.dumps(status019)[:400],
     )
-    record_journey_fixture(root)
+    binary, built = cwr_binary()
+    labels = acceptance_journey(root, binary, built)
+    write_release(root, labels)
     accept = py(root, CLOSURE_REL, "--accept", "--owner", "fixture-owner")
+    accepted = kvx((root / QUAL_REL).read_text()).get("progress.owner_acceptance", {})
     R.add(
         ("14.4",),
         ("a7",),
         accept.returncode == 0
-        and kvx((root / QUAL_REL).read_text()).get("progress.owner_acceptance", {}).get("builds")
-        == [B1],
+        and accepted.get("owner_acceptance") is True
+        and sorted(accepted.get("builds") or []) == sorted(labels.values())
+        and bool(labels),
         "closure --accept records owner acceptance referencing the journey's exact Build hashes",
         accept.stderr[-300:],
+    )
+    incomplete = clone(root, work / "accept-incomplete")
+    text = (incomplete / QUAL_REL).read_text().split("[progress.owner_acceptance]")[0]
+    text = set_key(text, "progress.acceptance_journey", "exit_code", 1)
+    (incomplete / QUAL_REL).write_text(text.rstrip() + "\n")
+    refused = py(incomplete, CLOSURE_REL, "--accept", "--owner", "fixture-owner")
+    R.add(
+        ("14.4",),
+        ("a7",),
+        refused.returncode == 2
+        and "progress.owner_acceptance" not in (incomplete / QUAL_REL).read_text(),
+        "closure --accept is refused over a journey recorded incomplete",
+        f"exit={refused.returncode} {refused.stderr[-300:]}",
     )
     cases = sorted(k[5:] for k in kvx((root / SPEC_REL).read_text()) if k.startswith("case."))
     failures = []
@@ -561,6 +770,10 @@ def synthetic(work: Path) -> None:
         f"the real runner qualifies every fixture case except {MISSING} as PASS",
         str(failures)[:800],
     )
+    # the pack as qualification left it (design-stage statuses); closure --apply then records outcomes
+    pre_apply = clone(root, work / "pre-apply")
+    applied = py(root, CLOSURE_REL, "--apply")
+    R.add(("13.1",), (), applied.returncode == 0, "closure --apply runs", applied.stderr[-300:])
 
     # one case missing: closure names it and refuses
     missing_root = clone(root, work / "missing")
@@ -611,7 +824,8 @@ def synthetic(work: Path) -> None:
     )
 
     # an apply over the store with one case missing: statuses only from registry outcomes (13.1)
-    apply_root = clone(missing_root, work / "apply")
+    apply_root = clone(pre_apply, work / "apply")
+    before = kvx((apply_root / SPEC_REL).read_text())
     apply = py(apply_root, CLOSURE_REL, "--apply")
     spec_after = kvx((apply_root / SPEC_REL).read_text())
     case_status = {k[5:]: v["status"] for k, v in spec_after.items() if k.startswith("case.")}
@@ -621,6 +835,8 @@ def synthetic(work: Path) -> None:
         ("13.1",),
         (),
         apply.returncode == 0
+        and before["meta"]["stage"] == "design"
+        and {v["status"] for k, v in before.items() if k.startswith("case.")} == {"UNRUN"}
         and spec_after["meta"]["stage"] == "implementation"
         and spec_after["meta"]["status"] == "in_progress"
         and case_status == expected_cases,
@@ -641,13 +857,30 @@ def synthetic(work: Path) -> None:
     )
     render_code, _, render_tail = validator(apply_root, "--render")
     check_code, check_report, check_tail = validator(apply_root)
+    plan = (apply_root / "spec/cwr/implementation-plan.md").read_text()
+    trace = (apply_root / "spec/cwr/traceability.md").read_text()
     R.add(
         ("13.1", "14.1"),
         (),
         render_code == 0 and check_code == 0 and (check_report or {}).get("status") == "PASS",
-        "after --apply and --render the validator passes at the implementation stage, re-checking "
-        "every case outcome and product-evidence entry against the checker",
+        "after --apply and --render the validator passes at the implementation stage",
         (render_tail + check_tail)[-1200:],
+    )
+    shown = re.findall(r"(CWR-\d{3}) \((\w+)\)", plan + trace)
+    wrong = sorted({(c, st) for c, st in shown if case_status.get(c) != st})
+    R.add(
+        ("14.1",),
+        (),
+        bool(shown)
+        and not wrong
+        and {c for c, _ in shown} == set(case_status)
+        and "All cases are UNRUN" not in trace
+        and "No compiler, kernel, model or campaign has run" not in plan
+        and (check_report or {}).get("product_qualification")
+        == {"PASS": len(case_status) - 1, "UNRUN": 1},
+        "the generated views and the validator report show every case with the outcome --apply "
+        "recorded, not a blanket UNRUN",
+        f"wrong={wrong[:5]} pq={(check_report or {}).get('product_qualification')}",
     )
     tampered = clone(apply_root, work / "tamper-status")
     text = set_key((tampered / SPEC_REL).read_text(), f"case.{MISSING}", "status", "PASS")
@@ -719,24 +952,30 @@ def synthetic(work: Path) -> None:
 
     # complete store: closure lists every case PASS with owner acceptance and accepts
     code, qtail = qualify(root, MISSING)
+    applied = py(root, CLOSURE_REL, "--apply")
     complete = root
     code, report, tail = closure(complete)
     R.add(
         ("14.4",),
         ("a7",),
         code == 0
+        and applied.returncode == 0
         and report is not None
         and report["release_claim"]
         and report["verdict"] == "ACCEPTED"
         and [c["status"] for c in report["cases"]] == ["PASS"] * len(cases)
         and all(c["evidence"] for c in report["cases"])
         and report["owner_acceptance"].get("recorded")
+        and report["owner_acceptance"].get("journey_complete")
         and report["owner_acceptance"].get("accepted_by") == "fixture-owner"
         and all(
-            report["hypotheses"][h]["carries_preregistration"] for h in ("H1", "H2", "H3", "H4")
+            report["hypotheses"][h]["carries_preregistration"]
+            and report["hypotheses"][h]["complete_matrix"]
+            for h in ("H1", "H2", "H3", "H4")
         ),
-        "with every case executed PASS, the four reports pre-registered and owner acceptance "
-        "recorded, closure lists every case with its outcome and evidence and accepts the claim",
+        "with every case executed PASS, the four reports pre-registered on complete arm matrices, "
+        "the journey complete and owner acceptance recorded, closure lists every case with its "
+        "outcome and evidence and accepts the claim",
         f"exit={code} blocking={(report or {}).get('blocking', [])[:4]} {tail if report is None else ''}",
     )
     code_text, text = closure_text(complete)
@@ -792,13 +1031,70 @@ def synthetic(work: Path) -> None:
         path = target / "benchmark/preregistration.kvx"
         path.write_text(path.read_text().replace('"registered"', '"draft"'))
 
+    def partial_matrix(target: Path) -> None:
+        write_analysis(target, "H2", prereg_digest, drop_cells=1)
+
+    def missing_metric(target: Path) -> None:
+        write_analysis(target, "H1", prereg_digest, drop_metric="task_success")
+
+    def missing_direction(target: Path) -> None:
+        write_analysis(target, "H4", prereg_digest, drop_direction=True)
+
+    def uncited_analysis(target: Path) -> None:
+        path = target / REPORTS[2]
+        path.write_text(
+            path.read_text().replace("Analysis: benchmark/results/h3/analysis.json\n", "")
+        )
+
+    def spec_status(target: Path) -> None:
+        path = target / SPEC_REL
+        path.write_text(set_key(path.read_text(), "case.CWR-005", "status", "FAIL"))
+
+    def forged_claim(target: Path) -> None:
+        path = target / QUAL_REL
+        path.write_text(
+            path.read_text().rstrip()
+            + '\n\n[progress.forged_claim]\nrevision = "fixture"\ncommand = "fixture"\n'
+            'exit_code = 0\nlog = "fixture"\nobserved = "fixture"\nassumption = "fixture"\n'
+            "product_evidence = true\n"
+            'evidence = "tests/cwr/evidence/CWR-005/20991231T000000Z-1.json"\n'
+        )
+
     def drop_acceptance(target: Path) -> None:
         text = (target / QUAL_REL).read_text()
-        (target / QUAL_REL).write_text(text.split("[progress.owner_acceptance]")[0].rstrip() + "\n")
+        head, _, tail = text.partition("[progress.owner_acceptance]")
+        rest = tail.split("\n[", 1)
+        (target / QUAL_REL).write_text(
+            head.rstrip() + "\n" + ("\n[" + rest[1] if len(rest) > 1 else "")
+        )
 
-    def unbacked_acceptance(target: Path) -> None:
+    def drop_journey(target: Path) -> None:
+        text = (target / QUAL_REL).read_text()
+        head, _, tail = text.partition("[progress.acceptance_journey]")
+        rest = tail.split("\n[", 1)
+        (target / QUAL_REL).write_text(
+            head.rstrip() + "\n" + ("\n[" + rest[1] if len(rest) > 1 else "")
+        )
+
+    def incomplete_journey(target: Path) -> None:
         path = target / QUAL_REL
-        path.write_text(path.read_text().replace(json.dumps([B1]), json.dumps([B2])))
+        text = set_key(path.read_text(), "progress.acceptance_journey", "exit_code", 1)
+        text = set_key(text, "progress.acceptance_journey", "complete", False)
+        path.write_text(text)
+
+    def stale_journey(target: Path) -> None:
+        path = target / QUAL_REL
+        revision = kvx(path.read_text())["progress.acceptance_journey"]["revision"]
+        later = re.sub(r"kernel sha256:[0-9a-f]{64}", "kernel sha256:" + "9" * 64, revision)
+        text = set_key(path.read_text(), "progress.acceptance_journey", "revision", later)
+        path.write_text(set_key(text, "progress.owner_acceptance", "revision", later))
+
+    def other_builds(target: Path) -> None:
+        path = target / QUAL_REL
+        path.write_text(set_key(path.read_text(), "progress.owner_acceptance", "builds", [B2]))
+
+    def other_pins(target: Path) -> None:
+        write_release(target, dict(labels, refworld=B2))
 
     variant("tampered", tamper_ledger, "CWR-003: tampered or damaged evidence", asserts=("a7",))
     variant("stale-build", stale_kernel, "stale-Build evidence", asserts=("a7",))
@@ -815,13 +1111,36 @@ def synthetic(work: Path) -> None:
         ("14.4", "13.4"),
     )
     variant("draft-prereg", draft_prereg, "not 'registered'", ("14.4", "13.4"))
-    variant("no-acceptance", drop_acceptance, "owner acceptance is not recorded", asserts=("a7",))
+    variant("partial-matrix", partial_matrix, "H2 result", ("14.4", "13.4"))
+    variant("partial-matrix-named", partial_matrix, "incomplete arm matrix", ("13.4",))
     variant(
-        "unbacked-acceptance",
-        unbacked_acceptance,
-        "are not used by any PASS case evidence",
+        "missing-metric", missing_metric, "lacks registered metric(s) ['task_success']", ("13.4",)
+    )
+    variant("missing-direction", missing_direction, "carry no analysed label", ("13.4",))
+    variant(
+        "uncited-analysis",
+        uncited_analysis,
+        "H3 report research/h3-long-context.md cites no analysis",
+        ("13.4",),
+    )
+    variant(
+        "spec-status",
+        spec_status,
+        "CWR-005: spec/cwr/spec.kvx records FAIL but the checker derives PASS",
+        ("13.1", "14.4"),
+    )
+    variant("forged-claim", forged_claim, "which the checker does not accept", ("13.1", "14.4"))
+    variant("no-acceptance", drop_acceptance, "owner acceptance is not recorded", asserts=("a7",))
+    variant("no-journey", drop_journey, "no acceptance journey is recorded", asserts=("a7",))
+    variant(
+        "incomplete-journey",
+        incomplete_journey,
+        "the recorded journey is incomplete",
         asserts=("a7",),
     )
+    variant("stale-journey", stale_journey, "not the current tree", asserts=("a7",))
+    variant("other-builds", other_builds, "are not the recorded journey's", asserts=("a7",))
+    variant("other-pins", other_pins, "differ from the release pins", asserts=("a7",))
 
 
 # ------------------------------------------------------------------ main

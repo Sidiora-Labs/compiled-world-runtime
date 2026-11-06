@@ -1,87 +1,87 @@
 # CWR traceability
 
-Generated from [spec.kvx](spec.kvx). A clause `N.M` is `[req.N] ac_M`. Mappings describe coverage ownership, not execution evidence. All cases are UNRUN.
+Generated from [spec.kvx](spec.kvx). A clause `N.M` is `[req.N] ac_M`. Mappings describe coverage ownership. Each case is shown with the outcome recorded in spec.kvx, which closure derives from the registry.
 
-Source digest (requirements, clauses, tasks and cases): `sha256:d56900a829b007d15b4b2b96b0d26393a94d787b46e711e1be83d74147a6bf62`.
+Source digest (requirements, clauses, tasks and cases): `sha256:98ec1050405efed0a789a63e355d87a51571192215e76c3c49257ac605f15351`.
 
 | Clause | Requirement | Implementation tasks | Cases | Contract |
 |---|---|---|---|---|
-| 1.1 | Closure and stable rules | 2.2 | CWR-007 | [design.body.md](design.body.md) |
-| 1.2 | Closure and stable rules | 2.2 | CWR-007 | [design.body.md](design.body.md) |
-| 1.3 | Closure and stable rules | 2.2, 2.3 | CWR-008, CWR-009 | [design.body.md](design.body.md) |
-| 1.4 | Closure and stable rules | 1.3 | CWR-005 | [design.body.md](design.body.md) |
-| 1.5 | Closure and stable rules | 2.1 | CWR-006 | [design.body.md](design.body.md) |
-| 1.6 | Closure and stable rules | 1.2, 2.2 | CWR-003, CWR-008 | [design.body.md](design.body.md) |
-| 2.1 | Visibility and predictable failure | 1.1 | CWR-002 | [world-source.md](world-source.md) |
-| 2.2 | Visibility and predictable failure | 1.1, 2.2 | CWR-002, CWR-008 | [world-source.md](world-source.md) |
-| 2.3 | Visibility and predictable failure | 0.3 | CWR-001 | [world-source.md](world-source.md) |
-| 2.4 | Visibility and predictable failure | 1.3, 3.1 | CWR-005, CWR-012 | [world-source.md](world-source.md) |
-| 2.5 | Visibility and predictable failure | 1.3, 3.1 | CWR-005, CWR-012 | [world-source.md](world-source.md) |
-| 2.6 | Visibility and predictable failure | 2.2 | CWR-008 | [world-source.md](world-source.md) |
-| 3.1 | World Source and rule contracts | 0.3, 1.1 | CWR-001, CWR-002 | [world-source.md](world-source.md) |
-| 3.2 | World Source and rule contracts | 0.3 | CWR-001 | [world-source.md](world-source.md) |
-| 3.3 | World Source and rule contracts | 0.3 | CWR-001 | [world-source.md](world-source.md) |
-| 3.4 | World Source and rule contracts | 0.3 | CWR-001 | [world-source.md](world-source.md) |
-| 3.5 | World Source and rule contracts | 1.1 | CWR-002 | [world-source.md](world-source.md) |
-| 3.6 | World Source and rule contracts | 0.3, 1.2, 2.5 | CWR-001, CWR-004, CWR-011 | [world-source.md](world-source.md) |
-| 4.1 | Compiler pipeline and immutable Build artifact | 1.1 | CWR-002 | [compiler.md](compiler.md) |
-| 4.2 | Compiler pipeline and immutable Build artifact | 1.2 | CWR-003 | [compiler.md](compiler.md) |
-| 4.3 | Compiler pipeline and immutable Build artifact | 1.2 | CWR-004 | [compiler.md](compiler.md) |
-| 4.4 | Compiler pipeline and immutable Build artifact | 1.2 | CWR-004 | [compiler.md](compiler.md) |
-| 4.5 | Compiler pipeline and immutable Build artifact | 1.3 | CWR-005 | [compiler.md](compiler.md) |
-| 4.6 | Compiler pipeline and immutable Build artifact | 1.3 | CWR-005 | [compiler.md](compiler.md) |
-| 5.1 | Controlled change | 2.5 | CWR-011 | [kernel.md](kernel.md) |
-| 5.2 | Controlled change | 2.5, 4.3 | CWR-011, CWR-016 | [kernel.md](kernel.md) |
-| 5.3 | Controlled change | 2.5, 3.2, 4.3, 5.3 | CWR-011, CWR-013, CWR-016, CWR-018 | [kernel.md](kernel.md) |
-| 5.4 | Controlled change | 2.5 | CWR-011 | [kernel.md](kernel.md) |
-| 5.5 | Controlled change | 1.2, 2.5 | CWR-004, CWR-011 | [kernel.md](kernel.md) |
-| 6.1 | Kernel execution and script semantics | 2.2 | CWR-007 | [kernel.md](kernel.md) |
-| 6.2 | Kernel execution and script semantics | 2.2 | CWR-008 | [kernel.md](kernel.md) |
-| 6.3 | Kernel execution and script semantics | 2.2 | CWR-008 | [kernel.md](kernel.md) |
-| 6.4 | Kernel execution and script semantics | 2.2 | CWR-008 | [kernel.md](kernel.md) |
-| 6.5 | Kernel execution and script semantics | 2.2 | CWR-007 | [kernel.md](kernel.md) |
-| 6.6 | Kernel execution and script semantics | 2.1, 2.4 | CWR-006, CWR-010 | [kernel.md](kernel.md) |
-| 7.1 | Adapter gateway and external effects | 2.3 | CWR-009 | [kernel.md](kernel.md) |
-| 7.2 | Adapter gateway and external effects | 2.3 | CWR-009 | [kernel.md](kernel.md) |
-| 7.3 | Adapter gateway and external effects | 2.3 | CWR-009 | [kernel.md](kernel.md) |
-| 7.4 | Adapter gateway and external effects | 2.3 | CWR-009 | [kernel.md](kernel.md) |
-| 7.5 | Adapter gateway and external effects | 2.3, 4.1 | CWR-009, CWR-014 | [kernel.md](kernel.md) |
-| 7.6 | Adapter gateway and external effects | 2.3 | CWR-009 | [kernel.md](kernel.md) |
-| 8.1 | Instance state, ledger and recovery | 2.1 | CWR-006 | [kernel.md](kernel.md) |
-| 8.2 | Instance state, ledger and recovery | 2.1 | CWR-006 | [kernel.md](kernel.md) |
-| 8.3 | Instance state, ledger and recovery | 2.4 | CWR-010 | [kernel.md](kernel.md) |
-| 8.4 | Instance state, ledger and recovery | 2.4 | CWR-010 | [kernel.md](kernel.md) |
-| 8.5 | Instance state, ledger and recovery | 2.4, 5.1 | CWR-010, CWR-017 | [kernel.md](kernel.md) |
-| 9.1 | Model surface | 3.1 | CWR-012 | [model-surface.md](model-surface.md) |
-| 9.2 | Model surface | 1.3, 3.1 | CWR-005, CWR-012 | [model-surface.md](model-surface.md) |
-| 9.3 | Model surface | 3.1 | CWR-012 | [model-surface.md](model-surface.md) |
-| 9.4 | Model surface | 2.1, 3.1 | CWR-006, CWR-012 | [model-surface.md](model-surface.md) |
-| 9.5 | Model surface | 3.1 | CWR-012 | [model-surface.md](model-surface.md) |
-| 10.1 | Experimental ablation builds | 3.2 | CWR-013 | [compiler.md](compiler.md) |
-| 10.2 | Experimental ablation builds | 3.2, 5.2 | CWR-013, CWR-018 | [compiler.md](compiler.md) |
-| 10.3 | Experimental ablation builds | 3.2, 5.3 | CWR-013, CWR-018 | [compiler.md](compiler.md) |
-| 10.4 | Experimental ablation builds | 3.2, 5.2 | CWR-013, CWR-018 | [compiler.md](compiler.md) |
-| 10.5 | Experimental ablation builds | 3.2 | CWR-013 | [compiler.md](compiler.md) |
-| 11.1 | Reference world and task suite | 4.1 | CWR-014 | [reference-world.md](reference-world.md) |
-| 11.2 | Reference world and task suite | 4.2 | CWR-015 | [reference-world.md](reference-world.md) |
-| 11.3 | Reference world and task suite | 4.2 | CWR-015 | [reference-world.md](reference-world.md) |
-| 11.4 | Reference world and task suite | 4.3 | CWR-016 | [reference-world.md](reference-world.md) |
-| 11.5 | Reference world and task suite | 4.1 | CWR-014 | [reference-world.md](reference-world.md) |
-| 12.1 | Experiment harness and hypotheses | 5.1 | CWR-017 | [experiments.md](experiments.md) |
-| 12.2 | Experiment harness and hypotheses | 5.2, 5.3 | CWR-018 | [experiments.md](experiments.md) |
-| 12.3 | Experiment harness and hypotheses | 5.1 | CWR-017 | [experiments.md](experiments.md) |
-| 12.4 | Experiment harness and hypotheses | 5.1 | CWR-017 | [experiments.md](experiments.md) |
-| 12.5 | Experiment harness and hypotheses | 5.2, 5.3 | CWR-018 | [experiments.md](experiments.md) |
-| 12.6 | Experiment harness and hypotheses | 5.1 | CWR-017 | [experiments.md](experiments.md) |
-| 13.1 | Qualification and evidence | 0.1, 6.2 | CWR-020 | [verification.md](verification.md) |
-| 13.2 | Qualification and evidence | 0.2 | CWR-019 | [verification.md](verification.md) |
-| 13.3 | Qualification and evidence | 0.2 | CWR-019 | [verification.md](verification.md) |
-| 13.4 | Qualification and evidence | 0.2, 6.2 | CWR-019 | [verification.md](verification.md) |
-| 13.5 | Qualification and evidence | 0.1 | CWR-020 | [verification.md](verification.md) |
-| 14.1 | Documentation and release | 0.1, 6.2 | CWR-020 | [README.md](README.md) |
-| 14.2 | Documentation and release | 6.1 | CWR-020 | [README.md](README.md) |
-| 14.3 | Documentation and release | 6.1 | CWR-020 | [README.md](README.md) |
-| 14.4 | Documentation and release | 6.2 | CWR-020 | [README.md](README.md) |
+| 1.1 | Closure and stable rules | 2.2 | CWR-007 (FAIL) | [design.body.md](design.body.md) |
+| 1.2 | Closure and stable rules | 2.2 | CWR-007 (FAIL) | [design.body.md](design.body.md) |
+| 1.3 | Closure and stable rules | 2.2, 2.3 | CWR-008 (FAIL), CWR-009 (FAIL) | [design.body.md](design.body.md) |
+| 1.4 | Closure and stable rules | 1.3 | CWR-005 (FAIL) | [design.body.md](design.body.md) |
+| 1.5 | Closure and stable rules | 2.1 | CWR-006 (FAIL) | [design.body.md](design.body.md) |
+| 1.6 | Closure and stable rules | 1.2, 2.2 | CWR-003 (FAIL), CWR-008 (FAIL) | [design.body.md](design.body.md) |
+| 2.1 | Visibility and predictable failure | 1.1 | CWR-002 (FAIL) | [world-source.md](world-source.md) |
+| 2.2 | Visibility and predictable failure | 1.1, 2.2 | CWR-002 (FAIL), CWR-008 (FAIL) | [world-source.md](world-source.md) |
+| 2.3 | Visibility and predictable failure | 0.3 | CWR-001 (FAIL) | [world-source.md](world-source.md) |
+| 2.4 | Visibility and predictable failure | 1.3, 3.1 | CWR-005 (FAIL), CWR-012 (FAIL) | [world-source.md](world-source.md) |
+| 2.5 | Visibility and predictable failure | 1.3, 3.1 | CWR-005 (FAIL), CWR-012 (FAIL) | [world-source.md](world-source.md) |
+| 2.6 | Visibility and predictable failure | 2.2 | CWR-008 (FAIL) | [world-source.md](world-source.md) |
+| 3.1 | World Source and rule contracts | 0.3, 1.1 | CWR-001 (FAIL), CWR-002 (FAIL) | [world-source.md](world-source.md) |
+| 3.2 | World Source and rule contracts | 0.3 | CWR-001 (FAIL) | [world-source.md](world-source.md) |
+| 3.3 | World Source and rule contracts | 0.3 | CWR-001 (FAIL) | [world-source.md](world-source.md) |
+| 3.4 | World Source and rule contracts | 0.3 | CWR-001 (FAIL) | [world-source.md](world-source.md) |
+| 3.5 | World Source and rule contracts | 1.1 | CWR-002 (FAIL) | [world-source.md](world-source.md) |
+| 3.6 | World Source and rule contracts | 0.3, 1.2, 2.5 | CWR-001 (FAIL), CWR-004 (FAIL), CWR-011 (FAIL) | [world-source.md](world-source.md) |
+| 4.1 | Compiler pipeline and immutable Build artifact | 1.1 | CWR-002 (FAIL) | [compiler.md](compiler.md) |
+| 4.2 | Compiler pipeline and immutable Build artifact | 1.2 | CWR-003 (FAIL) | [compiler.md](compiler.md) |
+| 4.3 | Compiler pipeline and immutable Build artifact | 1.2 | CWR-004 (FAIL) | [compiler.md](compiler.md) |
+| 4.4 | Compiler pipeline and immutable Build artifact | 1.2 | CWR-004 (FAIL) | [compiler.md](compiler.md) |
+| 4.5 | Compiler pipeline and immutable Build artifact | 1.3 | CWR-005 (FAIL) | [compiler.md](compiler.md) |
+| 4.6 | Compiler pipeline and immutable Build artifact | 1.3 | CWR-005 (FAIL) | [compiler.md](compiler.md) |
+| 5.1 | Controlled change | 2.5 | CWR-011 (FAIL) | [kernel.md](kernel.md) |
+| 5.2 | Controlled change | 2.5, 4.3 | CWR-011 (FAIL), CWR-016 (FAIL) | [kernel.md](kernel.md) |
+| 5.3 | Controlled change | 2.5, 3.2, 4.3, 5.3 | CWR-011 (FAIL), CWR-013 (FAIL), CWR-016 (FAIL), CWR-018 (FAIL) | [kernel.md](kernel.md) |
+| 5.4 | Controlled change | 2.5 | CWR-011 (FAIL) | [kernel.md](kernel.md) |
+| 5.5 | Controlled change | 1.2, 2.5 | CWR-004 (FAIL), CWR-011 (FAIL) | [kernel.md](kernel.md) |
+| 6.1 | Kernel execution and script semantics | 2.2 | CWR-007 (FAIL) | [kernel.md](kernel.md) |
+| 6.2 | Kernel execution and script semantics | 2.2 | CWR-008 (FAIL) | [kernel.md](kernel.md) |
+| 6.3 | Kernel execution and script semantics | 2.2 | CWR-008 (FAIL) | [kernel.md](kernel.md) |
+| 6.4 | Kernel execution and script semantics | 2.2 | CWR-008 (FAIL) | [kernel.md](kernel.md) |
+| 6.5 | Kernel execution and script semantics | 2.2 | CWR-007 (FAIL) | [kernel.md](kernel.md) |
+| 6.6 | Kernel execution and script semantics | 2.1, 2.4 | CWR-006 (FAIL), CWR-010 (FAIL) | [kernel.md](kernel.md) |
+| 7.1 | Adapter gateway and external effects | 2.3 | CWR-009 (FAIL) | [kernel.md](kernel.md) |
+| 7.2 | Adapter gateway and external effects | 2.3 | CWR-009 (FAIL) | [kernel.md](kernel.md) |
+| 7.3 | Adapter gateway and external effects | 2.3 | CWR-009 (FAIL) | [kernel.md](kernel.md) |
+| 7.4 | Adapter gateway and external effects | 2.3 | CWR-009 (FAIL) | [kernel.md](kernel.md) |
+| 7.5 | Adapter gateway and external effects | 2.3, 4.1 | CWR-009 (FAIL), CWR-014 (FAIL) | [kernel.md](kernel.md) |
+| 7.6 | Adapter gateway and external effects | 2.3 | CWR-009 (FAIL) | [kernel.md](kernel.md) |
+| 8.1 | Instance state, ledger and recovery | 2.1 | CWR-006 (FAIL) | [kernel.md](kernel.md) |
+| 8.2 | Instance state, ledger and recovery | 2.1 | CWR-006 (FAIL) | [kernel.md](kernel.md) |
+| 8.3 | Instance state, ledger and recovery | 2.4 | CWR-010 (FAIL) | [kernel.md](kernel.md) |
+| 8.4 | Instance state, ledger and recovery | 2.4 | CWR-010 (FAIL) | [kernel.md](kernel.md) |
+| 8.5 | Instance state, ledger and recovery | 2.4, 5.1 | CWR-010 (FAIL), CWR-017 (FAIL) | [kernel.md](kernel.md) |
+| 9.1 | Model surface | 3.1 | CWR-012 (FAIL) | [model-surface.md](model-surface.md) |
+| 9.2 | Model surface | 1.3, 3.1 | CWR-005 (FAIL), CWR-012 (FAIL) | [model-surface.md](model-surface.md) |
+| 9.3 | Model surface | 3.1 | CWR-012 (FAIL) | [model-surface.md](model-surface.md) |
+| 9.4 | Model surface | 2.1, 3.1 | CWR-006 (FAIL), CWR-012 (FAIL) | [model-surface.md](model-surface.md) |
+| 9.5 | Model surface | 3.1 | CWR-012 (FAIL) | [model-surface.md](model-surface.md) |
+| 10.1 | Experimental ablation builds | 3.2 | CWR-013 (FAIL) | [compiler.md](compiler.md) |
+| 10.2 | Experimental ablation builds | 3.2, 5.2 | CWR-013 (FAIL), CWR-018 (FAIL) | [compiler.md](compiler.md) |
+| 10.3 | Experimental ablation builds | 3.2, 5.3 | CWR-013 (FAIL), CWR-018 (FAIL) | [compiler.md](compiler.md) |
+| 10.4 | Experimental ablation builds | 3.2, 5.2 | CWR-013 (FAIL), CWR-018 (FAIL) | [compiler.md](compiler.md) |
+| 10.5 | Experimental ablation builds | 3.2 | CWR-013 (FAIL) | [compiler.md](compiler.md) |
+| 11.1 | Reference world and task suite | 4.1 | CWR-014 (FAIL) | [reference-world.md](reference-world.md) |
+| 11.2 | Reference world and task suite | 4.2 | CWR-015 (FAIL) | [reference-world.md](reference-world.md) |
+| 11.3 | Reference world and task suite | 4.2 | CWR-015 (FAIL) | [reference-world.md](reference-world.md) |
+| 11.4 | Reference world and task suite | 4.3 | CWR-016 (FAIL) | [reference-world.md](reference-world.md) |
+| 11.5 | Reference world and task suite | 4.1 | CWR-014 (FAIL) | [reference-world.md](reference-world.md) |
+| 12.1 | Experiment harness and hypotheses | 5.1 | CWR-017 (FAIL) | [experiments.md](experiments.md) |
+| 12.2 | Experiment harness and hypotheses | 5.2, 5.3 | CWR-018 (FAIL) | [experiments.md](experiments.md) |
+| 12.3 | Experiment harness and hypotheses | 5.1 | CWR-017 (FAIL) | [experiments.md](experiments.md) |
+| 12.4 | Experiment harness and hypotheses | 5.1 | CWR-017 (FAIL) | [experiments.md](experiments.md) |
+| 12.5 | Experiment harness and hypotheses | 5.2, 5.3 | CWR-018 (FAIL) | [experiments.md](experiments.md) |
+| 12.6 | Experiment harness and hypotheses | 5.1 | CWR-017 (FAIL) | [experiments.md](experiments.md) |
+| 13.1 | Qualification and evidence | 0.1, 6.2 | CWR-020 (FAIL) | [verification.md](verification.md) |
+| 13.2 | Qualification and evidence | 0.2 | CWR-019 (PASS) | [verification.md](verification.md) |
+| 13.3 | Qualification and evidence | 0.2 | CWR-019 (PASS) | [verification.md](verification.md) |
+| 13.4 | Qualification and evidence | 0.2, 6.2 | CWR-019 (PASS) | [verification.md](verification.md) |
+| 13.5 | Qualification and evidence | 0.1 | CWR-020 (FAIL) | [verification.md](verification.md) |
+| 14.1 | Documentation and release | 0.1, 6.2 | CWR-020 (FAIL) | [README.md](README.md) |
+| 14.2 | Documentation and release | 6.1 | CWR-020 (FAIL) | [README.md](README.md) |
+| 14.3 | Documentation and release | 6.1 | CWR-020 (FAIL) | [README.md](README.md) |
+| 14.4 | Documentation and release | 6.2 | CWR-020 (FAIL) | [README.md](README.md) |
 
 ## Case ownership
 

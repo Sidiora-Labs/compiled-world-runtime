@@ -166,7 +166,31 @@ def source_digest(requirements: dict, tasks: dict, cases: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def task_plan(tasks: dict, digest: str) -> str:
+def executed(cases: dict) -> bool:
+    """Whether any case carries a recorded outcome (implementation stage); views then show outcomes."""
+    return any(case.get("status") != "UNRUN" for case in cases.values())
+
+
+def case_labels(idents, cases: dict) -> str:
+    """Case ids, each followed by its recorded status once any case has an outcome."""
+    if not executed(cases):
+        return ", ".join(idents)
+    return ", ".join(f"{ident} ({cases.get(ident, {}).get('status')})" for ident in idents)
+
+
+def task_plan(tasks: dict, digest: str, cases: dict | None = None) -> str:
+    cases = cases or {}
+    status_note = (
+        "Task statuses below are written from registry outcomes by `python3 tests/cwr/closure.py "
+        "--apply`: implemented when the task driver exists and its latest run through the "
+        "qualification runner exited 0, otherwise blocked. Case statuses are the outcomes the "
+        "independent checker derives from the attempt records named in "
+        "[qualification.kvx](qualification.kvx)."
+        if executed(cases)
+        else "Task statuses below record authoring state. Verification drivers are task deliverables; "
+        "a command being listed is not evidence that it exists or passes. No compiler, kernel, "
+        "model or campaign has run."
+    )
     lines = [
         "# CWR implementation plan",
         "",
@@ -175,9 +199,7 @@ def task_plan(tasks: dict, digest: str) -> str:
         "",
         f"Source digest (requirements, clauses, tasks and cases): `{digest}`.",
         "",
-        "Task statuses below record authoring state. Verification drivers are task deliverables; "
-        "a command being listed is not evidence that it exists or passes. No compiler, kernel, "
-        "model or campaign has run.",
+        status_note,
         "",
         "Dependencies determine eligibility. Wave numbers group integration obligations: contracts "
         "and evidence (0), compiler (1), kernel (2), model surface and ablation builds (3), reference "
@@ -212,7 +234,9 @@ def task_plan(tasks: dict, digest: str) -> str:
             f"Future focused gate: `{task['verify_cmd']}`.",
             "",
             "Acceptance clauses: " + ", ".join(task["reqs"]) + ".",
-            "Canonical cases: " + ", ".join(task["cases"]) + " (UNRUN).",
+            "Canonical cases: "
+            + (case_labels(task["cases"], cases) if executed(cases) else ", ".join(task["cases"]))
+            + ("." if executed(cases) else " (UNRUN)."),
             "",
             "Implementation and qualification obligations:",
             "",
@@ -230,7 +254,12 @@ def traceability(requirements: dict, tasks: dict, cases: dict, digest: str) -> s
         "# CWR traceability",
         "",
         "Generated from [spec.kvx](spec.kvx). A clause `N.M` is `[req.N] ac_M`. "
-        "Mappings describe coverage ownership, not execution evidence. All cases are UNRUN.",
+        + (
+            "Mappings describe coverage ownership. Each case is shown with the outcome recorded in "
+            "spec.kvx, which closure derives from the registry."
+            if executed(cases)
+            else "Mappings describe coverage ownership, not execution evidence. All cases are UNRUN."
+        ),
         "",
         f"Source digest (requirements, clauses, tasks and cases): `{digest}`.",
         "",
@@ -249,7 +278,7 @@ def traceability(requirements: dict, tasks: dict, cases: dict, digest: str) -> s
             contract = CONTRACTS[int(number)]
             lines.append(
                 f"| {clause} | {req['title']} | {', '.join(owners)} | "
-                f"{', '.join(checks)} | [{contract}]({contract}) |"
+                f"{case_labels(checks, cases)} | [{contract}]({contract}) |"
             )
     lines += [
         "",
@@ -794,7 +823,7 @@ def main() -> int:
         if not spec_errors:
             digest = source_digest(requirements, tasks, cases)
             views = {
-                "implementation-plan.md": task_plan(tasks, digest),
+                "implementation-plan.md": task_plan(tasks, digest, cases),
                 "traceability.md": traceability(requirements, tasks, cases, digest),
             }
             for name, content in views.items():
@@ -821,7 +850,14 @@ def main() -> int:
             ),
             "cases": len(cases),
             "stage": sections.get("meta", {}).get("stage"),
-            "product_qualification": "UNRUN",
+            "product_qualification": (
+                {
+                    status: sum(case.get("status") == status for case in cases.values())
+                    for status in sorted({str(case.get("status")) for case in cases.values()})
+                }
+                if executed(cases)
+                else "UNRUN"
+            ),
             "task_statuses": {
                 status: sum(task.get("status") == status for task in tasks.values())
                 for status in sorted({str(task.get("status")) for task in tasks.values()})

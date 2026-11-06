@@ -2,7 +2,7 @@
 
 Generated from [spec.kvx](spec.kvx); regenerate with `python3 spec/cwr/tools/validate_spec.py --render`.
 
-Source digest (requirements, clauses, tasks and cases): `sha256:3fb72a8c1861553c7aabce94a450c9ace4a7353559327b5da8342f2a0b214bbc`.
+Source digest (requirements, clauses, tasks and cases): `sha256:d56900a829b007d15b4b2b96b0d26393a94d787b46e711e1be83d74147a6bf62`.
 
 Task statuses below record authoring state. Verification drivers are task deliverables; a command being listed is not evidence that it exists or passes. No compiler, kernel, model or campaign has run.
 
@@ -34,7 +34,7 @@ Dependencies determine eligibility. Wave numbers group integration obligations: 
 
 ## 0.1: Freeze the CWR specification pack and structural validator
 
-Status: **pending**. Owner: `spec`. Dependencies: none.
+Status: **implemented**. Owner: `spec`. Dependencies: none.
 
 Proposed implementation scope:
 
@@ -59,7 +59,7 @@ Implementation and qualification obligations:
 
 ## 0.2: Qualification registry, evidence schema and independent checker
 
-Status: **pending**. Owner: `qualification`. Dependencies: 0.1.
+Status: **implemented**. Owner: `qualification`. Dependencies: 0.1.
 
 Proposed implementation scope:
 
@@ -83,7 +83,7 @@ Implementation and qualification obligations:
 
 ## 0.3: Contract grammar, failure envelope and World Source schema crate
 
-Status: **pending**. Owner: `contracts`. Dependencies: 0.1.
+Status: **implemented**. Owner: `contracts`. Dependencies: 0.1.
 
 Proposed implementation scope:
 
@@ -112,7 +112,7 @@ Implementation and qualification obligations:
 
 ## 1.1: Compiler front end: parse, resolve and lint for closure and visibility
 
-Status: **pending**. Owner: `compiler`. Dependencies: 0.3.
+Status: **implemented**. Owner: `compiler`. Dependencies: 0.3.
 
 Proposed implementation scope:
 
@@ -140,7 +140,7 @@ Implementation and qualification obligations:
 
 ## 1.2: Contract tests, ContractDiff, changelog gate and version derivation
 
-Status: **pending**. Owner: `compiler`. Dependencies: 1.1.
+Status: **implemented**. Owner: `compiler`. Dependencies: 1.1.
 
 Proposed implementation scope:
 
@@ -166,7 +166,7 @@ Implementation and qualification obligations:
 
 ## 1.3: Build packaging, manual generation and Python SDK generation
 
-Status: **pending**. Owner: `compiler`. Dependencies: 1.2.
+Status: **implemented**. Owner: `compiler`. Dependencies: 1.2.
 
 Proposed implementation scope:
 
@@ -194,7 +194,7 @@ Implementation and qualification obligations:
 
 ## 2.1: Instance store, ledger, world clock, RNG and snapshots
 
-Status: **pending**. Owner: `kernel`. Dependencies: 0.3.
+Status: **implemented**. Owner: `kernel`. Dependencies: 0.3.
 
 Proposed implementation scope:
 
@@ -222,7 +222,7 @@ Implementation and qualification obligations:
 
 ## 2.2: Sandboxed executor and atomic contract check
 
-Status: **pending**. Owner: `kernel`. Dependencies: 2.1, 1.3.
+Status: **blocked**. Owner: `kernel`. Dependencies: 2.1, 1.3.
 
 Proposed implementation scope:
 
@@ -251,7 +251,7 @@ Implementation and qualification obligations:
 
 ## 2.3: Adapter gateway with normalisation, idempotency and cassette modes
 
-Status: **pending**. Owner: `kernel`. Dependencies: 2.2.
+Status: **implemented**. Owner: `kernel`. Dependencies: 2.2.
 
 Proposed implementation scope:
 
@@ -278,7 +278,7 @@ Implementation and qualification obligations:
 
 ## 2.4: Crash recovery and ledger replay
 
-Status: **pending**. Owner: `kernel`. Dependencies: 2.3.
+Status: **implemented**. Owner: `kernel`. Dependencies: 2.3.
 
 Proposed implementation scope:
 
@@ -301,7 +301,7 @@ Implementation and qualification obligations:
 
 ## 2.5: Instance upgrade, migrations, recompile notice and proposal outbox
 
-Status: **pending**. Owner: `kernel`. Dependencies: 2.4, 1.2.
+Status: **implemented**. Owner: `kernel`. Dependencies: 2.4, 1.2.
 
 Proposed implementation scope:
 
@@ -328,7 +328,7 @@ Implementation and qualification obligations:
 
 ## 3.1: Context assembly and turn protocol
 
-Status: **pending**. Owner: `surface`. Dependencies: 2.5.
+Status: **implemented**. Owner: `surface`. Dependencies: 2.5.
 
 Proposed implementation scope:
 
@@ -353,7 +353,7 @@ Implementation and qualification obligations:
 
 ## 3.2: Experimental ablation builds and kernel gate
 
-Status: **pending**. Owner: `compiler`. Dependencies: 3.1.
+Status: **implemented**. Owner: `compiler`. Dependencies: 3.1.
 
 Proposed implementation scope:
 
@@ -379,7 +379,7 @@ Implementation and qualification obligations:
 
 ## 4.1: Reference world modules, stub servers and cassettes
 
-Status: **pending**. Owner: `refworld`. Dependencies: 2.3, 1.3.
+Status: **blocked**. Owner: `refworld`. Dependencies: 2.3, 1.3.
 
 Proposed implementation scope:
 
@@ -409,7 +409,7 @@ Implementation and qualification obligations:
 
 ## 4.2: Task suite with bins, rule-reuse tasks and success predicates
 
-Status: **pending**. Owner: `refworld`. Dependencies: 4.1, 3.1.
+Status: **implemented**. Owner: `refworld`. Dependencies: 4.1, 3.1.
 
 Proposed implementation scope:
 
@@ -432,7 +432,7 @@ Implementation and qualification obligations:
 
 ## 4.3: Upgrade pairs U1 through U6
 
-Status: **pending**. Owner: `refworld`. Dependencies: 4.1, 2.5.
+Status: **implemented**. Owner: `refworld`. Dependencies: 4.1, 2.5.
 
 Proposed implementation scope:
 
@@ -459,7 +459,7 @@ Implementation and qualification obligations:
 
 ## 5.1: Experiment harness runner and ledger-only metrics
 
-Status: **pending**. Owner: `experiments`. Dependencies: 0.2, 3.2, 4.2, 4.3.
+Status: **blocked**. Owner: `experiments`. Dependencies: 0.2, 3.2, 4.2, 4.3.
 
 Proposed implementation scope:
 
@@ -485,7 +485,7 @@ Implementation and qualification obligations:
 
 ## 5.2: H1 stability and H2 direct-action campaigns
 
-Status: **pending**. Owner: `experiments`. Dependencies: 5.1.
+Status: **blocked**. Owner: `experiments`. Dependencies: 5.1.
 
 Proposed implementation scope:
 
@@ -511,7 +511,7 @@ Implementation and qualification obligations:
 
 ## 5.3: H3 long-context and H4 controlled-change campaigns and analysis
 
-Status: **pending**. Owner: `experiments`. Dependencies: 5.1.
+Status: **blocked**. Owner: `experiments`. Dependencies: 5.1.
 
 Proposed implementation scope:
 
@@ -537,7 +537,7 @@ Implementation and qualification obligations:
 
 ## 6.1: Documentation and reproducible release artifacts
 
-Status: **pending**. Owner: `release`. Dependencies: 5.2, 5.3.
+Status: **blocked**. Owner: `release`. Dependencies: 5.2, 5.3.
 
 Proposed implementation scope:
 
@@ -566,7 +566,7 @@ Implementation and qualification obligations:
 
 ## 6.2: Evidence closure and owner acceptance
 
-Status: **pending**. Owner: `release`. Dependencies: 6.1.
+Status: **implemented**. Owner: `release`. Dependencies: 6.1.
 
 Proposed implementation scope:
 

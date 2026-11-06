@@ -1,0 +1,719 @@
+{
+  "cases": [
+    "CWR-001",
+    "CWR-002",
+    "CWR-003",
+    "CWR-004",
+    "CWR-005",
+    "CWR-006",
+    "CWR-007",
+    "CWR-008",
+    "CWR-009",
+    "CWR-010",
+    "CWR-011",
+    "CWR-012",
+    "CWR-013",
+    "CWR-014",
+    "CWR-015",
+    "CWR-016",
+    "CWR-017",
+    "CWR-018",
+    "CWR-019",
+    "CWR-020"
+  ],
+  "first_seq": 31,
+  "last_seq": 52,
+  "runs": [
+    {
+      "case": "CWR-001",
+      "command": "python3 tests/cwr/qualify.py --case CWR-001",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-001.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-001",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-001.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist)",
+            "independent oracle: CWR-001.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist)",
+            "independent oracle: CWR-001.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist)",
+            "independent oracle: CWR-001.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist)",
+            "independent checker: assertion CWR-001.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-001.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-001.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-001.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-001/20261106T152425Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 20.9
+    },
+    {
+      "case": "CWR-002",
+      "command": "python3 tests/cwr/qualify.py --case CWR-002",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-002.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-002",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-002.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist)",
+            "independent oracle: CWR-002.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist)",
+            "independent oracle: CWR-002.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist)",
+            "independent oracle: CWR-002.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist)",
+            "independent oracle: CWR-002.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist)",
+            "independent oracle: CWR-002.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist)",
+            "independent checker: assertion CWR-002.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-002.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-002.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-002.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-002.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-002.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_002.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-002/20261106T152446Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 31.1
+    },
+    {
+      "case": "CWR-003",
+      "command": "python3 tests/cwr/qualify.py --case CWR-003",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-003.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-003",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-003.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist)",
+            "independent oracle: CWR-003.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist)",
+            "independent oracle: CWR-003.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist)",
+            "independent oracle: CWR-003.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist)",
+            "independent oracle: CWR-003.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist)",
+            "independent checker: assertion CWR-003.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-003.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-003.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-003.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-003.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_003.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-003/20261106T152517Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 154.2
+    },
+    {
+      "case": "CWR-004",
+      "command": "python3 tests/cwr/qualify.py --case CWR-004",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-004.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-004",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-004.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+            "independent oracle: CWR-004.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+            "independent oracle: CWR-004.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+            "independent oracle: CWR-004.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+            "independent oracle: CWR-004.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+            "independent oracle: CWR-004.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+            "independent checker: assertion CWR-004.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-004.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-004.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-004.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-004.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-004.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-004/20261106T152752Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 153.8
+    },
+    {
+      "case": "CWR-005",
+      "command": "python3 tests/cwr/qualify.py --case CWR-005",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-005.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-005",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-005.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist)",
+            "independent oracle: CWR-005.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist)",
+            "independent oracle: CWR-005.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist)",
+            "independent oracle: CWR-005.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist)",
+            "independent checker: case CWR-005 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-005.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-005.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-005.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-005.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_005.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-005/20261106T153025Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 205.6
+    },
+    {
+      "case": "CWR-006",
+      "command": "python3 tests/cwr/qualify.py --case CWR-006",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-006.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-006",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-006.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist)",
+            "independent oracle: CWR-006.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist)",
+            "independent oracle: CWR-006.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist)",
+            "independent oracle: CWR-006.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist)",
+            "independent oracle: CWR-006.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist)",
+            "independent checker: case CWR-006 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-006.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-006.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-006.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-006.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-006.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_006.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-006/20261106T153351Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 130.0
+    },
+    {
+      "case": "CWR-007",
+      "command": "python3 tests/cwr/qualify.py --case CWR-007",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-007.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-007",
+          "checker_errors": [],
+          "diagnostics": [
+            "task 2.2 driver exited 1",
+            "independent oracle: CWR-007.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent oracle: CWR-007.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent oracle: CWR-007.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent oracle: CWR-007.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent oracle: CWR-007.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent oracle: CWR-007.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent oracle: CWR-007.a7 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist)",
+            "independent checker: invocation 0 (task 2.2) exited 1",
+            "independent checker: case CWR-007 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-007.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-007.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-007.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-007.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-007.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-007.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-007.a7 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_007.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-007/20261106T153601Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 54.4
+    },
+    {
+      "case": "CWR-008",
+      "command": "python3 tests/cwr/qualify.py --case CWR-008",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-008.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-008",
+          "checker_errors": [],
+          "diagnostics": [
+            "task 2.2 driver exited 1",
+            "independent oracle: CWR-008.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist)",
+            "independent oracle: CWR-008.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist)",
+            "independent oracle: CWR-008.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist)",
+            "independent oracle: CWR-008.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist)",
+            "independent oracle: CWR-008.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist)",
+            "independent checker: invocation 0 (task 2.2) exited 1",
+            "independent checker: case CWR-008 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-008.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-008.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-008.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-008.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-008.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_008.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-008/20261106T153655Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 87.0
+    },
+    {
+      "case": "CWR-009",
+      "command": "python3 tests/cwr/qualify.py --case CWR-009",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-009.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-009",
+          "checker_errors": [],
+          "diagnostics": [
+            "failed assertions: ['CWR-009.a8']",
+            "task 4.1 driver exited 1",
+            "independent oracle: CWR-009.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a7 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a8 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent oracle: CWR-009.a9 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist)",
+            "independent checker: invocation 1 (task 4.1) exited 1",
+            "independent checker: assertion CWR-009.a8 FAIL: 1 of 2 checks failed: replay of every frozen cassette (adapters and suite sets) through `cwr instance turn --gateway replay` with both stubs bound to a decoy listener: exit 1, ' ^^^^^^^^^^^^^^^^^^^^^^^^^ File \"/usr/lib/python3.12/pathlib.py\", line 1021, in read_bytes with self.open(mode='rb') as f: ^^^^^^^^^^^^^^^^^^^^ File \"/usr/lib/python3.12/pathlib.py\", line 1015, in open return io.open(self, mode, buffering, encoding, errors, newline) ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ FileNotFoundError: [Errno 2] No such file or directory: '<repo>/benchmark/cassettes/suite/t003-tennis-note/seed-1.jsonl' ', envelopes and ledgers equal record mode except host fields, decoy connections 0",
+            "independent checker: case CWR-009 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-009.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a7 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a8 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-009.a9 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_009.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-009/20261106T153822Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 356.9
+    },
+    {
+      "case": "CWR-010",
+      "command": "python3 tests/cwr/qualify.py --case CWR-010",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-010.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-010",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-010.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist)",
+            "independent oracle: CWR-010.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist)",
+            "independent oracle: CWR-010.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist)",
+            "independent oracle: CWR-010.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist)",
+            "independent checker: case CWR-010 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-010.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-010.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-010.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-010.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_010.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-010/20261106T154419Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 536.5
+    },
+    {
+      "case": "CWR-011",
+      "command": "python3 tests/cwr/qualify.py --case CWR-011",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-011.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-011",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-011.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent oracle: CWR-011.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent oracle: CWR-011.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent oracle: CWR-011.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent oracle: CWR-011.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent oracle: CWR-011.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent oracle: CWR-011.a7 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist)",
+            "independent checker: case CWR-011 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-011.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-011.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-011.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-011.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-011.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-011.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-011.a7 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_011.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-011/20261106T155316Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 372.8
+    },
+    {
+      "case": "CWR-012",
+      "command": "python3 tests/cwr/qualify.py --case CWR-012",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-012.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-012",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-012.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist)",
+            "independent oracle: CWR-012.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist)",
+            "independent oracle: CWR-012.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist)",
+            "independent oracle: CWR-012.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist)",
+            "independent oracle: CWR-012.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist)",
+            "independent checker: case CWR-012 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-012.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-012.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-012.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-012.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-012.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_012.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-012/20261106T155929Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 120.0
+    },
+    {
+      "case": "CWR-013",
+      "command": "python3 tests/cwr/qualify.py --case CWR-013",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-013.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-013",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-013.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist)",
+            "independent oracle: CWR-013.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist)",
+            "independent oracle: CWR-013.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist)",
+            "independent oracle: CWR-013.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist)",
+            "independent oracle: CWR-013.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist)",
+            "independent oracle: CWR-013.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist)",
+            "independent checker: case CWR-013 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-013.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-013.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-013.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-013.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-013.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-013.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_013.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-013/20261106T160129Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 100.6
+    },
+    {
+      "case": "CWR-014",
+      "command": "python3 tests/cwr/qualify.py --case CWR-014",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-014.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-014",
+          "checker_errors": [],
+          "diagnostics": [
+            "failed assertions: ['CWR-014.a4']",
+            "task 4.1 driver exited 1",
+            "independent oracle: CWR-014.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist)",
+            "independent oracle: CWR-014.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist)",
+            "independent oracle: CWR-014.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist)",
+            "independent oracle: CWR-014.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist)",
+            "independent checker: invocation 0 (task 4.1) exited 1",
+            "independent checker: assertion CWR-014.a4 FAIL: 1 of 4 checks failed: replay of every frozen cassette (adapters and suite sets) through `cwr instance turn --gateway replay` with both stubs bound to a decoy listener: exit 1, 'record_refworld: replayed 605 cassettes offline; 604 reproduce record mode exactly; differing: ['refworld-adapters/search-query/seed-1.expect.json']', envelopes and ledgers equal record mode except host fields, decoy connections 0",
+            "independent checker: case CWR-014 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-014.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-014.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-014.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-014.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_014.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-014/20261106T160309Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 807.8
+    },
+    {
+      "case": "CWR-015",
+      "command": "python3 tests/cwr/qualify.py --case CWR-015",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-015.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-015",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-015.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist)",
+            "independent oracle: CWR-015.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist)",
+            "independent oracle: CWR-015.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist)",
+            "independent oracle: CWR-015.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist)",
+            "independent checker: case CWR-015 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-015.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-015.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-015.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-015.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_015.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-015/20261106T161637Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 75.1
+    },
+    {
+      "case": "CWR-016",
+      "command": "python3 tests/cwr/qualify.py --case CWR-016",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-016.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-016",
+          "checker_errors": [],
+          "diagnostics": [
+            "independent oracle: CWR-016.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist)",
+            "independent oracle: CWR-016.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist)",
+            "independent oracle: CWR-016.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist)",
+            "independent oracle: CWR-016.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist)",
+            "independent checker: case CWR-016 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-016.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-016.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-016.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-016.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_016.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-016/20261106T161752Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 157.5
+    },
+    {
+      "case": "CWR-017",
+      "command": "python3 tests/cwr/qualify.py --case CWR-017",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-017.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-017",
+          "checker_errors": [],
+          "diagnostics": [
+            "the driver reported no assertions; an exit code alone is never a PASS",
+            "coverage gaps: ['CWR-017.a1', 'CWR-017.a2', 'CWR-017.a3']",
+            "task 5.1 driver exited 1",
+            "independent oracle: CWR-017.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_017.py does not exist)",
+            "independent oracle: CWR-017.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_017.py does not exist)",
+            "independent oracle: CWR-017.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_017.py does not exist)",
+            "independent checker: invocation 0 (task 5.1) exited 1",
+            "independent checker: no assertions were observed",
+            "independent checker: registered assertion CWR-017.a1 was not observed",
+            "independent checker: registered assertion CWR-017.a2 was not observed",
+            "independent checker: registered assertion CWR-017.a3 was not observed",
+            "independent checker: case CWR-017 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-017.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_017.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-017.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_017.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-017.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_017.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-017/20261106T162030Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 47.2
+    },
+    {
+      "case": "CWR-018",
+      "command": "python3 tests/cwr/qualify.py --case CWR-018",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-018.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-018",
+          "checker_errors": [],
+          "diagnostics": [
+            "failed assertions: ['CWR-018.a1', 'CWR-018.a2', 'CWR-018.a7', 'CWR-018.a8', 'CWR-018.a3', 'CWR-018.a4', 'CWR-018.a7', 'CWR-018.a8']",
+            "task 5.2 driver exited 1",
+            "task 5.3 driver exited 1",
+            "independent oracle: CWR-018.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a7 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent oracle: CWR-018.a8 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist)",
+            "independent checker: invocation 0 (task 5.2) exited 1",
+            "independent checker: invocation 1 (task 5.3) exited 1",
+            "independent checker: assertion CWR-018.a1 FAIL: 3 of 4 checks failed: H1/frozen: 227/600 ledgers, 227 headers match (missing h1/frozen/t001-copy-readme/5; 373 problems) | H1/drift-1: 222/600 ledgers, 222 headers match (missing h1/drift-1/t001-copy-readme/5; 378 problems) | H1/drift-3: 199/600 ledgers, 199 headers match (missing h1/drift-3/t001-copy-readme/5; 401 problems)",
+            "independent checker: assertion CWR-018.a2 FAIL: 2 of 3 checks failed: H2/script: 225/600 ledgers, 225 headers match (missing h2/script/t001-copy-readme/5; 375 problems) | H2/one-primitive: 195/600 ledgers, 195 headers match (missing h2/one-primitive/t001-copy-readme/5; 405 problems)",
+            "independent checker: assertion CWR-018.a7 FAIL: 2 of 2 checks failed: analyse.py H1: analyse.py refused: suite digest sha256:7c4f31a3d56a7218148b2212d97b9cdca450cf33c09653993b9053367ab244eb recomputed from <repo>/.cwr/campaign-1/frozen/benchmark/tasks is not the registered sha256:21b81c446b254856196c794bfd9ae5c63fa874c9670f0cbfc0a5bf58e8cc5233 | analyse.py H2: analyse.py refused: suite digest sha256:7c4f31a3d56a7218148b2212d97b9cdca450cf33c09653993b9053367ab244eb recomputed from <repo>/.cwr/campaign-1/frozen/benchmark/tasks is not the registered sha256:21b81c446b254856196c794bfd9ae5c63fa874c9670f0cbfc0a5bf58e8cc5233",
+            "independent checker: assertion CWR-018.a8 FAIL: 1 of 6 checks failed: frozen suite sha256:7c4f31a3d56a7218148b2212d97b9cdca450cf33c09653993b9053367ab244eb and cassette set sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c equal the registered digests",
+            "independent checker: assertion CWR-018.a3 FAIL: 1 of 1 checks failed: clause 12.2: H3: no analysis report; H4: no analysis report; H3 matrix incomplete: 340 of 1800 cells; H4 matrix incomplete: 175 of 180 cells (bins registered: ['long', 'medium', 'short']; analyses present: False)",
+            "independent checker: assertion CWR-018.a4 FAIL: 1 of 1 checks failed: clause 12.2: H3: no analysis report; H4: no analysis report; H3 matrix incomplete: 340 of 1800 cells; H4 matrix incomplete: 175 of 180 cells (bins registered: ['long', 'medium', 'short']; analyses present: False)",
+            "independent checker: assertion CWR-018.a7 FAIL: 1 of 1 checks failed: clause 12.5: H3: no stored analysis report; H4: no stored analysis report",
+            "independent checker: assertion CWR-018.a8 FAIL: 1 of 1 checks failed: clause 12.5: H3: no stored analysis report; H4: no stored analysis report",
+            "independent checker: case CWR-018 requires a registered Build and the record names none",
+            "independent checker: incomplete arm matrix: H1 arm frozen has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H1 arm drift-1 has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H1 arm drift-3 has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H2 arm script has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H2 arm one-primitive has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H3 arm K=5 has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H3 arm K=20 has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H3 arm K=full has 0 of 60 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H4 arm changelog has 0 of 6 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H4 arm version-only has 0 of 6 tasks with 10 seeds each",
+            "independent checker: incomplete arm matrix: H4 arm silent has 0 of 6 tasks with 10 seeds each",
+            "independent checker: no pre-registration digest is registered; a hypothesis result requires pre-registered metrics",
+            "independent checker: assertion CWR-018.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a7 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-018.a8 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_018.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-018/20261106T162117Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 102.1
+    },
+    {
+      "case": "CWR-019",
+      "command": "python3 tests/cwr/qualify.py --case CWR-019",
+      "exit_code": 0,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-019.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-019",
+          "checker_errors": [],
+          "diagnostics": [],
+          "outcome": "PASS",
+          "record": "tests/cwr/evidence/CWR-019/20261106T162259Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 46.8
+    },
+    {
+      "case": "CWR-020",
+      "command": "python3 tests/cwr/qualify.py --case CWR-020",
+      "exit_code": 1,
+      "log": "tests/cwr/evidence/closure/run-20261106T152425Z/CWR-020.log",
+      "refused": null,
+      "results": [
+        {
+          "accepted": true,
+          "case": "CWR-020",
+          "checker_errors": [],
+          "diagnostics": [
+            "failed assertions: ['CWR-020.a4', 'CWR-020.a5']",
+            "task 6.1 driver exited 1",
+            "independent oracle: CWR-020.a1 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent oracle: CWR-020.a2 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent oracle: CWR-020.a3 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent oracle: CWR-020.a4 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent oracle: CWR-020.a5 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent oracle: CWR-020.a6 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent oracle: CWR-020.a7 UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist)",
+            "independent checker: invocation 1 (task 6.1) exited 1",
+            "independent checker: assertion CWR-020.a4 FAIL: README.md: 1 of 18 commands failed: line 151 `cargo build --workspace --release --locked` exit 101: ; RELEASE.md: 3 of 12 commands failed: line 153 `cwr release pin --write > pins.txt` exit 2: ; line 153 `cmp benchmark/release.kvx release-recorded.kvx` exit 1: benchmark/release.kvx release-recorded.kvx differ: byte 20183, line 142; line 153 `cwr release check` exit 2: ok   CWR-R021 evidence.preregistration_sha256 = \"sha256:632679a7152173fda0dfb44f6669b36a2a083ca5704bc9002ae813104d31d6e8\" / release check: 6 diagnostic(s): CWR-R005 CWR-R006 CWR-R007 CWR-R008 CWR-R009 CWR-R010",
+            "independent checker: assertion CWR-020.a5 FAIL: marker problems: docs/cwr/experiments.md:416 Verified CWR-019 but the registry holds status PASS with evidence tests/cwr/evidence/CWR-019/20261106T162259Z-1.json",
+            "independent checker: case CWR-020 requires a registered Build and the record names none",
+            "independent checker: assertion CWR-020.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-020.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-020.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-020.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-020.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-020.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS",
+            "independent checker: assertion CWR-020.a7 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_020.py does not exist); a driver observation alone never makes a PASS"
+          ],
+          "outcome": "FAIL",
+          "record": "tests/cwr/evidence/CWR-020/20261106T162346Z-1.json",
+          "scope": "case",
+          "task": null
+        }
+      ],
+      "seconds": 328.6
+    }
+  ],
+  "stamp": "20261106T152425Z"
+}

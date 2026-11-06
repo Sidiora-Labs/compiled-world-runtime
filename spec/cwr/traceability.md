@@ -2,7 +2,7 @@
 
 Generated from [spec.kvx](spec.kvx). A clause `N.M` is `[req.N] ac_M`. Mappings describe coverage ownership, not execution evidence. All cases are UNRUN.
 
-Source digest (requirements, clauses, tasks and cases): `sha256:3fb72a8c1861553c7aabce94a450c9ace4a7353559327b5da8342f2a0b214bbc`.
+Source digest (requirements, clauses, tasks and cases): `sha256:d56900a829b007d15b4b2b96b0d26393a94d787b46e711e1be83d74147a6bf62`.
 
 | Clause | Requirement | Implementation tasks | Cases | Contract |
 |---|---|---|---|---|

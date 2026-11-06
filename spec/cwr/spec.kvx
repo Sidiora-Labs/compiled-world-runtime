@@ -6,8 +6,8 @@
 feature = "cwr"
 name = "Compiled World Runtime: harness as world, not body"
 version = "0.1.0-draft"
-status = "pending"
-stage = "design"
+status = "in_progress"
+stage = "implementation"
 review_date = "2026-11-06"
 intro = "A Compiled World Runtime turns the agent harness into a world the model lives in: a human-edited World Source is compiled into an immutable, content-addressed Build whose rules are documented and enforced identically; a kernel runs many Instances of one Build, executing one sandboxed script per turn through atomic primitives whose outcomes depend only on visible conditions; change happens only through human recompilation into a new versioned Build with a changelog the model is shown. Hypotheses H1 Stability, H2 Direct action, H3 Long context and H4 Controlled change are tested with internal ablation builds only."
 
@@ -172,7 +172,7 @@ heading = "Contracts and evidence first, then compiler, kernel, surface, referen
 
 [task.0.1]
 title = "Freeze the CWR specification pack and structural validator"
-status = "pending"
+status = "implemented"
 wave = 0
 requires = []
 touches = ["spec/cwr/spec.kvx", "spec/cwr/tools/validate_spec.py", "spec/cwr/README.md", "spec/cwr/implementation-plan.md", "spec/cwr/traceability.md", "tests/cwr/cases/0_1.py"]
@@ -187,7 +187,7 @@ cases = ["CWR-020"]
 
 [task.0.2]
 title = "Qualification registry, evidence schema and independent checker"
-status = "pending"
+status = "implemented"
 wave = 0
 requires = ["0.1"]
 touches = ["tests/cwr/registry.kvx", "tests/cwr/qualify.py", "tests/cwr/check_evidence.py", "tests/cwr/evidence.schema.json", "tests/cwr/cases/0_2.py"]
@@ -202,7 +202,7 @@ cases = ["CWR-019"]
 
 [task.0.3]
 title = "Contract grammar, failure envelope and World Source schema crate"
-status = "pending"
+status = "implemented"
 wave = 0
 requires = ["0.1"]
 touches = ["crates/cwr-contract/Cargo.toml", "crates/cwr-contract/src/lib.rs", "crates/cwr-contract/src/kvx.rs", "crates/cwr-contract/src/envelope.rs", "crates/cwr-contract/src/world.rs", "crates/cwr-contract/src/primitive.rs", "crates/cwr-contract/src/adapter.rs", "crates/cwr-contract/src/changelog.rs", "crates/cwr-contract/tests/fixtures/**", "tests/cwr/cases/0_3.py"]
@@ -217,7 +217,7 @@ cases = ["CWR-001"]
 
 [task.1.1]
 title = "Compiler front end: parse, resolve and lint for closure and visibility"
-status = "pending"
+status = "implemented"
 wave = 1
 requires = ["0.3"]
 touches = ["crates/cwr-compiler/Cargo.toml", "crates/cwr-compiler/src/lib.rs", "crates/cwr-compiler/src/parse.rs", "crates/cwr-compiler/src/resolve.rs", "crates/cwr-compiler/src/lint.rs", "crates/cwr-compiler/src/expr.rs", "crates/cwr-compiler/src/pyimports.rs", "crates/cwr-cli/src/build.rs", "tests/cwr/cases/1_1.py"]
@@ -232,7 +232,7 @@ cases = ["CWR-002"]
 
 [task.1.2]
 title = "Contract tests, ContractDiff, changelog gate and version derivation"
-status = "pending"
+status = "implemented"
 wave = 1
 requires = ["1.1"]
 touches = ["crates/cwr-compiler/src/contract_tests.rs", "crates/cwr-compiler/src/diff.rs", "crates/cwr-compiler/src/changelog_gate.rs", "crates/cwr-compiler/src/version.rs", "crates/cwr-compiler/src/ephemeral.rs", "crates/cwr-cli/src/diff.rs", "tests/cwr/cases/1_2.py"]
@@ -247,7 +247,7 @@ cases = ["CWR-003", "CWR-004"]
 
 [task.1.3]
 title = "Build packaging, manual generation and Python SDK generation"
-status = "pending"
+status = "implemented"
 wave = 1
 requires = ["1.2"]
 touches = ["crates/cwr-compiler/src/generate/manual.rs", "crates/cwr-compiler/src/generate/sdk.rs", "crates/cwr-compiler/src/package.rs", "crates/cwr-compiler/src/manifest.rs", "sdk/python/cwr/_codec.py", "sdk/python/cwr/_rpc.py", "sdk/python/cwr/templates/**", "crates/cwr-cli/src/manual.rs", "tests/cwr/cases/1_3.py"]
@@ -262,7 +262,7 @@ cases = ["CWR-005"]
 
 [task.2.1]
 title = "Instance store, ledger, world clock, RNG and snapshots"
-status = "pending"
+status = "implemented"
 wave = 2
 requires = ["0.3"]
 touches = ["crates/cwr-kernel/Cargo.toml", "crates/cwr-kernel/src/lib.rs", "crates/cwr-kernel/src/state.rs", "crates/cwr-kernel/src/ledger.rs", "crates/cwr-kernel/src/clock.rs", "crates/cwr-kernel/src/rng.rs", "crates/cwr-kernel/src/snapshot.rs", "crates/cwr-cli/src/instance.rs", "tests/cwr/cases/2_1.py"]
@@ -277,7 +277,7 @@ cases = ["CWR-006"]
 
 [task.2.2]
 title = "Sandboxed executor and atomic contract check"
-status = "pending"
+status = "blocked"
 wave = 2
 requires = ["2.1", "1.3"]
 touches = ["crates/cwr-kernel/src/sandbox.rs", "crates/cwr-kernel/src/rpc.rs", "crates/cwr-kernel/src/executor.rs", "crates/cwr-kernel/src/contract_check.rs", "crates/cwr-kernel/src/limits.rs", "crates/cwr-kernel/src/envelope.rs", "sdk/python/cwr/_runner.py", "crates/cwr-cli/src/turn.rs", "tests/cwr/cases/2_2.py"]
@@ -293,7 +293,7 @@ cases = ["CWR-007", "CWR-008"]
 
 [task.2.3]
 title = "Adapter gateway with normalisation, idempotency and cassette modes"
-status = "pending"
+status = "implemented"
 wave = 2
 requires = ["2.2"]
 touches = ["crates/cwr-kernel/src/gateway/mod.rs", "crates/cwr-kernel/src/gateway/normalise.rs", "crates/cwr-kernel/src/gateway/idempotency.rs", "crates/cwr-kernel/src/gateway/cassette.rs", "crates/cwr-kernel/src/gateway/live.rs", "crates/cwr-kernel/src/gateway/timeout.rs", "tests/cwr/cases/2_3.py"]
@@ -309,7 +309,7 @@ cases = ["CWR-009"]
 
 [task.2.4]
 title = "Crash recovery and ledger replay"
-status = "pending"
+status = "implemented"
 wave = 2
 requires = ["2.3"]
 touches = ["crates/cwr-kernel/src/recovery.rs", "crates/cwr-kernel/src/replay.rs", "crates/cwr-cli/src/replay.rs", "tests/cwr/cases/2_4.py"]
@@ -324,7 +324,7 @@ cases = ["CWR-010"]
 
 [task.2.5]
 title = "Instance upgrade, migrations, recompile notice and proposal outbox"
-status = "pending"
+status = "implemented"
 wave = 2
 requires = ["2.4", "1.2"]
 touches = ["crates/cwr-kernel/src/upgrade.rs", "crates/cwr-kernel/src/migrate.rs", "crates/cwr-kernel/src/notice.rs", "crates/cwr-kernel/src/outbox.rs", "crates/cwr-cli/src/upgrade.rs", "sdk/python/cwr/_world.py", "tests/cwr/cases/2_5.py"]
@@ -340,7 +340,7 @@ cases = ["CWR-011"]
 
 [task.3.1]
 title = "Context assembly and turn protocol"
-status = "pending"
+status = "implemented"
 wave = 3
 requires = ["2.5"]
 touches = ["crates/cwr-kernel/src/surface/context.rs", "crates/cwr-kernel/src/surface/tail.rs", "crates/cwr-kernel/src/surface/protocol.rs", "crates/cwr-kernel/src/surface/envelope_render.rs", "crates/cwr-cli/src/context.rs", "tests/cwr/cases/3_1.py"]
@@ -355,7 +355,7 @@ cases = ["CWR-012"]
 
 [task.3.2]
 title = "Experimental ablation builds and kernel gate"
-status = "pending"
+status = "implemented"
 wave = 3
 requires = ["3.1"]
 touches = ["crates/cwr-compiler/src/experimental/mod.rs", "crates/cwr-compiler/src/experimental/drift.rs", "crates/cwr-compiler/src/experimental/notice.rs", "crates/cwr-compiler/src/experimental/one_primitive.rs", "crates/cwr-kernel/src/drift_injector.rs", "crates/cwr-cli/src/build.rs", "tests/cwr/cases/3_2.py"]
@@ -370,7 +370,7 @@ cases = ["CWR-013"]
 
 [task.4.1]
 title = "Reference world modules, stub servers and cassettes"
-status = "pending"
+status = "blocked"
 wave = 4
 requires = ["2.3", "1.3"]
 touches = ["examples/refworld/world.kvx", "examples/refworld/CHANGELOG.kvx", "examples/refworld/contracts/**", "examples/refworld/adapters/**", "examples/refworld/lib/**", "examples/refworld/fixtures/**", "examples/refworld/manual/**", "benchmark/stubs/search_server.py", "benchmark/stubs/publish_server.py", "benchmark/cassettes/**", "tests/cwr/cases/4_1.py"]
@@ -385,7 +385,7 @@ cases = ["CWR-009", "CWR-014"]
 
 [task.4.2]
 title = "Task suite with bins, rule-reuse tasks and success predicates"
-status = "pending"
+status = "implemented"
 wave = 4
 requires = ["4.1", "3.1"]
 touches = ["benchmark/tasks/**", "benchmark/suite.kvx", "benchmark/predicates/common.py", "tests/cwr/cases/4_2.py"]
@@ -400,7 +400,7 @@ cases = ["CWR-015"]
 
 [task.4.3]
 title = "Upgrade pairs U1 through U6"
-status = "pending"
+status = "implemented"
 wave = 4
 requires = ["4.1", "2.5"]
 touches = ["examples/refworld-upgrades/U1/**", "examples/refworld-upgrades/U2/**", "examples/refworld-upgrades/U3/**", "examples/refworld-upgrades/U4/**", "examples/refworld-upgrades/U5/**", "examples/refworld-upgrades/U6/**", "benchmark/upgrades.kvx", "tests/cwr/cases/4_3.py"]
@@ -415,7 +415,7 @@ cases = ["CWR-011", "CWR-016"]
 
 [task.5.1]
 title = "Experiment harness runner and ledger-only metrics"
-status = "pending"
+status = "blocked"
 wave = 5
 requires = ["0.2", "3.2", "4.2", "4.3"]
 touches = ["benchmark/harness/run.py", "benchmark/harness/arms.kvx", "benchmark/harness/metrics.py", "benchmark/harness/model.py", "benchmark/analyse.py", "benchmark/preregistration.kvx", "tests/cwr/cases/5_1.py"]
@@ -430,7 +430,7 @@ cases = ["CWR-017"]
 
 [task.5.2]
 title = "H1 stability and H2 direct-action campaigns"
-status = "pending"
+status = "blocked"
 wave = 5
 requires = ["5.1"]
 touches = ["benchmark/campaigns/h1.kvx", "benchmark/campaigns/h2.kvx", "benchmark/results/h1/**", "benchmark/results/h2/**", "research/h1-stability.md", "research/h2-direct-action.md", "tests/cwr/cases/5_2.py"]
@@ -445,7 +445,7 @@ cases = ["CWR-018"]
 
 [task.5.3]
 title = "H3 long-context and H4 controlled-change campaigns and analysis"
-status = "pending"
+status = "blocked"
 wave = 5
 requires = ["5.1"]
 touches = ["benchmark/campaigns/h3.kvx", "benchmark/campaigns/h4.kvx", "benchmark/results/h3/**", "benchmark/results/h4/**", "research/h3-long-context.md", "research/h4-controlled-change.md", "tests/cwr/cases/5_3.py"]
@@ -460,7 +460,7 @@ cases = ["CWR-018"]
 
 [task.6.1]
 title = "Documentation and reproducible release artifacts"
-status = "pending"
+status = "blocked"
 wave = 6
 requires = ["5.2", "5.3"]
 touches = ["docs/cwr/world-source.md", "docs/cwr/kernel.md", "docs/cwr/experiments.md", "README.md", "CHANGELOG.md", "RELEASE.md", "crates/cwr-cli/Cargo.toml", "sdk/python/pyproject.toml", "benchmark/release.kvx", "tests/cwr/cases/6_1.py"]
@@ -475,7 +475,7 @@ cases = ["CWR-020"]
 
 [task.6.2]
 title = "Evidence closure and owner acceptance"
-status = "pending"
+status = "implemented"
 wave = 6
 requires = ["6.1"]
 touches = ["tests/cwr/closure.py", "tests/cwr/cases/6_2.py", "spec/cwr/qualification.kvx", "spec/cwr/spec.kvx"]
@@ -490,7 +490,7 @@ cases = ["CWR-020"]
 
 [case.CWR-001]
 title = "Contract grammar and closed failure envelope"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["2.3", "3.1", "3.2", "3.3", "3.4", "3.6"]
 tasks = ["0.3"]
@@ -498,7 +498,7 @@ oracle = "Malformed source is rejected with located errors; valid source round-t
 
 [case.CWR-002]
 title = "Compiler closure and visibility lints"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["2.1", "2.2", "3.1", "3.5", "4.1"]
 tasks = ["1.1"]
@@ -506,7 +506,7 @@ oracle = "Each seeded defect stops the pipeline at the expected stage with the e
 
 [case.CWR-003]
 title = "Contract tests and rule determinism"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["1.6", "4.2"]
 tasks = ["1.2"]
@@ -514,7 +514,7 @@ oracle = "Every declared precondition failure and effect is exercised in an ephe
 
 [case.CWR-004]
 title = "ContractDiff, changelog gate and version derivation"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["3.6", "4.3", "4.4", "5.5"]
 tasks = ["1.2"]
@@ -522,7 +522,7 @@ oracle = "Independent recomputation of the diff from both contract sets matches;
 
 [case.CWR-005]
 title = "Immutable, deterministic Build artifacts and generated manual"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["1.4", "2.4", "2.5", "4.5", "4.6", "9.2"]
 tasks = ["1.3"]
@@ -530,7 +530,7 @@ oracle = "Two compilations on different hosts hash identically; a one-byte chang
 
 [case.CWR-006]
 title = "Ledger, snapshot, world clock and RNG"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["1.5", "6.6", "8.1", "8.2", "9.4"]
 tasks = ["2.1"]
@@ -538,7 +538,7 @@ oracle = "Restored snapshots are observably identical; ledger records are durabl
 
 [case.CWR-007]
 title = "Sandbox closure and resource limits"
-status = "UNRUN"
+status = "FAIL"
 tier = "component"
 reqs = ["1.1", "1.2", "6.1", "6.5"]
 tasks = ["2.2"]
@@ -546,7 +546,7 @@ oracle = "Every unlisted capability is refused from inside the script; exceeding
 
 [case.CWR-008]
 title = "Atomic primitives, ordered preconditions and partial scripts"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["1.3", "1.6", "2.2", "2.6", "6.2", "6.3", "6.4"]
 tasks = ["2.2"]
@@ -554,7 +554,7 @@ oracle = "State after a failed precondition equals state before; the first faili
 
 [case.CWR-009]
 title = "Adapter gateway normalisation, idempotency and cassette replay"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["1.3", "7.1", "7.2", "7.3", "7.4", "7.5", "7.6"]
 tasks = ["2.3", "4.1"]
@@ -562,7 +562,7 @@ oracle = "Stub servers observe exactly the requests the ledger records with no r
 
 [case.CWR-010]
 title = "Crash recovery and ledger replay"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["6.6", "8.3", "8.4", "8.5"]
 tasks = ["2.4"]
@@ -570,7 +570,7 @@ oracle = "After a crash at any turn boundary the stub server saw one request and
 
 [case.CWR-011]
 title = "Controlled upgrade, migrations, recompile notice and outbox"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["3.6", "5.1", "5.2", "5.3", "5.4", "5.5"]
 tasks = ["2.5", "4.3"]
@@ -578,7 +578,7 @@ oracle = "Only cwr build creates Builds; upgrades are atomic with rollback on fa
 
 [case.CWR-012]
 title = "Context composition and turn protocol"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["2.4", "2.5", "9.1", "9.2", "9.3", "9.4", "9.5"]
 tasks = ["3.1"]
@@ -586,7 +586,7 @@ oracle = "The manual prefix is byte-identical across turns and Instances; the co
 
 [case.CWR-013]
 title = "Experimental ablation builds and kernel gate"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["5.3", "10.1", "10.2", "10.3", "10.4", "10.5"]
 tasks = ["3.2"]
@@ -594,7 +594,7 @@ oracle = "Each experimental Build's ContractDiff against control lists only flag
 
 [case.CWR-014]
 title = "Reference world rules, stub servers and cassettes"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["7.5", "11.1", "11.5"]
 tasks = ["4.1"]
@@ -602,7 +602,7 @@ oracle = "Every declared failure of every refworld primitive and adapter is reac
 
 [case.CWR-015]
 title = "Task suite bins and success predicates"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["11.2", "11.3"]
 tasks = ["4.2"]
@@ -610,7 +610,7 @@ oracle = "Reference solutions succeed under their predicates; bin membership fol
 
 [case.CWR-016]
 title = "Upgrade pairs U1 through U6"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["5.2", "5.3", "11.4"]
 tasks = ["4.3"]
@@ -618,7 +618,7 @@ oracle = "Each pair compiles with the derived bump and frozen diff; the post-upg
 
 [case.CWR-017]
 title = "Harness isolation and ledger-only metrics"
-status = "UNRUN"
+status = "FAIL"
 tier = "integration"
 reqs = ["8.5", "12.1", "12.3", "12.4", "12.6"]
 tasks = ["5.1"]
@@ -626,7 +626,7 @@ oracle = "No harness file references another agent or harness; metrics recompute
 
 [case.CWR-018]
 title = "Hypothesis campaigns H1 through H4"
-status = "UNRUN"
+status = "FAIL"
 tier = "campaign"
 reqs = ["5.3", "10.2", "10.3", "10.4", "12.2", "12.5"]
 tasks = ["5.2", "5.3"]
@@ -634,7 +634,7 @@ oracle = "Complete arm matrices with 10 seeds per task exist; report numbers equ
 
 [case.CWR-019]
 title = "Evidence registry and false-success traps"
-status = "UNRUN"
+status = "PASS"
 tier = "component"
 reqs = ["13.2", "13.3", "13.4"]
 tasks = ["0.2"]
@@ -642,7 +642,7 @@ oracle = "Zero-assertion, tampered, stale-Build and mismatched-seed evidence fai
 
 [case.CWR-020]
 title = "Specification, documentation and release closure"
-status = "UNRUN"
+status = "FAIL"
 tier = "release"
 reqs = ["13.1", "13.5", "14.1", "14.2", "14.3", "14.4"]
 tasks = ["0.1", "6.1", "6.2"]

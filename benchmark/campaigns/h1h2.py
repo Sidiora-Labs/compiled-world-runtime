@@ -14,9 +14,18 @@ Subcommands (run from anywhere; paths are resolved from this file):
              binary and write benchmark/campaigns/h1.kvx and h2.kvx; refuses once any result exists
   run        execute cells (hypothesis, arm, task, seed) in replay mode with parallel workers through
              benchmark/harness/run.py; seed-major order, resumable, stops submitting at --deadline
-  analyse    run benchmark/analyse.py separately over H1 and H2 into results/h<N>/analysis.json
+  complete-registration
+             fill the null campaign inputs of arms.kvx and preregistration.kvx (refused once any
+             result exists or the registration is already registered)
+  analyse    run benchmark/analyse.py separately over H1 and H2 into results/h<N>/analysis.json,
+             replaying recorded turns with the campaign's pinned cwr binary
   report     render research/h1-stability.md and research/h2-direct-action.md from those analyses
   status     count present, missing and errored cells per arm
+  prune      move interrupted cells (no attempt record) out of the results tree
+
+The campaign runs on frozen copies of the task suite and the suite cassette set under
+.cwr/campaign-1/frozen, compiles into its own Build root .cwr/campaign-1/build, and replays with the
+binary .cwr/campaign-1/bin/cwr; their digests are registered in h1.kvx and h2.kvx.
 
 Drift schedule (experiments.md 3.1, compiler.md section 10). len is the reference solution's turn count
 recorded in benchmark/suite.kvx before any run. drift-1 injects one rule at max(1, floor(len/2)); drift-3
@@ -55,6 +64,7 @@ from benchmark.harness.ledgerio import (  # noqa: E402
     dump_kvx,
     parse_kvx,
     read_kvx,
+    read_ledger,
     sha256_file,
 )
 
@@ -80,6 +90,10 @@ BUILD_ROOT = Path(
 )
 XBUILD_ROOT = BUILD_ROOT.parent / "xbuild"
 HOME = BUILD_ROOT.parent / "home"
+# The cwr binary the campaign ran with (its sha256 is registered as cwr_binary_sha256); analyse.py
+# replays turns with this binary to recompute turns to success from the ledgers.
+CAMPAIGN_BIN = BUILD_ROOT.parent / "bin" / "cwr"
+ANALYSE_JOBS = 32
 CASSETTES = Path(os.environ.get("CWR_CASSETTE_SET") or FROZEN / "cassettes" / "suite")
 CAMPAIGN_FILE = {"H1": CAMPAIGNS / "h1.kvx", "H2": CAMPAIGNS / "h2.kvx"}
 ARM_KEYS = {"H1": ("frozen", "drift-1", "drift-3"), "H2": ("script", "one-primitive")}
@@ -858,13 +872,37 @@ def status(args: argparse.Namespace) -> int:
 # Analysis and reports
 
 
+# The files of a cell that analyse.py reads as ledger-only inputs. The recorded model messages are
+# left out of the analysis view on purpose: without them analyse.py computes turns to success by the
+# registered stop rule (preregistration.kvx convention c7) instead of replaying every turn, because a
+# replay re-runs each script under the Build's 30000 ms wall-clock limit and so depends on host load
+# (see the deviation "Turns to success" in the reports).
+VIEW_FILES = ("ledger.jsonl", "final_state.kvx", "attempt.kvx")
+
+
+def ledger_view(hypothesis: str, root: Path) -> None:
+    """Mirror results/h<N> under root with only the ledger-only files of every cell, as symlinks."""
+    source = RESULTS / hypothesis.lower()
+    for arm in ARM_KEYS[hypothesis]:
+        for cell in sorted((source / arm).glob("*/*")):
+            if not cell.is_dir():
+                continue
+            target = root / hypothesis.lower() / cell.relative_to(source)
+            target.mkdir(parents=True)
+            for name in VIEW_FILES:
+                if (cell / name).exists():
+                    (target / name).symlink_to(cell / name)
+
+
 def analyse_hypothesis(hypothesis: str, out: Path, *, check: bool = False) -> int:
-    """analyse.py over results/h<N> only (a private view holding just that hypothesis)."""
+    """analyse.py over the ledger-only view of results/h<N> (that hypothesis alone)."""
     with tempfile.TemporaryDirectory(prefix=f"cwr-{hypothesis.lower()}-view-") as tmp:
-        view = Path(tmp) / hypothesis.lower()
-        view.symlink_to(RESULTS / hypothesis.lower(), target_is_directory=True)
+        ledger_view(hypothesis, Path(tmp))
         cmd = [sys.executable, "-I", str(REPO / "benchmark" / "analyse.py"), "--results", tmp]
-        cmd += ["--suite", str(SUITE), "--tasks-dir", str(TASKS)]
+        cmd += ["--suite", str(SUITE), "--tasks-dir", str(TASKS), "--cassettes", str(CASSETTES)]
+        cmd += ["--cwr", str(CAMPAIGN_BIN), "--jobs", str(ANALYSE_JOBS)]
+        for root in (BUILD_ROOT, XBUILD_ROOT):
+            cmd += ["--builds", str(root)]
         cmd += ["--check", str(out)] if check else ["--out", str(out)]
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=REPO)
     sys.stdout.write(proc.stdout)
@@ -994,9 +1032,11 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
     prereg = read_kvx(PREREG)[f"hypothesis.{hypothesis}"]
     campaign = load_campaign(hypothesis)["registration"]
     arms = list(ARM_KEYS[hypothesis])
-    metrics = [prereg["primary"], *prereg["secondary"]]
-    if hypothesis == "H2":
-        metrics.append("failure_rate.LIMIT")
+    names = sorted(body["cells"][arms[0]]["short"]["metrics"])
+    metrics = []
+    for metric in [prereg["primary"], *prereg["secondary"]]:
+        # failure_rate is registered per envelope code; it expands to failure_rate.<CODE>.
+        metrics += [n for n in names if n.startswith(metric + ".")] or [metric]
     title = {"H1": "H1 Stability", "H2": "H2 Direct action"}[hypothesis]
     matrix = body["matrix"]
     counts = matrix_counts(hypothesis)
@@ -1069,6 +1109,10 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
         "A label is not a finding beyond this campaign.",
         "",
         *direction_rows(body),
+        "",
+        "Summary of the labels: "
+        + "; ".join(f"{d['id']} ({d['group']}): {d['label']}" for d in body["directions"])
+        + ".",
     ]
     if hypothesis == "H1":
         lines += [
@@ -1112,6 +1156,14 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
             f"tasks: {complete}. The arm matrix is incomplete, so case CWR-018 cannot pass on this "
             "campaign, and every interval above is over fewer Instances than registered."
         )
+        automatic.append(
+            "Missing and excluded cells are not missing at random. Cells that run to the turn "
+            "limit take longest, so the cells still running when the campaign was stopped, and the "
+            "cells whose model requests failed mid-run, over-represent long and failing Instances, "
+            "most of all in the ablated arms. Every mean above is over the cells present and is "
+            "likely biased toward success in those arms; the deltas against the control are "
+            "therefore more likely understated than overstated."
+        )
     lines += ["", "## Deviations from pre-registration", ""]
     lines += [f"- {d}" for d in [*automatic, *deviations]] or ["- None."]
     lines += [
@@ -1127,48 +1179,107 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
     return "\n".join(lines)
 
 
+def resource_limit_turns(hypothesis: str) -> dict[str, int]:
+    """Per arm, turns that ended in LIMIT with no call record of that turn failing with LIMIT.
+
+    Such a turn hit a turn budget rather than a precondition: CPU, wall clock or memory, or in the
+    one-primitive arm the primitive_calls budget, whose refused call writes no record.
+    """
+    out: dict[str, int] = {}
+    for arm in ARM_KEYS[hypothesis]:
+        count = 0
+        for path in sorted((RESULTS / hypothesis.lower() / arm).glob("*/*/ledger.jsonl")):
+            records = read_ledger(path)
+            limited = {
+                r["turn"]
+                for r in records
+                if r.get("kind") in ("primitive", "adapter")
+                and (r.get("outcome") or {}).get("code") == "LIMIT"
+            }
+            count += sum(
+                1
+                for r in records
+                if r.get("kind") == "turn" and r.get("code") == "LIMIT" and r["turn"] not in limited
+            )
+        out[arm] = count
+    return out
+
+
 def deviations_for(hypothesis: str) -> list[str]:
     """Deviations and registered interpretations, with every count computed from the inputs."""
     tasks = suite_tasks()
+    replaced_root = RESULTS / "_replaced" / hypothesis.lower()
+    replaced = sum(1 for p in replaced_root.glob("*/*/*") if p.is_dir())
     common = [
         "Build root: the campaign compiles refworld into .cwr/campaign-1/build (experimental Builds "
         "into the xbuild/ beside it) rather than build/, because build/ already held other "
         "refworld Builds of the same version, which the changelog gate refuses as a previous Build. "
         "The control Build therefore takes the first-Build path and its hash depends only on the "
         "World Source and the compiler.",
-        "Harness defect fixed before registration: the pilot showed that benchmark/harness/run.py "
-        "built the predicate state view with kv values still in the kernel's bytes encoding, so "
-        "no kv-based success predicate could hold. Task 5.2 decoded kv values exactly as file "
-        "contents are decoded before any registered run. Each runner process loaded the harness "
-        "once at start and used that one version throughout; later edits to benchmark/harness by "
-        "task 5.1 are not part of this campaign.",
-        "Throughput: the pilot and the first minutes of the campaign saturated the first gateway "
-        "endpoint, so a second runner process spread its workers over the second and third "
-        "endpoints of .env, which serve the same configured model identity with the same keys and "
-        "no sampling parameter. A cell's endpoint slot is recorded in its gateway.json; a cell "
-        "without one ran on slot 1.",
+        "Frozen inputs: the campaign ran on copies of the task suite and of the suite cassette set "
+        "taken at registration under .cwr/campaign-1/frozen; tests/cwr/cases/5_2.py verifies that "
+        "their digests equal the registered suite and cassette digests.",
+        "Pre-registration amendments, all made before any result of the executed campaign "
+        "existed under benchmark/results: task 5.2 re-registered the metrics.py digest after task "
+        "5.3 added the H4 misuse scope (no H1 or H2 definition changed); the review of the task "
+        "suite then re-froze the suite, suite cassette and upgrades digests "
+        "([deviation.suite_review_2026_11_06] in benchmark/preregistration.kvx: rules the starting "
+        "state cannot trigger pruned, rate rules removed, adapter parameters pinned in task.md). "
+        "benchmark/campaigns/h1.kvx and h2.kvx were regenerated from the re-frozen suite, so their "
+        "drift specifications use its rules and turns and their registered_at precedes every "
+        "attempt.",
+        "Aborted executions: three earlier executions were stopped before completion and are "
+        "retained outside the results tree (.cwr/campaign-1/aborted-1 to aborted-3), never "
+        "analysed and never pooled. The first ran in one process whose Python threads were "
+        "CPU-bound and was overtaken by the metrics.py change; the second was stopped within "
+        "minutes when a suite revision was found; the third, run on the earlier suite and cassette "
+        "digests, was stopped when the suite review re-froze them, because results under the "
+        "earlier digests belong to the earlier registration.",
+        "Harness: the pilot found that the predicate state view kept kv values in the kernel's "
+        "bytes encoding, so no kv-based predicate could hold; task 5.2 patched that before the "
+        "first registration and task 5.1 later replaced the mapping with "
+        "benchmark/predicates/common.py state_view_from_instance, which the executed campaign "
+        "uses. Every runner process records the sha256 of the harness sources it loaded in "
+        ".cwr/campaign-1/runners.jsonl; the processes of the executed campaign loaded one version.",
+        "Execution: runner processes of thirty workers each shared the cell list through "
+        "per-cell locks. The first twelve spread their model requests over the first two gateway "
+        "endpoints of .env; later passes, started to re-run cells whose runner had stopped or "
+        "whose model requests failed, used both or, once the second endpoint answered 503, the "
+        "first only. Every endpoint serves the one configured model identity with the same keys "
+        "and no sampling parameter; the third answered 503 during an aborted execution and was "
+        "not used. "
+        "A cell's endpoint slot is recorded in its gateway.json, never the URL. Cells that ended "
+        "in a model or kernel error were run again from a fresh Instance and the harness moved "
+        "each failed attempt aside to benchmark/results/_replaced; cells in flight when a runner "
+        "stopped left only staging directories, kept under .cwr/campaign-1/staging-leftovers and "
+        "never analysed."
+        + (f" Attempts moved aside for this hypothesis: {replaced}." if replaced else ""),
         "Instance stores: each worker thread uses its own Instance store under "
-        ".cwr/campaign-1/home, because concurrent Instances of one task otherwise share the "
-        "initial-state file the binding writes before `cwr instance create`.",
-        "Registration inputs: upgrades_digest, required for a complete registration although H1 "
-        "and H2 do not read it, was registered as the sha256 of benchmark/upgrades.kvx. The model "
-        "identity is the configured one; the gateway reports its own identity string, which every "
-        "attempt record keeps as model_reported.",
+        ".cwr/campaign-1/home, so concurrent Instances of one task never share a file.",
+        "Turns to success: analyse.py computes it by the registered stop rule (convention c7: "
+        "the runner stops after the first turn whose predicate holds, so a successful Instance's "
+        "last turn is its first satisfying turn), from an analysis view that holds each cell's "
+        "ledger, final state and attempt record but not the recorded model messages. With the "
+        "messages present analyse.py instead replays every turn, and a replay re-runs each script "
+        "under the Build's 30000 ms wall-clock limit: on the loaded host a recorded turn that "
+        "finished in time exceeded the limit when replayed (for example the first turn of "
+        "h2/script/t060-report-pipeline/5), and analyse.py refuses the whole analysis on "
+        "any such divergence. The method appears per arm and bin as turns_to_success_method.",
+        "Host load (a threat): during the campaign other processes on the host drove the load "
+        "average far above the core count, so the runner count was reduced. Turns that ended in LIMIT with no call record failing with "
+        "LIMIT hit a turn budget (CPU, wall clock or memory; in the one-primitive arm also the "
+        "primitive_calls budget, whose refused call writes no record): "
+        + ", ".join(f"{arm} {n}" for arm, n in resource_limit_turns(hypothesis).items())
+        + ". Outside the one-primitive arm these are counted as recorded and may include turns the "
+        "host load starved.",
+        "Model identity: the gateway reports its own identity string, which every attempt record "
+        "keeps as model_reported and the harness accepts under the registered routing_prefix rule.",
         "Replay condition (a threat, not a deviation): a model request that differs from the "
         "reference solution's recorded request is a cassette miss and returns UNAVAILABLE, in "
-        "every arm alike.",
+        "every arm alike; the re-frozen suite pins adapter parameters in task.md to limit this.",
         "The control arm of H1 (frozen) and of H2 (script) are the same Build and K; they are run "
         "and reported separately, as registered.",
     ]
-    interrupted = BUILD_ROOT.parent / "interrupted" / hypothesis.lower()
-    restarted = len([p for p in interrupted.glob("*/*/*") if p.is_dir()])
-    if restarted:
-        common.append(
-            f"Restarts: {restarted} {hypothesis} cells were interrupted when the operator restarted "
-            "the runner to raise the worker count; each was re-run from a fresh Instance, and the "
-            "interrupted partial runs are kept outside the results tree under "
-            ".cwr/campaign-1/interrupted and never analysed."
-        )
     if hypothesis == "H1":
         lens = [int(info["turns"]) for info in tasks.values()]
         ones = sum(1 for n in lens if n == 1)

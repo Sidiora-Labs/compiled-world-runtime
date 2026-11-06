@@ -48,6 +48,10 @@ sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
 SUITE = REPO / "benchmark" / "suite.kvx"
+TASKS = REPO / "benchmark" / "tasks"
+CASSETTES = REPO / "benchmark" / "cassettes" / "suite"
+# The cwr binary the campaign ran with; analyse.py replays recorded turns with it.
+CAMPAIGN_BIN = REPO / ".cwr" / "campaign-1" / "bin" / "cwr"
 PREREG = REPO / "benchmark" / "preregistration.kvx"
 METRICS = REPO / "benchmark" / "harness" / "metrics.py"
 RESULTS = REPO / "benchmark" / "results"
@@ -193,12 +197,14 @@ def embedded_drift(path: Path) -> list[dict] | None:
 
 
 def check_drift_builds(c: Clauses, binary: Path, h1: dict, control_manual: bytes) -> None:
+    """Every per-task drift Build: schedule recomputed, hash verified, stamp, manual, embedding."""
     tasks = suite_tasks()
-    plan_ok = builds_ok = manual_ok = embed_ok = 0
+    counts = {"plan": 0, "build": 0, "manual": 0, "embed": 0}
+    problems: list[str] = []
     for task, info in tasks.items():
         section = h1.get(f"task.{task}")
         if section is None:
-            c.check("10.2", False, f"h1.kvx has no [task.{task}]")
+            problems.append(f"h1.kvx has no [task.{task}]")
             continue
         length = int(info["turns"])
         for arm, fractions in FRACTIONS.items():
@@ -207,50 +213,55 @@ def check_drift_builds(c: Clauses, binary: Path, h1: dict, control_manual: bytes
             expected = [max(1, length * p // q) for p, q in fractions]
             turns = [e.get("turn") for e in entries]
             rules = set(info["rules"])
-            sound = (
+            if not (
                 turns == expected
                 and section.get("len") == length
                 and all(e.get("rule") in rules for e in entries)
                 and all(e.get("primitive") == e.get("rule", "").split("[")[0] for e in entries)
-            )
-            if not c.check("10.2", sound, f"{task} {arm} schedule {turns} != {expected}"):
+            ):
+                problems.append(f"{task} {arm}: schedule {turns}, recomputed {expected}")
                 continue
-            plan_ok += 1
+            counts["plan"] += 1
             build = section.get(f"{key}_build", "")
             good, why = verify_build(binary, build)
             m = manifest(build) if good else {}
-            stamped = m.get("experimental") is True and str(m.get("experimental_flag", "")).lstrip(
-                "-"
-            ).startswith("x-drift")
-            if not c.check("10.2", good and stamped, f"{task} {arm} Build {build}: {why or m}"):
+            flag = str(m.get("experimental_flag", "")).lstrip("-")
+            if not (good and m.get("experimental") is True and flag == "x-drift"):
+                problems.append(f"{task} {arm}: Build {build} {why or m}")
                 continue
-            builds_ok += 1
+            counts["build"] += 1
             path = build_dir(build)
-            if c.check(
-                "10.2",
-                (path / "manual.md").read_bytes() == control_manual,
-                f"{task} {arm} manual differs from the control manual",
-            ):
-                manual_ok += 1
+            if (path / "manual.md").read_bytes() == control_manual:
+                counts["manual"] += 1
+            else:
+                problems.append(f"{task} {arm}: manual differs from the control manual")
             embedded = embedded_drift(path)
-            same = embedded is not None and [
-                (int(e["turn"]), e["primitive"], e["change"], e["expr"], e["failure"])
-                for e in embedded
-            ] == [
+            registered = [
                 (e["turn"], e["primitive"], e["change"], e["expr"], e["failure"]) for e in entries
             ]
-            if c.check("10.2", same, f"{task} {arm} embedded schedule {embedded} != registered"):
-                embed_ok += 1
+            carried = [
+                (int(e["turn"]), e["primitive"], e["change"], e["expr"], e["failure"])
+                for e in embedded or []
+            ]
+            if embedded is not None and carried == registered:
+                counts["embed"] += 1
+            else:
+                problems.append(f"{task} {arm}: embedded schedule differs from h1.kvx")
+    want = 2 * len(tasks)
     c.check(
         "10.2",
-        plan_ok == builds_ok == manual_ok == embed_ok == 2 * len(tasks),
-        f"{plan_ok} schedules recomputed, {builds_ok} drift Builds verified and stamped, "
-        f"{manual_ok} manuals byte-identical to control, {embed_ok} embedded schedules equal h1.kvx",
+        not problems and all(v == want for v in counts.values()),
+        f"{counts['plan']}/{want} drift schedules equal the recomputation, {counts['build']} drift "
+        f"Builds verify with the x-drift stamp, {counts['manual']} manuals are byte-identical to "
+        f"the control manual, {counts['embed']} embedded schedules equal h1.kvx"
+        + (f"; {problems[0]} (+{len(problems) - 1} more)" if problems else ""),
     )
 
 
-def kernel_turns(binary: Path, build: str, scripts: list[str], home: Path) -> list[dict]:
-    """Create an Instance of a Build and run kernel-direct scripts; returns the ledger."""
+def kernel_turns(
+    binary: Path, build: str, scripts: list[str], home: Path
+) -> tuple[list[dict], list[dict]]:
+    """Create an Instance of a Build and run kernel-direct scripts; returns (ledger, envelopes)."""
     create = run(
         [
             str(binary),
@@ -272,6 +283,7 @@ def kernel_turns(binary: Path, build: str, scripts: list[str], home: Path) -> li
     if create.returncode != 0:
         raise RuntimeError(f"instance create exited {create.returncode}: {create.stderr[-300:]}")
     instance = create.stdout.strip()
+    envelopes = []
     for script in scripts:
         turn = run(
             [str(binary), "instance", "turn", instance, "--home", str(home)]
@@ -280,7 +292,9 @@ def kernel_turns(binary: Path, build: str, scripts: list[str], home: Path) -> li
         )
         if turn.returncode != 0:
             raise RuntimeError(f"instance turn exited {turn.returncode}: {turn.stderr[-300:]}")
-    return read_ledger(home / "instances" / instance / "ledger.jsonl")
+        lines = [line for line in turn.stdout.splitlines() if line.strip()]
+        envelopes.append(json.loads(lines[-1]) if lines else {})
+    return read_ledger(home / "instances" / instance / "ledger.jsonl"), envelopes
 
 
 def live_drift_probe(c: Clauses, binary: Path, h1: dict) -> None:
@@ -295,7 +309,7 @@ def live_drift_probe(c: Clauses, binary: Path, h1: dict) -> None:
         last = max(e["turn"] for e in section["drift_3"])
         with tempfile.TemporaryDirectory(prefix="cwr-5_2-drift-") as tmp:
             try:
-                ledger = kernel_turns(
+                ledger, _ = kernel_turns(
                     binary, build, ["import world\nworld.now()\n"] * last, Path(tmp)
                 )
             except RuntimeError as error:
@@ -338,22 +352,32 @@ def check_one_primitive(c: Clauses, binary: Path, h2: dict) -> None:
     )
     with tempfile.TemporaryDirectory(prefix="cwr-5_2-one-") as tmp:
         try:
-            ledger = kernel_turns(
+            ledger, envelopes = kernel_turns(
                 binary, build, ["import world\nworld.now()\nworld.now()\n"], Path(tmp)
             )
         except RuntimeError as error:
             c.check("10.4", False, f"one-primitive probe: {error}")
-            ledger = []
+            ledger, envelopes = [], [{}]
     calls = [r for r in ledger if r.get("kind") in CALL_KINDS]
-    second = calls[1] if len(calls) > 1 else {}
-    outcome = second.get("outcome") or {}
+    turns = [r for r in ledger if r.get("kind") == "turn"]
+    error = envelopes[0].get("error") or {}
+    trace = envelopes[0].get("trace") or []
+    second = (calls[1].get("outcome") or {}) if len(calls) > 1 else {}
     c.check(
         "10.4",
-        len(calls) == 2
+        error.get("code") == "LIMIT"
+        and error.get("limit") == "primitive_calls"
+        and [t.get("code") or t.get("status") for t in trace] == ["ok", "LIMIT"]
+        and len(calls) == 2
         and calls[0]["outcome"]["status"] == "ok"
-        and outcome.get("status") == "error"
-        and outcome.get("code") == "LIMIT",
-        f"fresh Instance: second call of a turn -> {outcome}",
+        and second.get("status") == "error"
+        and second.get("code") == "LIMIT"
+        and len(turns) == 1
+        and turns[0].get("code") == "LIMIT",
+        f"fresh Instance, two calls in one turn: envelope error {error.get('code')} limit "
+        f"{error.get('limit')}; ledger call outcomes "
+        f"{[(r['outcome']['status'], r['outcome']['code']) for r in calls]}, turn code "
+        f"{turns[0].get('code') if turns else None}",
     )
 
 
@@ -448,7 +472,8 @@ def check_drift_ledgers(c: Clauses, ledgers: dict, h1: dict) -> None:
 
 
 def check_one_primitive_ledgers(c: Clauses, ledgers: dict) -> None:
-    turns_checked = second_calls = 0
+    """In every one-primitive ledger, a turn has at most one ok call and every later call is LIMIT."""
+    turns_checked = later = 0
     bad: list[str] = []
     for (hypothesis, arm, task, seed), ledger in sorted(ledgers.items()):
         if (hypothesis, arm) != ("H2", "one-primitive"):
@@ -457,18 +482,18 @@ def check_one_primitive_ledgers(c: Clauses, ledgers: dict) -> None:
         for r in ledger:
             if r.get("kind") in CALL_KINDS:
                 by_turn.setdefault(r["turn"], []).append(r)
+        turns_checked += sum(1 for r in ledger if r.get("kind") == "turn")
         for turn, calls in by_turn.items():
-            turns_checked += 1
-            for later in calls[1:]:
-                second_calls += 1
-                outcome = later.get("outcome") or {}
+            for record in calls[1:]:
+                later += 1
+                outcome = record.get("outcome") or {}
                 if outcome.get("status") != "error" or outcome.get("code") != "LIMIT":
-                    bad.append(f"{task}/{seed} turn {turn}: later call {outcome}")
+                    bad.append(f"{task}/{seed} turn {turn}: a later call ended {outcome}")
     c.check(
         "10.4",
         not bad and turns_checked > 0,
-        f"{turns_checked} one-primitive turns: every one of {second_calls} later calls is LIMIT"
-        + (f"; {bad[0]}" if bad else ""),
+        f"{turns_checked} one-primitive turns: no turn has a second executed call; {later} later "
+        "call records, every one LIMIT" + (f"; {bad[0]}" if bad else ""),
     )
 
 
@@ -477,10 +502,21 @@ def check_one_primitive_ledgers(c: Clauses, ledgers: dict) -> None:
 
 
 def fresh_analysis(hypothesis: str) -> tuple[int, dict | None, str]:
+    """analyse.py afresh over a view holding each cell's ledger, final state and attempt record.
+
+    The view omits the recorded model messages, as the campaign's own analysis does, so turns to
+    success follows the registered stop rule (convention c7) rather than a wall-clock-bound replay.
+    """
     with tempfile.TemporaryDirectory(prefix="cwr-5_2-analysis-") as tmp:
         view = Path(tmp) / "view"
-        view.mkdir()
-        (view / hypothesis.lower()).symlink_to(RESULTS / hypothesis.lower())
+        source = RESULTS / hypothesis.lower()
+        for cell in sorted(source.glob("*/*/*")):
+            if cell.is_dir() and cell.relative_to(source).parts[0] in ARMS[hypothesis]:
+                target = view / hypothesis.lower() / cell.relative_to(source)
+                target.mkdir(parents=True)
+                for name in ("ledger.jsonl", "final_state.kvx", "attempt.kvx"):
+                    if (cell / name).exists():
+                        (target / name).symlink_to(cell / name)
         out = Path(tmp) / "analysis.json"
         proc = run(
             [
@@ -491,6 +527,17 @@ def fresh_analysis(hypothesis: str) -> tuple[int, dict | None, str]:
                 str(view),
                 "--out",
                 str(out),
+                "--suite",
+                str(SUITE),
+                "--tasks-dir",
+                str(TASKS),
+                "--cassettes",
+                str(CASSETTES),
+                "--cwr",
+                str(CAMPAIGN_BIN),
+                "--jobs",
+                "32",
+                *[arg for root in BUILD_ROOTS[:2] for arg in ("--builds", str(root))],
             ]
         )
         data = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
@@ -626,7 +673,46 @@ def check_report(c: Clauses, hypothesis: str, fresh: dict) -> None:
     )
 
 
+def tasks_digest(root: Path) -> str:
+    """Suite digest over every tNNN-slug task file, in the Build hash layout of compiler.md 7."""
+    import hashlib
+
+    files = [
+        p
+        for d in sorted(root.iterdir())
+        if d.is_dir() and re.fullmatch(r"t\d{3}-[a-z0-9-]+", d.name)
+        for p in d.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts
+    ]
+    h = hashlib.sha256()
+    for p in sorted(files, key=lambda p: p.relative_to(root).as_posix().encode()):
+        data = p.read_bytes()
+        h.update(p.relative_to(root).as_posix().encode() + b"\0" + str(len(data)).encode())
+        h.update(b"\0" + data)
+    return "sha256:" + h.hexdigest()
+
+
+def cassette_digest(root: Path) -> str:
+    """Set digest of benchmark/cassettes/FORMAT.md section 5 over every *.jsonl of a set."""
+    import hashlib
+
+    lines = "".join(
+        f"{p.relative_to(root).as_posix()}\t{hashlib.sha256(p.read_bytes()).hexdigest()}\n"
+        for p in sorted(root.rglob("*.jsonl"), key=lambda p: p.relative_to(root).as_posix())
+    )
+    return "sha256:" + hashlib.sha256(lines.encode()).hexdigest()
+
+
 def check_analysis(c: Clauses, campaigns: dict, prereg: dict) -> None:
+    reg = campaigns["H1"]["registration"]
+    suite = tasks_digest(TASKS)
+    cassettes = cassette_digest(REPO / reg["cassette_set"])
+    c.check(
+        "12.5",
+        suite == prereg["campaign"]["suite_digest"] == reg["suite_digest"]
+        and cassettes == prereg["campaign"]["cassette_digest"] == reg["cassette_digest"],
+        f"frozen suite {suite} and cassette set {cassettes} equal the registered digests",
+    )
     current = sha256_file(METRICS)
     c.check(
         "12.5",
@@ -666,16 +752,22 @@ def check_analysis(c: Clauses, campaigns: dict, prereg: dict) -> None:
             f"{stored_path.relative_to(REPO)} equals a fresh analyse.py recomputation",
         )
         body = fresh["hypotheses"][hypothesis]
-        complete = all(
-            body["cells"][arm][group]["metrics"][registered["primary"]]["mean"] is not None
-            and body["cells"][arm][group]["metrics"][registered["primary"]]["ci"] is not None
+        entries = [
+            body["cells"][arm][group]["metrics"][registered["primary"]]
             for arm in ARMS[hypothesis]
             for group in BINS
+        ]
+        complete = all(
+            {"mean", "ci", "n", "undefined"} <= set(e)
+            and ((e["mean"] is not None and e["ci"] is not None) == (e["n"] > 0))
+            for e in entries
         )
         c.check(
             "12.5",
             complete and fresh["analysis"]["confidence"] == 0.95,
-            f"{hypothesis}: mean and 95% bootstrap CI of {registered['primary']} for every arm and bin",
+            f"{hypothesis}: mean and 95% bootstrap CI of {registered['primary']} reported for every "
+            f"arm and bin ({sum(e['n'] == 0 for e in entries)} cells with no defined value "
+            "reported as undefined)",
         )
         check_report(c, hypothesis, fresh)
 
@@ -703,6 +795,22 @@ def main() -> int:
     prereg = read_kvx(PREREG)
     h1, h2 = campaigns["H1"], campaigns["H2"]
     BUILD_ROOTS[:0] = [REPO / root for root in h1["registration"].get("build_roots", [])]
+    global SUITE, TASKS, CASSETTES
+    SUITE = REPO / h1["registration"].get("suite_path", "benchmark/suite.kvx")
+    TASKS = REPO / h1["registration"].get("tasks_dir", "benchmark/tasks")
+    CASSETTES = REPO / h1["registration"].get("cassette_set", "benchmark/cassettes/suite")
+    pinned = CAMPAIGN_BIN.exists() and sha256_file(CAMPAIGN_BIN) == h1["registration"].get(
+        "cwr_binary_sha256"
+    )
+    c.check(
+        "12.5",
+        pinned,
+        f"campaign cwr binary {CAMPAIGN_BIN.relative_to(REPO)} is the registered one",
+    )
+    if pinned:
+        # The Builds, probes and replays are judged with the binary the campaign ran with; the
+        # freshly built workspace binary above only proves the crates still compile.
+        binary = CAMPAIGN_BIN
     control = h1["registration"]["control_build"]
     good, why = verify_build(binary, control)
     c.check(

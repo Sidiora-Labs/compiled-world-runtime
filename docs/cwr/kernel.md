@@ -1,375 +1,449 @@
 <!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
-<!-- SPDX-License-Identifier: Sidiora DEV OSS-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
 
-# Running CWR worlds: kernel and operator guide
+# Running a world: the World Kernel
 
-Audience: operators who create, drive, snapshot, upgrade and replay Instances. Status on 2026-11-06: **implemented, not yet qualified**. The kernel, model surface and `cwr instance` commands described here are in the tree and every command in this guide runs against the packaged release, but no qualification case that covers this guide has an accepted attempt in the evidence registry, so nothing here is verified behaviour. This guide is derived from [spec/cwr/kernel.md](../../spec/cwr/kernel.md), [spec/cwr/model-surface.md](../../spec/cwr/model-surface.md) and the command table in [spec/cwr/compiler.md](../../spec/cwr/compiler.md). Where this guide and the contract disagree, the contract wins.
+> **Implemented, not yet qualified.** Everything below is what the current [World Kernel](../../crates/cwr-kernel/src/lib.rs), its [Model Surface](../../crates/cwr-kernel/src/surface/context.rs) and the `cwr` binary do; the qualification cases that certify this behaviour have not all passed.
 
-## How to read this guide
+The World Kernel runs Instances of a Build. Each turn it executes one Python script in a sandbox,
+checks every primitive call against the Build's contracts, records every action in an append-only,
+hash-chained ledger and passes every call to an outside service through the adapter gateway.
 
-Sections that describe kernel behaviour open with a status marker, using the convention of [world-source.md](world-source.md#how-to-read-this-guide): **Verified** links an accepted attempt record, **Implemented, not yet qualified** links shipped source whose case has no accepted attempt, **Proposed, not implemented** names source that does not exist yet.
+The kernel guarantees:
 
-Every `sh` block runs, in order and in one shell, from the root of an unpacked release bundle with the packaged `cwr` on `PATH` (see [Install](../../README.md#install)); the release driver [tests/cwr/cases/6_1.py](../../tests/cwr/cases/6_1.py) executes each command exactly as written and fails if any exits non-zero. `text` blocks show syntax and are not executed. Instances live under `--home <dir>`, default `$CWR_HOME`, else `.cwr` in the working directory; a Build hash resolves under `--builds <dir>` (repeatable), default `build` and `xbuild`.
+| Guarantee | What it means for an operator |
+|---|---|
+| Closure | A script reaches only the SDK of its Build. No network, host filesystem or host clock. |
+| Atomic primitives | Every call happens completely or not at all, and a refusal names one of eleven codes. |
+| A frozen Build | An Instance stays on its Build until an operator upgrades it. The kernel refuses a Build whose bytes do not match its hash. |
+| An honest ledger | Every call, turn, upgrade and recovery is a ledger record. A tampered or truncated ledger is refused. |
+| Reproducible turns | Replaying recorded scripts with recorded adapter responses produces an identical ledger. |
+| Mediated side effects | Adapter calls follow their declared timeout, idempotency and failure rules, and are never retried silently. |
 
-The examples share a refworld Build and one Instance:
+This guide runs the reference world, `refworld`, and walks through every operator task.
+
+## Before you start
+
+Install the `cwr` binary as described in [Install](../../README.md#install). The kernel needs
+Python 3.12 and bubblewrap. It refuses to run a script when it cannot build the sandbox.
+
+The commands below run in one shell. They start in the repository root and then work in a scratch
+directory. Hashes and Instance ids in the output excerpts are shortened.
 
 ```sh
-build_hash() { python3 -c 'import json, sys; print(json.load(sys.stdin)["build"]["hash"])'; }
-BUILD=$(cwr build examples/refworld --json | build_hash)
-echo "$BUILD"
+REPO=$PWD
+cd "$(mktemp -d)"
+cwr build "$REPO/examples/refworld"
+BUILD=$(ls build)
 ```
 
-## 1. Concepts
+## Concepts
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/lib.rs](../../crates/cwr-kernel/src/lib.rs), [crates/cwr-kernel/src/state.rs](../../crates/cwr-kernel/src/state.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py), [tests/cwr/cases/2_5.py](../../tests/cwr/cases/2_5.py). CWR-006 and CWR-011 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
+| Term | Meaning |
+|---|---|
+| Build | The read-only output of `cwr build`, stored as `build/<sha256>/`. Experimental Builds are stored under `xbuild/`. |
+| Instance | One running world: a state store, a ledger, a world clock, a seeded random stream and snapshots, bound to one Build |
+| Turn | One script, run once, in a fresh sandboxed process |
+| Ledger | The Instance's append-only, hash-chained record of everything that happened |
+| Model Surface | What the model receives each turn: the manual, a pending recompile notice, the ledger tail and the last result envelope |
+| Adapter gateway | The kernel component that performs every external call, in live, record or replay mode |
+| Recompile notice | The text the model receives on its first turn after an upgrade |
+| Proposal outbox | Where `world.propose` writes. Only the human owner reads it. |
 
-- A **Build** is the frozen, content-addressed output of `cwr build`, a read-only directory `build/<sha256>/` (or `xbuild/<sha256>/` for experimental Builds). Only `cwr build` creates one; the kernel never writes into either tree.
-- An **Instance** is one running world bound to one Build. It has a ULID identity, typed state, an append-only ledger, snapshots, a tick clock and an RNG stream, stored in `<home>/instances/<ULID>/`. Many Instances can share one Build and share nothing else.
-- A **turn** is one Python 3.12 script executed in a fresh sandbox. Each call the script makes into the world is one atomic primitive.
-- The **ledger** is the complete record of an Instance and the only input experiments and oracles read.
-- The **outbox** is where `world.propose` text goes, `proposals.jsonl` in the Instance directory. It is for a human and changes nothing inside the world.
+Instances live under `.cwr/instances/<id>/` in the working directory. `--home <dir>` or the
+`CWR_HOME` environment variable names another location. A Build hash resolves against `build/` and
+`xbuild/`, or against each `--builds <dir>` given. Every command that takes a Build also accepts a
+Build directory.
 
-## 2. Instance lifecycle
+## Create an Instance
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/instance.rs](../../crates/cwr-cli/src/instance.rs), [crates/cwr-kernel/src/lib.rs](../../crates/cwr-kernel/src/lib.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py), [tests/cwr/cases/2_5.py](../../tests/cwr/cases/2_5.py). CWR-006 and CWR-011 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
-
-| State | Entered by | Can move to |
-|---|---|---|
-| `created` | `create`, before the header record is durable | `idle` |
-| `idle` | Header durable, or end of a turn, upgrade or recovery | `in_turn`, `upgrading`, `destroyed` |
-| `in_turn` | `turn`, after the protocol check passes | `idle`; `recovering` on kernel crash |
-| `upgrading` | `upgrade`, after the pre-upgrade snapshot | `idle` on commit or rollback; `recovering` on crash |
-| `recovering` | Kernel restart with an Instance left `in_turn` or `upgrading` | `idle` after the recovery record |
-| `destroyed` | `destroy` | None |
-
-A turn against an Instance that is not `idle` is refused before anything executes. There are no concurrent turns within one Instance.
-
-## 3. Checking a Build before use
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/manual.rs](../../crates/cwr-cli/src/manual.rs), [crates/cwr-cli/src/diff.rs](../../crates/cwr-cli/src/diff.rs), [crates/cwr-compiler/src/package.rs](../../crates/cwr-compiler/src/package.rs). Driver: [tests/cwr/cases/1_3.py](../../tests/cwr/cases/1_3.py). CWR-005 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-The kernel recomputes a Build's hash before every load and refuses a mismatch. Read the manual the model will see, after hash verification:
+`cwr instance create` prints the new Instance id.
 
 ```sh
-cwr manual "$BUILD" > manual.md
-sed -n '1,3p' manual.md
+ID=$(cwr instance create "$BUILD" --seed 7)
+cwr instance show "$ID"
+cwr instance state "$ID"
 ```
 
 ```text
-cwr manual <hash|dir> [--out <dir>]
-cwr diff <a> <b> [--out <dir>] [--allow-example]
-```
-
-`cwr manual` exits 0, or 5 when the Build fails verification. `cwr diff` takes two Build hashes, Build directories or World Sources and prints the ContractDiff with the derived and declared bumps; a worked example is in [world-source.md](world-source.md) section 14.
-
-## 4. Creating an Instance
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/instance.rs](../../crates/cwr-cli/src/instance.rs), [crates/cwr-kernel/src/state.rs](../../crates/cwr-kernel/src/state.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py), [tests/cwr/cases/3_2.py](../../tests/cwr/cases/3_2.py). CWR-006 and CWR-013 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-```sh
-ID=$(cwr instance create "$BUILD" --seed 7 --tail 20 --arm docs)
-cwr instance show "$ID" > instance.json
-```
-
-```text
-cwr instance create (<build-hash|dir> | --build <dir>) [--seed N] [--tail K|full] [--arm LABEL]
-                    [--model M] [--from-snapshot S] [--initial <state.json>] [--allow-experimental]
+{
+  "build": "sha256:b3b9d2f3...",
+  "id": "01M6RJAB...",
+  "seed": 7,
+  "status": "idle",
+  "tail_size": 20,
+  "turn": 0,
+  "world": {"name": "refworld", "version": "0.2.0"},
+  "world_time": 0,
+  ...
+}
+{"fs":{},"jobs":{},"kv":{},"publish":{},"search":{},"world":{}}
 ```
 
 | Option | Meaning |
 |---|---|
-| `--seed N` | Seeds the Instance's RNG stream; always recorded in the header |
-| `--tail K\|full` | Ledger tail size rendered into the model's context; default 20; fixed for the Instance's life |
-| `--arm LABEL` | Experiment arm label recorded in the header; never shown to the model |
-| `--model M` | Model identity recorded in the header |
-| `--from-snapshot S` | Start from a snapshot instead of the Build's initial state |
-| `--initial <state.json>` | Start from an explicit initial state (the task suite's initial states) |
-| `--allow-experimental` | Required to load an experimental Build from `xbuild/` |
+| `--seed N` | Seed of the Instance's random stream |
+| `--tail K` or `--tail full` | Ledger records shown to the model each turn. Default 20. |
+| `--initial <state.json>` | Initial state, a JSON object of module states |
+| `--from-snapshot <file>` | Start from a snapshot, with its seed, state, clock and turn |
+| `--arm <label>`, `--model <name>` | Labels written to the ledger header for experiments |
+| `--allow-experimental` | Required for an experimental Build |
 
-`create` prints the new Instance id. The Instance is `idle` at turn 0 and world time 0, with a header record at seq 0 carrying the Build hash, seed, K, arm, model identity and origin. Exit codes: 0 created; 1 usage or other error; 2 Build hash mismatch; 3 experimental Build without `--allow-experimental`.
+## Run a turn
 
-## 5. Running a turn
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/turn.rs](../../crates/cwr-cli/src/turn.rs), [crates/cwr-kernel/src/executor.rs](../../crates/cwr-kernel/src/executor.rs), [crates/cwr-kernel/src/surface/protocol.rs](../../crates/cwr-kernel/src/surface/protocol.rs), [crates/cwr-kernel/src/surface/envelope_render.rs](../../crates/cwr-kernel/src/surface/envelope_render.rs). Driver: [tests/cwr/cases/2_2.py](../../tests/cwr/cases/2_2.py), [tests/cwr/cases/3_1.py](../../tests/cwr/cases/3_1.py). CWR-007 and CWR-008 and CWR-012 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-A script imports the world's modules from the generated SDK and nothing else. A top-level `return` value becomes `returned` in the envelope:
+`cwr instance turn` reads a script from `--script <file>` or from standard input. A top-level
+`return` becomes the turn's `returned` value.
 
 ```sh
-cat > hello.py <<'EOF'
+cwr instance turn "$ID" <<'SCRIPT'
+import fs, world
+
+fs.write(path="/notes/a.md", content=b"hello")
+fs.lock(path="/notes/a.md")
+return {"size": fs.size(path="/notes/a.md"), "now": world.now()}
+SCRIPT
+```
+
+The kernel prints one result envelope as JSON on standard output. On standard error it prints one
+line that names the sandbox in use.
+
+```text
+{"error":null,"resources":{"adapter_calls":0,"cpu_ms":30,"primitive_calls":4,"remaining":{"adapter_calls":50,"primitive_calls":496},"wall_ms":8496},"returned":{"now":3,"size":5},"status":"ok","trace":[{"code":null,"content_guaranteed":true,"primitive":"fs.write","status":"ok","world_time":1},...],"world":{"build":"sha256:b3b9d2f3...","time":14,"turn":1,"version":"0.2.0"}}
+```
+
+A refused call raises an exception in the script. Uncaught, it ends the turn:
+
+```sh
+cwr instance turn "$ID" <<'SCRIPT'
 import fs
-fs.write(path="/notes/hello.md", content=b"hello")
-return fs.read(path="/notes/hello.md").decode()
-EOF
-cwr instance turn "$ID" < hello.py > envelope.json
-python3 -c 'import json; e = json.load(open("envelope.json")); print(e["status"], e["returned"], e["world"]["turn"])'
+
+fs.delete(path="/notes/a.md")
+SCRIPT
 ```
 
 ```text
-cwr instance turn <id> [--script <file> | --message <file> | < script.py] [--debug-effects]
-                       [--gateway live|record|replay] [--cassette <file>] [--cassette-label <label>]
-                       [--stub NAME=URL]... [--home <dir>] [--builds <dir>]
+{"error":{"code":"LOCKED","detail":"precondition 2 `not fs.locked(path)` was false","limit":null,"precondition_index":2,"primitive":"fs.delete","retry_after":null},...,"status":"error",...}
 ```
-
-Standard input or `--script` holds a raw script, the operator path. `--message <file>` holds a model message: the turn protocol extracts its one fenced python block, and a message with zero or more than one fenced block, a block in another language or an unclosed fence is refused as `INVALID` naming `turn.protocol`, with nothing executed and world time unchanged (exit 4):
-
-```sh
-printf 'No code here.\n' > message.txt
-cwr instance turn "$ID" --message message.txt > refused.json || echo "refused with exit $?"
-```
-
-The result envelope is printed as one line of canonical JSON on standard output; standard error names the sandbox mechanism. Exit 0 for status ok, error or partial; 1 usage or kernel error (an Instance that is not idle, sealed, or a sandbox that cannot be provided: the kernel never runs a script unsandboxed); 2 Build hash mismatch; 3 experimental Build; 4 protocol-invalid message. A failing primitive raises a typed exception, one class per envelope code, carrying `code`, `primitive`, `precondition_index`, `retry_after` (only for `RATE_LIMITED`) and `detail`; the script may catch it and continue.
 
 | Status | Meaning |
 |---|---|
-| `ok` | The script ended without an uncaught exception |
-| `error` | Uncaught exception or limit termination, and no mutating or external primitive succeeded |
-| `partial` | Uncaught exception or limit termination after at least one mutating or external primitive succeeded; those effects stand, nothing is rolled back |
+| `ok` | The script finished without an uncaught exception |
+| `error` | An uncaught exception or a limit ended the turn, and nothing changed |
+| `partial` | An uncaught exception or a limit ended the turn after at least one mutating or external call succeeded. Those effects stand. |
 
-The envelope always has the same shape:
+The command exits 0 for all three statuses. A non-zero exit means the kernel did not run the turn.
 
-```json
-{
-  "status": "ok | error | partial",
-  "returned": "codec value or null",
-  "error": {"code": "ENVELOPE_CODE", "primitive": "mod.name", "precondition_index": 2, "retry_after": null, "detail": "string"},
-  "trace": [{"primitive": "mod.name", "status": "ok | error", "code": null, "world_time": 0}],
-  "world": {"version": "0.2.0", "build": "sha256:...", "time": 416, "turn": 38},
-  "resources": {"cpu_ms": 41, "wall_ms": 120, "primitive_calls": 4, "adapter_calls": 2, "remaining": {"primitive_calls": 496, "adapter_calls": 48}}
-}
-```
+### Model messages
 
-The trace lists every primitive call of the turn in order, so nobody has to infer which effects happened. Worked ok, error and partial envelopes are in [spec/cwr/model-surface.md](../../spec/cwr/model-surface.md) section 4. `--debug-effects` asserts every declared effect after an ok mutating call.
-
-## 6. The model's context
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/context.rs](../../crates/cwr-cli/src/context.rs), [crates/cwr-kernel/src/surface/context.rs](../../crates/cwr-kernel/src/surface/context.rs), [crates/cwr-kernel/src/surface/tail.rs](../../crates/cwr-kernel/src/surface/tail.rs). Driver: [tests/cwr/cases/3_1.py](../../tests/cwr/cases/3_1.py). CWR-012 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-Turns driven by a model go through the context assembler, which renders, in order, the Build's manual byte for byte, the recompile notice when one is pending, the last K ledger records and the previous envelope. The operator sees exactly what the model will see next:
+A model answers with a message, not a bare script. `--message <file>` applies the turn protocol:
+the message must hold exactly one fenced `python` block.
 
 ```sh
-cwr instance context "$ID" > context.txt
-cwr instance context "$ID" --json > context.json
+printf '%s\n' 'I will unlock the file and delete it.' '' '```python' 'import fs' '' \
+  'fs.unlock(path="/notes/a.md")' 'fs.delete(path="/notes/a.md")' \
+  'return fs.exists(path="/notes/a.md")' '```' > reply.md
+cwr instance turn "$ID" --message reply.md
+```
+
+A message with no block, more than one block or another language is refused with `INVALID`
+naming `turn.protocol`. Nothing runs, world time does not advance and the command exits 4:
+
+```text
+{"error":{"code":"INVALID","detail":"the message holds 2 fenced blocks (opening fences at lines 3, 7); a turn is exactly one fenced python block, nothing was executed","limit":null,"precondition_index":null,"primitive":"turn.protocol","retry_after":null},...}
+```
+
+## What the model sees
+
+`cwr instance context` prints the context for the next turn exactly as the model receives it: the
+manual, a pending recompile notice, the ledger tail and the last result envelope. `--json` prints
+the offset, length and sha256 of each part instead. Repeating the command prints the same bytes.
+
+```sh
+cwr instance context "$ID" --json
 cwr instance tail "$ID"
 ```
 
 ```text
-cwr instance context <id> [--tail K|full] [--json] [--home <dir>]
+{"components":[{"length":31918,"name":"manual",...},{"length":451,"name":"tail",...},{"length":600,"name":"envelope",...}],"format":"cwr.context",...,"next_turn":4,...}
+t1   wt1    fs.write             ok
+t1   wt2    fs.lock              ok
+t1   wt3    fs.size              ok
+t1   wt4    world.now            ok
+t1   turn                        ok     calls=4
+t2   wt14   fs.delete            error  LOCKED
+t2   turn                        error  LOCKED  calls=1
+t3   wt25   fs.unlock            ok
+t3   wt26   fs.delete            ok
+t3   wt27   fs.exists            ok
+t3   turn                        ok     calls=3
 ```
 
-`--json` prints each component with its length and sha256 and the digest of the whole context; the manual component is byte-identical on every turn of one Build.
+## Sandbox and limits
 
-## 7. Sandbox and per-turn limits
+Each turn runs in a fresh Python 3.12 process inside bubblewrap, with new user, mount, network,
+PID, IPC, UTS and cgroup namespaces and resource limits on address space, CPU time, file size,
+open files and core dumps. A guard inside the interpreter admits only the Build's SDK. The script
+has no network and no clock. Every primitive call crosses one RPC boundary to the kernel.
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/sandbox.rs](../../crates/cwr-kernel/src/sandbox.rs), [crates/cwr-kernel/src/limits.rs](../../crates/cwr-kernel/src/limits.rs), [crates/cwr-kernel/SANDBOX.md](../../crates/cwr-kernel/SANDBOX.md). Driver: [tests/cwr/cases/2_2.py](../../tests/cwr/cases/2_2.py). CWR-007 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
+The Build's limits apply per turn. A call beyond `primitive_calls` or `adapter_calls` is not
+executed and fails with `LIMIT` naming the limit. CPU, wall-clock and memory limits end the turn.
+[crates/cwr-kernel/SANDBOX.md](../../crates/cwr-kernel/SANDBOX.md) describes each layer.
 
-Each turn runs in a fresh process with no network, a read-only view containing only the interpreter and the Build's SDK, no host environment, no host clock and one RPC socket. A private scratch area is discarded at turn end. An import of anything outside the SDK is recorded as a closure refusal with code `INVALID` and primitive `sandbox.import`. The mechanism in use (bubblewrap namespaces plus rlimits and an in-interpreter guard) is named on standard error at every turn and documented in [crates/cwr-kernel/SANDBOX.md](../../crates/cwr-kernel/SANDBOX.md).
-
-| Limit (from the Build's `world.kvx`) | When exceeded |
+| Variable | Effect |
 |---|---|
-| `cpu_ms`, `wall_ms`, `memory_mb` | `LIMIT` naming the limit; the process is terminated |
-| `primitive_calls`, `adapter_calls` | `LIMIT` naming the limit; the exceeding call is not executed |
+| `CWR_HOME` | Instance store. Default `.cwr`. |
+| `CWR_PYTHON` | Interpreter for turn scripts. Default `python3.12`. |
+| `CWR_BWRAP` | bubblewrap binary. Default `bwrap` on `PATH`. |
 
-Scripts can plan with `world.limits()`, which returns remaining budgets and configured values.
+## Read the ledger
 
-## 8. What a failure means
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/contract_check.rs](../../crates/cwr-kernel/src/contract_check.rs). Driver: [tests/cwr/cases/2_2.py](../../tests/cwr/cases/2_2.py). CWR-008 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
-
-Every primitive call is processed in a fixed order: validate parameters, evaluate preconditions in declared order, execute, assert effects (debug mode), advance world time, append and fsync the ledger record, then return.
-
-- A failure at validation or at a precondition is an ordinary outcome. State is unchanged, no tick is spent, and the envelope names the primitive, the precondition index and its declared code.
-- `INVARIANT_VIOLATION` is never ordinary. It means a mutating primitive failed during execution, an effect did not hold, or an undeclared code was raised. The Instance is sealed for inspection, the Build is considered defective and any experiment run containing it is excluded and reported.
-
-## 9. World clock and randomness
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/clock.rs](../../crates/cwr-kernel/src/clock.rs), [crates/cwr-kernel/src/rng.rs](../../crates/cwr-kernel/src/rng.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py). CWR-006 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-World time is an integer tick counter starting at 0. It advances by `tick_per_primitive` for each executed primitive (including adapter calls that fail at the gateway) and by `tick_per_turn` at the end of each executed turn. Protocol-invalid turns and calls refused at validation or a precondition do not tick. `world.now()` returns the counter; no primitive returns host time.
-
-`world.random()` is the only randomness: a PCG stream seeded from the Instance seed, advanced only by draws and captured in snapshots. Equal seeds and equal ledger prefixes give equal draws. `world.seed()` exists only when the Build sets `rng.seed_visible = true`. The operator can query the kernel-owned world facilities (`world.now`, `world.version`, `world.seed`, `world.limits`, `world.random`, `world.history`) in one kernel-direct turn; a call is `name` or `name:<json params>`:
-
-```sh
-cwr instance probe "$ID" world.now world.version > probe.jsonl
-```
-
-## 10. Adapter gateway
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/gateway/mod.rs](../../crates/cwr-kernel/src/gateway/mod.rs), [crates/cwr-kernel/src/gateway/cassette.rs](../../crates/cwr-kernel/src/gateway/cassette.rs), [crates/cwr-kernel/src/gateway/normalise.rs](../../crates/cwr-kernel/src/gateway/normalise.rs). Driver: [tests/cwr/cases/2_3.py](../../tests/cwr/cases/2_3.py). CWR-009 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
-
-The gateway is the kernel's only network capability and contacts only endpoints declared in adapter contracts. It never retries; a retry is a second call made by the script and recorded as such. The mode is chosen per turn with `cwr instance turn --gateway`:
-
-| Mode | Behaviour |
-|---|---|
-| `live` | Calls the declared endpoint (`--stub NAME=URL` maps a `stub://` endpoint to a local stub server) and records nothing |
-| `record` | Calls the declared endpoint and writes a cassette entry keyed by (adapter, canonical request hash, sequence) to `--cassette <file>` |
-| `replay` | Serves entries from `--cassette <file>`; a miss is `UNAVAILABLE` and no socket is opened |
-
-Service responses map onto declared codes only: declared failures to their mapped code, transport errors to `UNAVAILABLE`, no answer within `timeout_ms` to `TIMEOUT`, a malformed body to `INVALID`, a status the adapter does not map to its `undeclared_status`, throttling to `RATE_LIMITED` with `retry_after` in ticks. For `key` adapters the first outcome per (adapter, key, payload hash) is stored: an identical repeat returns it without contacting the service, a different payload is `DUPLICATE_KEY`. The cassette format is [benchmark/cassettes/FORMAT.md](../../benchmark/cassettes/FORMAT.md).
-
-## 11. The ledger
-
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/ledger.rs](../../crates/cwr-kernel/src/ledger.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py). CWR-006 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-One append-only JSONL file per Instance, `<home>/instances/<id>/ledger.jsonl`, hash-chained record to record. Each record is fsynced before any result returns. A ledger whose last record is truncated is refused by `create --from-snapshot`, `turn` and `replay` until `restore` or recovery has run. `cwr instance ledger` checks the sequence, chain and truncation strictly:
+`cwr instance ledger` checks sequence numbers, the hash chain and truncation, and prints a summary.
+A failed check is an error.
 
 ```sh
 cwr instance ledger "$ID"
 ```
 
-| Field | Meaning |
+```text
+{"last_chain":"sha256:...","last_seq":11,"ok":true,"records":12}
+```
+
+The ledger is `ledger.jsonl` in the Instance directory, one JSON record per line. Every record
+carries `seq`, `kind`, `turn`, `world_time`, `build` and `chain`, the hash that links it to the
+record before. A primitive record also carries the primitive, a hash of its parameters, the
+outcome and the result of each precondition evaluated:
+
+```text
+{"build":"sha256:b3b9d2f3...","chain":"sha256:...","kind":"primitive","outcome":{"code":"LOCKED","shape":"None","side_effect":"mutating","status":"error"},"params_hash":"blake3:...","preconditions":[{"expr_hash":"sha256:...","index":1,"passed":true},{"expr_hash":"sha256:...","index":2,"passed":false}],"primitive":"fs.delete","seq":6,"turn":2,"world_time":14,...}
+```
+
+| Kind | Written when |
 |---|---|
-| `seq` | Monotonic from 0, no gaps |
-| `instance`, `build` | Owning Instance (ULID) and Build hash at the time of the record |
-| `turn`, `world_time` | Turn counter (0 for the header) and tick counter after this record |
-| `kind` | `header`, `primitive`, `adapter`, `turn`, `drift`, `proposal`, `upgrade` or `recovery` |
-| `primitive`, `params_hash` | Qualified name and hash of the serialised parameters, for primitive and adapter records |
-| `preconditions` | One `{index, expr_hash, passed}` per evaluated precondition |
-| `outcome` | `{status, code, shape, side_effect}` |
-| `duration_us`, `host_ts` | Host measurements; never shown to the model and ignored by replay comparison |
-| `experimental` | The experimental flag name on every record of an experimental Build, else null |
+| `header` | The Instance is created. Holds the seed, initial state hash, tail size, arm and model labels. |
+| `primitive`, `adapter` | A call is executed or refused |
+| `turn` | A turn ends. Holds its status, code and resources. |
+| `proposal` | The model calls `world.propose` |
+| `upgrade` | The Instance moves to another Build |
+| `drift` | An experimental drift Build changes a rule |
+| `recovery` | The Instance is restored or recovered |
 
-The determinism audit is a ledger query: group `primitive` records by (`build`, `primitive`, `params_hash`, `preconditions`) and expect one `outcome` per group.
+Records hold hashes of parameters and returned values, not the values. The state lives in the
+Instance's content-addressed object store.
 
-## 12. Replay
+## Call an outside service
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/replay.rs](../../crates/cwr-cli/src/replay.rs), [crates/cwr-kernel/src/replay.rs](../../crates/cwr-kernel/src/replay.rs). Driver: [tests/cwr/cases/2_4.py](../../tests/cwr/cases/2_4.py). CWR-010 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+The adapter gateway runs in one of three modes, chosen by the operator per turn:
 
-Replay recreates the Instance from its seed, initial state, Build, cassette and recorded turn scripts, re-runs every turn and compares the new ledger with the original field by field, ignoring `host_ts`, `duration_us` and `instance`. It reproduces the records turns produce; a ledger that contains lifecycle records (a restore, recovery or upgrade) is refused. A fresh Instance with one turn replays identically:
+| Mode | Behaviour |
+|---|---|
+| `live` | Calls the declared endpoint. The default. |
+| `record` | Calls the endpoint and appends each raw response to a cassette |
+| `replay` | Answers from the cassette. A request with no entry is `UNAVAILABLE`, and no socket is opened. |
+
+refworld's adapters point at `stub://` endpoints, served by the stub servers in
+[benchmark/stubs](../../benchmark/stubs/README.md). Start the search stub and record a turn:
 
 ```sh
-RID=$(cwr instance create "$BUILD" --seed 11)
-cwr instance turn "$RID" < hello.py > replay-turn.json
-cwr instance replay "$RID" > replay.json
+python3 "$REPO/benchmark/stubs/search_server.py" --port 0 --seed 7 --port-file search.port > search.log &
+STUB=$!
+until [ -s search.port ]; do sleep 0.2; done
+SID=$(cwr instance create "$BUILD" --seed 7)
+cwr instance turn "$SID" --gateway record --cassette search.jsonl --stub "search=http://127.0.0.1:$(cat search.port)" <<'SCRIPT'
+import search
+
+hits = search.query(q="tennis", limit=3)
+return [h["title"] for h in hits]
+SCRIPT
+kill "$STUB"
 ```
 
 ```text
-cwr instance replay (<id> | <ledger.jsonl>) [--build <dir>] [--cassette <file>] [--scripts <dir>]
-                    [--initial <state.json>] [--home <dir>] [--into-home <dir>] [--debug-effects]
-cwr instance compare <ledger-a> <ledger-b>
+{"error":null,"resources":{"adapter_calls":1,...},"returned":["Report Basin Birch","Prairie Wren Willow","Fjord Drift Valley"],"status":"ok","trace":[{"code":null,"content_guaranteed":false,"primitive":"search.query","status":"ok","world_time":1}],...}
 ```
 
-Exit 0 when identical; 7 on divergence, with the first divergent record printed and the new Instance sealed; 2 on a Build or initial-state hash mismatch; 1 when refused (tampered or truncated ledger, missing input). `cwr instance compare` applies the same comparison to two ledger files.
+`content_guaranteed: false` marks every adapter result: the shape is guaranteed, the content is
+not. With the stub stopped, a new Instance gets the same answer from the cassette:
 
-## 13. Snapshots and restore
+```sh
+RID=$(cwr instance create "$BUILD" --seed 7)
+cwr instance turn "$RID" --gateway replay --cassette search.jsonl <<'SCRIPT'
+import search
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/snapshot.rs](../../crates/cwr-kernel/src/snapshot.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py). CWR-006 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+hits = search.query(q="tennis", limit=3)
+return [h["title"] for h in hits]
+SCRIPT
+```
+
+A request the cassette does not hold fails with `UNAVAILABLE` and the detail `replay cassette has
+no entry for this request; no socket was opened`. The cassette format is specified in
+[benchmark/cassettes/FORMAT.md](../../benchmark/cassettes/FORMAT.md).
+
+## Replay and compare
+
+`cwr instance replay` recreates an Instance from its seed, initial state, Build, recorded turn
+scripts and cassette, re-runs every turn and compares the new ledger with the original. Host
+timestamps, durations and the Instance id are ignored.
+
+```sh
+cwr instance replay "$SID" --cassette search.jsonl --into-home replayed
+```
+
+```text
+{"divergence":null,"identical":true,"ignored_fields":["host_ts","duration_us","instance"],"into":"01M6RJJ2...","original":"01M6RJHR...","records":3,"state_digest":"sha256:504be005...","turns":1}
+```
+
+It exits 0 when the ledgers are identical and 7 on the first divergence, which it prints. Replay
+reproduces script turns. It refuses a ledger that holds a probe turn, a refused message turn or a
+lifecycle record such as an upgrade.
+
+`cwr instance compare <ledger-a> <ledger-b>` compares two ledgers field by field with the same
+rules and the same exit codes.
+
+## Snapshots and recovery
+
+A snapshot captures state, clock, turn and random stream under a content hash.
 
 ```sh
 SNAP=$(cwr instance snapshot "$ID")
-cwr instance restore "$ID" "$SNAP" > restore.json
+cwr instance restore "$ID" "$SNAP"
 ```
 
-`snapshot` requires an `idle` Instance and prints the snapshot's content hash. A snapshot holds typed state, ledger seq, world time, turn, RNG state, K and the Build hash. `restore` requires a snapshot from this Instance's lineage whose Build hash verifies; it appends a `recovery` record and prints it, and leaves later ledger records on disk for inspection outside the live lineage. Exit 0, or 2 on hash mismatch.
+`restore` rolls the Instance back and appends a `recovery` record. The records after the snapshot
+are retained in the Instance directory, not deleted.
 
-## 14. Crash recovery
+A snapshot file can also start a new Instance:
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/recovery.rs](../../crates/cwr-kernel/src/recovery.rs). Driver: [tests/cwr/cases/2_4.py](../../tests/cwr/cases/2_4.py). CWR-010 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+```sh
+cwr instance create "$BUILD" --from-snapshot ".cwr/instances/$ID/snapshots/${SNAP#sha256:}.json"
+```
 
-A kernel crash is never shown to the model as a world event. On restart the kernel restores the last snapshot, applies the ledger prefix and records the interrupted turn as `error` with `UNAVAILABLE`, or `partial` if a mutating or external call had already completed. A primitive with a durable ledger record is never re-executed and the rest of the interrupted script is not resumed. For `key` adapters the idempotency entry is written before the request is sent, so the next identical call replays the stored outcome instead of re-sending. A crash during an upgrade restores the pre-upgrade snapshot and leaves the old Build bound. The full interleaving table is in [spec/cwr/kernel.md](../../spec/cwr/kernel.md) section 9. Recovery runs on the next `cwr instance turn`, or explicitly; on a healthy Instance it reports that nothing needed recovery:
+After a kernel crash, the next turn recovers the Instance before it runs. `cwr instance recover`
+does it on demand and reports `{"recovered": false}` when nothing needed recovery.
 
 ```sh
 cwr instance recover "$ID"
 ```
 
-## 15. Upgrading an Instance
+## Upgrade an Instance
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/upgrade.rs](../../crates/cwr-cli/src/upgrade.rs), [crates/cwr-kernel/src/upgrade.rs](../../crates/cwr-kernel/src/upgrade.rs), [crates/cwr-kernel/src/notice.rs](../../crates/cwr-kernel/src/notice.rs), [crates/cwr-kernel/src/migrate.rs](../../crates/cwr-kernel/src/migrate.rs). Driver: [tests/cwr/cases/2_5.py](../../tests/cwr/cases/2_5.py), [tests/cwr/cases/4_3.py](../../tests/cwr/cases/4_3.py). CWR-011 and CWR-016 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+An Instance moves to a new Build only when an operator upgrades it. The upgrade snapshots the
+Instance, runs the target Build's migrations, checks the new state against the target's state
+shapes and commits. Any failure rolls the Instance back to its old Build.
 
-Only a human changes a world: a world author edits the source and runs `cwr build`; an operator then moves each Instance explicitly. Upgrade pair U1 (side B adds a `LOCKED` precondition to `fs.delete`) shows the whole path:
+The upgrade pair U1 in [examples/refworld-upgrades](../../examples/refworld-upgrades/README.md)
+adds a rule: from 0.3.0, `fs.delete` refuses a locked file. Build both sides into their own Build
+root and create an Instance on the old side:
 
 ```sh
-A=$(cwr build examples/refworld-upgrades/U1/A --out pairs/U1-A --json | build_hash)
-B=$(cwr build examples/refworld-upgrades/U1/B --out pairs/U1-B --previous "pairs/U1-A/${A#sha256:}" --json | build_hash)
-UPID=$(cwr instance create "$A" --builds pairs/U1-A --builds pairs/U1-B --seed 1)
-cwr instance turn "$UPID" --builds pairs/U1-A --builds pairs/U1-B < hello.py > before.json
-cwr instance upgrade "$UPID" "$B" --builds pairs/U1-A --builds pairs/U1-B > upgrade.json
-cwr instance notice "$UPID" --builds pairs/U1-A --builds pairs/U1-B
+cwr build "$REPO/examples/refworld-upgrades/U1/A" --out u1
+OLD=$(ls u1)
+cwr build "$REPO/examples/refworld-upgrades/U1/B" --out u1 --previous "$OLD"
+NEW=$(ls u1 | grep -v "$OLD")
+UP=$(cwr instance create "u1/$OLD")
+cwr instance turn "$UP" <<'SCRIPT'
+import fs
+
+fs.write(path="/tmp/x", content=b"x")
+fs.delete(path="/tmp/x")
+SCRIPT
+```
+
+Upgrade it. The command prints the upgrade record and the recompile notice. `cwr instance notice`
+prints what the model will see on its next turn:
+
+```sh
+cwr instance upgrade "$UP" "u1/$NEW"
+cwr instance notice "$UP"
 ```
 
 ```text
-cwr instance upgrade <id> (<build-hash|dir> | --build <dir>) [--allow-experimental]
-cwr instance notice <id>
-```
-
-In order, the kernel verifies the target hash; refuses a different world name or a version that is not strictly greater (unless `--allow-experimental` and the target is experimental); requires a migration for every state-shape change; snapshots and enters `upgrading`; applies migrations in changelog order; commits by rebinding the Build, appending an `upgrade` record and storing the recompile notice; and returns to `idle`. Any failure restores the snapshot with the old Build bound and nothing partial visible. `upgrade` prints one JSON line with the status, the upgrade record and the notice. Exit codes: 0 upgraded; 5 Build refused, nothing changed; 6 migration or commit failure after rollback.
-
-`cwr instance notice` prints context component 2 for the next turn. For U1 it reads:
-
-```text
-WORLD RECOMPILED  0.2.0 -> 0.3.0   (sha256:<hash A> -> sha256:<hash B>)
+WORLD RECOMPILED  0.2.0 -> 0.3.0   (sha256:a4e291c7... -> sha256:39c6e259...)
 Summary: fs.delete now refuses a locked path with LOCKED; unlock the path before deleting it.
 
 Changes affecting primitives this instance has used:
-  (none)
+  changed  fs.delete
+    before  fs.delete removed a locked file and released its lock.
+    after   not fs.locked(path), otherwise LOCKED (precondition 2); unlock the path before deleting it.
 
 Your ledger is intact. The manual above describes 0.3.0.
 ```
 
-The Instance above used only `fs.write` and `fs.read`, so no change is listed; an Instance that had called `fs.delete` would see its before and after rule. Only Builds compiled with `--x-version-only` (header line only) or `--x-silent-change` (no notice) render it differently; see [experiments.md](experiments.md) section 3.
+The notice lists only changes to primitives the Instance has used. After the next turn it is no
+longer pending.
 
-## 16. Experimental Builds
+The kernel refuses, with exit code 5 and no change, a target of another world, a version that is
+not strictly greater, the Build already bound, and an experimental Build without
+`--allow-experimental`:
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-compiler/src/experimental/mod.rs](../../crates/cwr-compiler/src/experimental/mod.rs), [crates/cwr-kernel/src/drift_injector.rs](../../crates/cwr-kernel/src/drift_injector.rs). Driver: [tests/cwr/cases/3_2.py](../../tests/cwr/cases/3_2.py). CWR-013 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-Experimental Builds live under `xbuild/`, carry `experimental = true` and the flag name in their manifest, and are refused without `--allow-experimental` (exit 3 on `create`). Every ledger record of such an Instance carries the flag name, so an ablation run can never be mistaken for a control run:
-
-```sh
-X=$(cwr build examples/refworld --x-one-primitive --json | build_hash)
-cwr instance create "$X" --seed 1 || echo "refused with exit $?"
-XID=$(cwr instance create "$X" --seed 1 --arm one-primitive --allow-experimental)
+```text
+$ cwr instance upgrade "$UP" "u1/$OLD"
+cwr instance upgrade: upgrade refused: target version 0.2.0 is not greater than the running version 0.3.0
 ```
 
-How the arms are built and used is in [experiments.md](experiments.md).
+A failed migration or commit exits 6 after rollback. Pair U5 shows a migration: its upgrade
+record lists `migrations/0_2_0_0_3_0_kv_namespaces.py` and moves every key into the `default`
+namespace.
 
-## 17. Proposals
+## The proposal outbox
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/outbox.rs](../../crates/cwr-kernel/src/outbox.rs), [crates/cwr-cli/src/upgrade.rs](../../crates/cwr-cli/src/upgrade.rs). Driver: [tests/cwr/cases/2_5.py](../../tests/cwr/cases/2_5.py). CWR-011 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-A script may call `world.propose(text=...)`. The kernel appends a `proposal` ledger record and the text to `proposals.jsonl` in the Instance directory, outside the Build and outside the state store, and returns an id. Nothing in the kernel reads the outbox; reading it and deciding whether to recompile is the owner's job:
+The model cannot change a rule. It can write to the owner with `world.propose`, which returns a
+proposal id and changes nothing inside the Build. The owner reads the outbox:
 
 ```sh
-cat > propose.py <<'EOF'
+cwr instance turn "$UP" <<'SCRIPT'
 import world
-return world.propose(text="please allow deleting locked drafts")
-EOF
-cwr instance turn "$UPID" --builds pairs/U1-A --builds pairs/U1-B < propose.py > proposal.json
-cwr instance outbox "$UPID"
+
+return world.propose(text="Allow fs.delete to release a lock, as in 0.2.0.")
+SCRIPT
+cwr instance outbox "$UP"
 ```
 
-## 18. Destroying an Instance
+```text
+{"id":"p2.1","text":"Allow fs.delete to release a lock, as in 0.2.0.","turn":2}
+```
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-cli/src/instance.rs](../../crates/cwr-cli/src/instance.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py). CWR-006 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+## Destroy an Instance
+
+`destroy` releases the state and seals the ledger. The ledger stays readable and verifiable. A
+later turn is refused.
 
 ```sh
-cwr instance destroy "$ID"
+cwr instance destroy "$RID"
+cwr instance ledger "$RID"
 ```
 
-Requires an Instance that is not `in_turn`. The ledger is sealed and retained; state and snapshots are released. Exit 0.
+```text
+destroyed 01M6RJ... (ledger sealed and retained)
+```
 
-## 19. Exit code reference
+## Command reference
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-kernel/src/lib.rs](../../crates/cwr-kernel/src/lib.rs), [crates/cwr-cli/src/main.rs](../../crates/cwr-cli/src/main.rs). Driver: [tests/cwr/cases/2_1.py](../../tests/cwr/cases/2_1.py), [tests/cwr/cases/2_4.py](../../tests/cwr/cases/2_4.py), [tests/cwr/cases/2_5.py](../../tests/cwr/cases/2_5.py). CWR-006 and CWR-010 and CWR-011 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
+| Command | Purpose | Exit codes |
+|---|---|---|
+| `cwr instance create` | Create an Instance | 0; 2 Build hash mismatch; 3 experimental Build without the flag |
+| `cwr instance show`, `state`, `tail` | Print metadata, state or the model's ledger tail | 0; 1 error |
+| `cwr instance ledger` | Check and summarise the ledger | 0; 1 tampered or truncated |
+| `cwr instance turn` | Run one turn | 0 for `ok`, `error` and `partial`; 1 kernel error; 2 hash mismatch; 3 experimental; 4 protocol refusal |
+| `cwr instance probe <id> <call>...` | Run a kernel-direct turn of `world` read calls, for diagnostics | 0; 1 error |
+| `cwr instance context` | Print the next turn's context | 0; 1 error; 2 hash mismatch |
+| `cwr instance snapshot`, `restore` | Snapshot and roll back | 0; 1 error; 2 hash mismatch |
+| `cwr instance recover` | Recover after a crash | 0; 1 error |
+| `cwr instance replay` | Re-run and compare | 0 identical; 7 divergence; 2 hash mismatch; 1 refused |
+| `cwr instance compare` | Compare two ledgers | 0 identical; 7 divergence |
+| `cwr instance upgrade` | Move to another Build | 0; 5 refused; 6 rolled back |
+| `cwr instance notice` | Print a pending recompile notice | 0 |
+| `cwr instance outbox` | Print the proposal outbox | 0 |
+| `cwr instance destroy` | Seal the ledger and release state | 0 |
 
-Every `cwr instance` command exits 1 on a usage error or any kernel error not listed here.
-
-| Command | Exit codes |
+| Turn option | Meaning |
 |---|---|
-| `cwr instance create` | 0; 2 hash mismatch; 3 experimental without flag |
-| `cwr instance turn` | 0 ok, error or partial; 2 hash mismatch; 3 experimental Build; 4 protocol INVALID (`--message`) |
-| `cwr instance snapshot` | 0 |
-| `cwr instance restore` | 0; 2 hash mismatch |
-| `cwr instance upgrade` | 0; 5 refused Build; 6 migration or commit failure after rollback |
-| `cwr instance replay` | 0; 2 hash mismatch; 7 divergence |
-| `cwr instance compare` | 0 identical; 7 divergent |
-| `cwr instance destroy` | 0 |
-| `cwr manual <hash>` | 0; 5 verification failure |
-| `cwr diff <a> <b>` | 0; 5 Build missing or failing verification |
+| `--script <file>` | Read the script from a file instead of standard input |
+| `--message <file>` | Read a model message and apply the turn protocol |
+| `--gateway live\|record\|replay` | Adapter gateway mode |
+| `--cassette <file>` | The Instance's cassette, for `record` and `replay` |
+| `--cassette-label <label>` | Header label of a new cassette |
+| `--stub NAME=URL` | Base URL of a `stub://NAME` endpoint |
+| `--debug-effects` | Assert every declared effect after each successful mutating call |
 
-## 20. Where the command line departs from the specification
-
-The specification's command tables ([spec/cwr/compiler.md](../../spec/cwr/compiler.md) section 9, [spec/cwr/kernel.md](../../spec/cwr/kernel.md) section 2) name the commands; the shipped binary adds options and subcommands. This guide documents the shipped form. Additions: `--home` and `--builds` on every `cwr instance` command; `create --build`, `--model`, `--initial` and `--tail full`; `turn --script`, `--message`, `--debug-effects`, `--gateway`, `--cassette`, `--cassette-label`, `--stub` and `--diagnostic-no-language-guard`; `replay` taking an Instance or a ledger file, with `--into-home` instead of `--into <new-id>`; the inspection commands `show`, `state`, `ledger`, `tail`, `probe`, `context`, `notice`, `outbox`, `recover` and `compare`; `cwr contract` for the typed contract model; and `cwr release` ([RELEASE.md](../../RELEASE.md)). `cwr manual` and `cwr diff` accept Build directories as well as hashes.
-
-## 21. Open points in the contract
-
-- `world.propose` is described as "read_only-classed with respect to world state" in [spec/cwr/kernel.md](../../spec/cwr/kernel.md) section 11 but listed as `mutating` in [spec/cwr/reference-world.md](../../spec/cwr/reference-world.md) section 2.5. Owners: tasks 2.5 and 4.1.
-- `replay` refuses a ledger containing restore, recovery or upgrade records, so an upgraded Instance is replayed per Build segment by the harness rather than with one command. [spec/cwr/kernel.md](../../spec/cwr/kernel.md) section 2 does not state this limit. Owner: task 2.4.
+The normative contract is [spec/cwr/kernel.md](../../spec/cwr/kernel.md) for the kernel and
+[spec/cwr/model-surface.md](../../spec/cwr/model-surface.md) for what the model receives.

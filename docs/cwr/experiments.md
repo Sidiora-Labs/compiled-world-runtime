@@ -1,220 +1,368 @@
 <!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
-<!-- SPDX-License-Identifier: Sidiora DEV OSS-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
 
-# Running CWR experiments: hypotheses, arms and analysis
+# Running experiments
 
-Audience: experimenters. Status on 2026-11-06: **implemented, not yet qualified; no campaign result exists**. The experimental Builds, the harness, the pre-registration and the analysis are in the tree and the commands in this guide run against the packaged release, but no campaign has completed, no hypothesis has a result, and of the cases this guide relies on only CWR-019 (the evidence checker) has an accepted attempt. This guide is derived from [spec/cwr/experiments.md](../../spec/cwr/experiments.md), [spec/cwr/verification.md](../../spec/cwr/verification.md) and the experimental-build rules in [spec/cwr/compiler.md](../../spec/cwr/compiler.md) section 10. Where this guide and the contract disagree, the contract wins.
+> **Implemented, not yet qualified.** The [experimental Builds](../../crates/cwr-compiler/src/experimental/mod.rs), the [experiment harness](../../benchmark/harness/run.py) and the [analysis](../../benchmark/analyse.py) below are in the tree and run as shown; the pre-registration is still a draft, so no campaign has produced a result.
 
-## How to read this guide
+CWR rests on three pillars: stable rules, direct action through scripts, and change only by human
+recompilation. Each experiment removes one pillar from an otherwise identical world and measures
+what the model loses. Every arm is a CWR Build of the reference world `refworld`: the control
+Build, or the control source compiled with exactly one experimental flag. CWR is never compared
+with another system, and no arm, prompt or metric refers to one.
 
-Sections that describe tool or harness behaviour open with a status marker, using the convention of [world-source.md](world-source.md#how-to-read-this-guide): **Verified** links an accepted attempt record, **Implemented, not yet qualified** links shipped source whose case has no accepted attempt, **Proposed, not implemented** names source that does not exist yet. The expected directions in this guide are pre-registrations, not findings.
+Every metric is computed from ledgers and final state only. Anyone holding the ledgers can
+recompute every number.
 
-Every `sh` block runs, in order and in one shell, from the root of an unpacked release bundle with the packaged `cwr` on `PATH` (see [Install](../../README.md#install)); the release driver [tests/cwr/cases/6_1.py](../../tests/cwr/cases/6_1.py) executes each command exactly as written and fails if any exits non-zero. `text` blocks show syntax and are not executed.
+## Hypotheses and arms
 
-## 1. What is compared
+The hypotheses, arms, metrics and expected directions are frozen in
+[benchmark/preregistration.kvx](../../benchmark/preregistration.kvx) before any run. The arms
+and their flags are in [benchmark/harness/arms.kvx](../../benchmark/harness/arms.kvx).
 
-> **Implemented, not yet qualified.** Source: [benchmark/harness/arms.py](../../benchmark/harness/arms.py), [benchmark/harness/arms.kvx](../../benchmark/harness/arms.kvx), [benchmark/harness/run.py](../../benchmark/harness/run.py). Driver: [tests/cwr/cases/5_1.py](../../tests/cwr/cases/5_1.py). CWR-017 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
-
-Every arm is a CWR Build. Each hypothesis removes one pillar of CWR with one experimental build flag and measures the difference against the control Build on the same task suite, the same cassettes and the same model. Nothing is compared with any system outside CWR, and no harness file, prompt, arm or metric may reference one; task 5.1's driver scans `benchmark/harness/`, `benchmark/campaigns/` and every prompt template and fails on a match. Results say what each pillar contributes inside CWR and nothing more.
-
-## 2. Hypotheses and arms
-
-> **Implemented, not yet qualified.** Source: [benchmark/harness/arms.kvx](../../benchmark/harness/arms.kvx), [benchmark/preregistration.kvx](../../benchmark/preregistration.kvx), [benchmark/campaigns/h1.kvx](../../benchmark/campaigns/h1.kvx), [benchmark/campaigns/h2.kvx](../../benchmark/campaigns/h2.kvx). Driver: [tests/cwr/cases/3_2.py](../../tests/cwr/cases/3_2.py), [tests/cwr/cases/5_2.py](../../tests/cwr/cases/5_2.py), [tests/cwr/cases/5_3.py](../../tests/cwr/cases/5_3.py). CWR-013 and CWR-018 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The directions are registrations, not findings.
-
-| Hypothesis | Arms | Build flag per arm | Primary metric | Pre-registered direction |
+| Hypothesis | Arms | What the ablation changes | Primary metric | Expected direction |
 |---|---|---|---|---|
-| H1 Stability | frozen, drift-1, drift-3 | none; `--x-drift <drift.kvx>` with one injection; `--x-drift <drift.kvx>` with three | task success per bin | frozen > drift-1 > drift-3 on success; the reverse on repeated-failure rate |
-| H2 Direct action | script, one-primitive | none; `--x-one-primitive` | turns to success per bin | script needs fewer turns in every bin with success at least as high |
-| H3 Long context | K=5, K=20, K=full | none; the Instance is created with `--tail K` | rule reuse rate on rule-reuse tasks | H1 and H2 deltas larger in the long bin; reuse higher under frozen than drift at every K; K=full versus K=20 registered as undetermined |
-| H4 Controlled change | changelog, version-only, silent | none; `--x-version-only` on Build B; `--x-silent-change` on Build B | post-upgrade misuse rate | changelog < version-only < silent; no difference on the documentation-only pair U6 |
+| H1 Stability | `frozen`, `drift-1`, `drift-3` | `--x-drift`: one or three rules change mid-task without notice | task success | frozen > drift-1 > drift-3 |
+| H2 Direct action | `script`, `one-primitive` | `--x-one-primitive`: one primitive call per turn | turns to success | script needs fewer turns, with success at least as high |
+| H3 Long context | `k5`, `k20`, `kfull` | No flag. The Instance shows the model 5, 20 or all ledger records. | rule reuse | H1 and H2 effects grow with task length |
+| H4 Controlled change | `changelog`, `version-only`, `silent` | `--x-version-only` or `--x-silent-change` on the upgraded Build | post-upgrade misuse rate | changelog < version-only < silent |
 
-Drift injections for H1 fall at turn max(1, floor(len/2)) for drift-1 and at max(1, floor(len/4)), max(1, floor(len/2)) and max(1, floor(3len/4)) for drift-3, where `len` is the reference solution's turn count recorded in [benchmark/suite.kvx](../../benchmark/suite.kvx). The drift specification of every task, the rule it was drawn from and its Build hash are registered in [benchmark/campaigns/h1.kvx](../../benchmark/campaigns/h1.kvx). H4 runs each upgrade pair U1 to U6: the Instance runs on Build A for the first half of the reference turn count, is upgraded to Build B at the midpoint and continues; pairs, midpoints and expected notices are frozen in [benchmark/upgrades.kvx](../../benchmark/upgrades.kvx).
+H4 runs on the six upgrade pairs in
+[examples/refworld-upgrades](../../examples/refworld-upgrades/README.md). The documentation-only
+pair U6 is the control for notice noise and is reported separately.
 
-## 3. Building the arms
+## Before you start
 
-> **Implemented, not yet qualified.** Source: [crates/cwr-compiler/src/experimental/mod.rs](../../crates/cwr-compiler/src/experimental/mod.rs), [crates/cwr-compiler/src/experimental/drift.rs](../../crates/cwr-compiler/src/experimental/drift.rs), [crates/cwr-compiler/src/experimental/one_primitive.rs](../../crates/cwr-compiler/src/experimental/one_primitive.rs), [crates/cwr-compiler/src/experimental/notice.rs](../../crates/cwr-compiler/src/experimental/notice.rs), [crates/cwr-kernel/src/drift_injector.rs](../../crates/cwr-kernel/src/drift_injector.rs). Driver: [tests/cwr/cases/3_2.py](../../tests/cwr/cases/3_2.py). CWR-013 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+Install the `cwr` binary as described in [Install](../../README.md#install). The harness is Python
+3.12 with the standard library only. It finds the binary through `CWR_BIN`.
 
-Build the control and one experimental Build per flag from the same source. An experimental Build is written under `xbuild/` beside the Build root (`xbuild/` in the working directory for the default root); only one `--x-*` flag is allowed per Build (two are refused with exit 1). Two helpers read the hash and directory from the compiler's JSON report:
+The commands below run in one shell. They start in the repository root and then work in a scratch
+directory. Hashes in the output excerpts are shortened.
 
 ```sh
-build_hash() { python3 -c 'import json, sys; print(json.load(sys.stdin)["build"]["hash"])'; }
-build_dir() { python3 -c 'import json, sys; print(json.load(sys.stdin)["build"]["dir"])'; }
-CONTROL=$(cwr build examples/refworld --json | build_dir)
-ONE=$(cwr build examples/refworld --x-one-primitive --json | build_dir)
-DRIFT=$(cwr build examples/refworld --x-drift spec/cwr/examples/refworld/drift/drift-1.kvx --json | build_dir)
+REPO=$PWD
+export CWR_BIN="$(command -v cwr)"
+cd "$(mktemp -d)"
 ```
 
-The notice ablations are built from side B of an upgrade pair, against side A:
+## Build the arms
+
+Compile the control Build and one experimental Build per flag from the same source. Experimental
+Builds are written under `xbuild/`, beside the Build root. A Build takes one flag at most.
 
 ```sh
-A=$(cwr build examples/refworld-upgrades/U1/A --out pairs/U1-A --json | build_hash)
-PREV="pairs/U1-A/${A#sha256:}"
-B=$(cwr build examples/refworld-upgrades/U1/B --out pairs/U1-B --previous "$PREV" --json | build_dir)
-VERSION_ONLY=$(cwr build examples/refworld-upgrades/U1/B --out pairs/U1-B --previous "$PREV" --x-version-only --json | build_dir)
-SILENT=$(cwr build examples/refworld-upgrades/U1/B --out pairs/U1-B --previous "$PREV" --x-silent-change --json | build_dir)
+cwr build "$REPO/examples/refworld"
+cwr build "$REPO/examples/refworld" --x-one-primitive
+CONTROL=$(ls build)
+ONE=$(ls xbuild)
 ```
 
 ```text
-cwr build <source> [--out <dir>] [--previous <hash|dir>]
-                   [--x-drift <drift.kvx> | --x-one-primitive | --x-version-only | --x-silent-change]
+built experimental sha256:6b2593cf... (x-one-primitive) at xbuild/6b2593cf...
 ```
 
-| Flag | Changes | Must not change |
+`cwr diff` checks attribution: the difference between the control and an experimental Build must
+consist only of what the flag changes.
+
+```sh
+cwr diff "$CONTROL" "$ONE"
+```
+
+```text
+  "experimental": {
+    "attributable": true,
+    ...
+    "experimental_entries": [
+      {
+        "after": "In this world `primitive_calls = 1`: a turn may make exactly one primitive call; a second call in the same turn is not executed and fails with LIMIT naming `primitive_calls`.",
+        "field": "limits",
+        "kind": "manual_sentence",
+        "target": "manual"
+      }
+    ],
+    "flag": "x-one-primitive",
+    "unattributable": []
+  },
+```
+
+| Flag | Changes | Leaves unchanged |
 |---|---|---|
-| `--x-drift <drift.kvx>` | Embeds a drift schedule; at each scheduled turn the kernel swaps the named precondition or failure in the running enforcement table and writes a `drift` ledger record | Manual, SDK, `contracts.json`, limits |
-| `--x-silent-change` | `cwr instance upgrade` into this Build stores the notice but renders nothing | Contracts, manual, migrations, the changelog gate |
-| `--x-version-only` | The rendered notice is the version line only | As above |
-| `--x-one-primitive` | `limits.primitive_calls = 1` and one sentence stating it in the manual's limits section | Every other contract and limit |
+| `--x-drift <file>` | Embeds a drift schedule. At each scheduled turn the kernel changes one rule in the running table and writes a `drift` ledger record that the model never sees. | Manual, SDK, contracts, limits |
+| `--x-one-primitive` | Sets `primitive_calls` to 1 and adds one sentence saying so to the manual | Every other contract and limit |
+| `--x-version-only` | An upgrade into this Build shows the model only the version line of the recompile notice | Contracts, manual, migrations, changelog gate |
+| `--x-silent-change` | An upgrade into this Build shows the model no notice | As above |
 
-Check attribution before using a pair; the diff between control and experimental must contain only entries attributable to the flag, and the harness refuses any other pair:
+Every experimental Build is stamped in its manifest and on every ledger record of its Instances.
+The kernel refuses to run one without `--allow-experimental`, with exit code 3:
 
-```sh
-cwr diff "$CONTROL" "$ONE" > one-primitive-diff.json
-cwr diff "$B" "$SILENT" > silent-change-diff.json
+```text
+$ cwr instance create "$ONE"
+cwr instance: experimental build refused: Build sha256:6b2593cf... is experimental (x-one-primitive); pass --allow-experimental
 ```
 
-The drift file grammar (`meta.format = "cwr.drift"`, `drift.<n>.turn`, `primitive`, `change`, `expr`, `failure`, `doc`) is in [spec/cwr/compiler.md](../../spec/cwr/compiler.md) section 10, with an [example](../../spec/cwr/examples/refworld/drift/drift-1.kvx). The H1 campaign compiles one drift Build per task and drift arm from the schedules registered in [benchmark/campaigns/h1.kvx](../../benchmark/campaigns/h1.kvx); the release pins every one of them ([RELEASE.md](../../RELEASE.md)).
+### One primitive per turn
 
-Every Instance of an experimental Build needs `--allow-experimental`:
-
-```sh
-XID=$(cwr instance create "$ONE" --seed 1 --arm H2/one-primitive --allow-experimental)
-cwr instance show "$XID" > one-primitive-instance.json
-```
-
-## 4. Shared setup
-
-These values are proposed choices fixed before execution. They are not derived from measurements and are not power calculations.
-
-| Item | Proposed value | Recorded in |
-|---|---|---|
-| Control Build | refworld with no experimental flag | `benchmark/harness/arms.kvx` |
-| Model and sampling settings | One fixed identity and fixed settings for all arms | Ledger header and attempt record |
-| Gateway mode | replay against the frozen cassette set | Cassette digest in the ledger header |
-| Context layout | manual, notice, ledger tail K, last envelope; K = 20 unless the arm changes it | K in the ledger header |
-| Seeds | 10 per task per arm, the same seeds across arms of one hypothesis | Ledger header |
-| Task suite | 60 tasks: 20 short, 20 medium, 20 long, at least 12 long rule-reuse tasks | Suite digest in `benchmark/suite.kvx` |
-| Success | `success.py` predicate over final state and ledger | Attempt record |
-
-Proposed Instance counts per hypothesis: H1 1,800 (3 arms x 60 tasks x 10 seeds), H2 1,200, H3 1,800, H4 180 (3 arms x 6 pairs x 10 seeds). Running fewer seeds yields a BLOCKED or partial record, never a pooled result at a smaller N. The model identity, sampling settings and turn limits are campaign inputs recorded in `benchmark/preregistration.kvx` before any run.
-
-## 5. Pre-registration
-
-> **Implemented, not yet qualified.** Source: [benchmark/preregistration.kvx](../../benchmark/preregistration.kvx), [benchmark/harness/prereg.py](../../benchmark/harness/prereg.py), [benchmark/analyse.py](../../benchmark/analyse.py). Driver: [tests/cwr/cases/5_1.py](../../tests/cwr/cases/5_1.py), [tests/cwr/cases/5_2.py](../../tests/cwr/cases/5_2.py). CWR-017 and CWR-018 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-`benchmark/preregistration.kvx` is committed before any campaign. Per hypothesis it records the arms with their Build hashes, the task set, the primary and secondary metrics, the expected direction and the sha256 of `benchmark/harness/metrics.py` and `benchmark/harness/arms.kvx`. The analysis refuses to run when the current digests differ from the registered ones. A metric change after execution is a new pre-registration and a new campaign; earlier results stay under their original registration. Print the digests the registration must carry:
+The second call of a turn is not executed, so the turn ends `partial`:
 
 ```sh
-python3 benchmark/analyse.py --print-digests
-```
+OI=$(cwr instance create "$ONE" --allow-experimental --arm H2/one-primitive)
+cwr instance turn "$OI" <<'SCRIPT'
+import fs
 
-## 6. Running a campaign
-
-> **Implemented, not yet qualified.** Source: [benchmark/harness/run.py](../../benchmark/harness/run.py), [benchmark/harness/model.py](../../benchmark/harness/model.py), [benchmark/campaigns/h1h2.py](../../benchmark/campaigns/h1h2.py). Driver: [tests/cwr/cases/5_1.py](../../tests/cwr/cases/5_1.py), [tests/cwr/cases/5_2.py](../../tests/cwr/cases/5_2.py). CWR-017 and CWR-018 have no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
-
-`benchmark/harness/run.py` runs one Instance for one hypothesis, arm, task and seed: it creates the Instance of the arm's Build (with `--allow-experimental` where needed), drives turns through the model adapter with the fixed context layout in replay mode against the cassette set and stops at success, turn limit or budget exhaustion. `benchmark/campaigns/h1h2.py` registers and executes the H1 and H2 matrices. Both need the model gateway, whose credentials the harness reads from the environment at run time, so the release driver does not execute them; it does run the campaign status report:
-
-```sh
-python3 benchmark/campaigns/h1h2.py status > campaign-status.json
+fs.write(path="/notes/a.md", content=b"hello")
+fs.lock(path="/notes/a.md")
+SCRIPT
 ```
 
 ```text
-python3 benchmark/harness/run.py --hypothesis H1|H2|H3|H4 --arm ARM --task TASK --seed SEED
-        [--build HASH] [--cassettes DIR] [--results DIR] [--home DIR] [--builds DIR]
-        [--model gateway|stub] [--turn-limit N] [--live] [--allow-unregistered]
-python3 benchmark/campaigns/h1h2.py plan | register | run | status | analyse | report
+{"error":{"code":"LIMIT","detail":"the turn budget of 1 primitive calls is spent; this call was not executed","limit":"primitive_calls","precondition_index":null,"primitive":"fs.lock","retry_after":null},...,"status":"partial",...}
 ```
 
-One ledger per arm, task and seed:
+### Drift
+
+A drift schedule names the turn, the primitive, the kind of change, the new expression, its failure
+code and a description. It uses the precondition language and the same checks as a contract. The
+change kinds `primitive_added`, `primitive_removed`, `state_shape` and `doc_only` cannot drift.
+This schedule adds a rule to `fs.delete` from turn 2:
+
+```sh
+cat > drift.kvx <<'EOF'
+[meta]
+format = "cwr.drift"
+schema_version = 1
+
+[drift.1]
+turn = 2
+primitive = "fs.delete"
+change = "precondition_added"
+expr = "fs.size(path) < 4"
+failure = "LOCKED"
+doc = "From turn 2, fs.delete also refuses files of 4 bytes or more with LOCKED."
+EOF
+cwr build "$REPO/examples/refworld" --x-drift drift.kvx
+DRIFT=$(ls xbuild | grep -v "$ONE")
+DI=$(cwr instance create "$DRIFT" --allow-experimental --arm H1/drift-1)
+cwr instance turn "$DI" <<'SCRIPT'
+import fs
+
+fs.write(path="/a", content=b"hello")
+fs.write(path="/b", content=b"hello")
+fs.delete(path="/a")
+SCRIPT
+cwr instance turn "$DI" <<'SCRIPT'
+import fs
+
+fs.delete(path="/b")
+SCRIPT
+cwr instance tail "$DI"
+grep '"kind":"drift"' ".cwr/instances/$DI/ledger.jsonl"
+```
+
+The same call succeeds in turn 1 and fails in turn 2. The manual still documents the old rule, and
+the model's ledger tail does not show the drift. The ledger records it:
 
 ```text
-benchmark/results/h<N>/<arm>/<task>/<seed>/ledger.jsonl
-benchmark/results/h<N>/<arm>/<task>/<seed>/final_state.kvx
-benchmark/results/h<N>/<arm>/<task>/<seed>/attempt.kvx
+t1   wt1    fs.write             ok
+t1   wt2    fs.write             ok
+t1   wt3    fs.delete            ok
+t1   turn                        ok     calls=3
+t2   wt13   fs.delete            error  LOCKED
+t2   turn                        error  LOCKED  calls=1
+{...,"change":"precondition_added","drift":1,"experimental":"x-drift","expr":"fs.size(path) < 4","failure":"LOCKED","first_turn":2,"kind":"drift",...,"primitive":"fs.delete",...,"visible":false,...}
 ```
 
-The attempt record holds Build hash, Instance id, seed, cassette digest, model identity, compiler and kernel revisions, arm, start and end, exit status, log path and the harness-recorded token counts. A missing cell makes the matrix incomplete and the campaign cannot close.
+The H1 campaign derives one drift schedule per task from the task's rules. `python3
+"$REPO/benchmark/campaigns/h1h2.py" plan` prints them.
 
-## 7. Metrics
+### Notice ablations
 
-> **Implemented, not yet qualified.** Source: [benchmark/harness/metrics.py](../../benchmark/harness/metrics.py). Driver: [tests/cwr/cases/5_1.py](../../tests/cwr/cases/5_1.py). CWR-017 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour. The commands below are executed as written by the release driver.
+For H4, the upgraded side of a pair is compiled with the flag. The upgrade carries the full notice
+in its ledger record. The model sees only what the flag allows:
 
-Every metric is computed from ledgers and final state only; the full normative definitions are in [spec/cwr/experiments.md](../../spec/cwr/experiments.md) section 4.
+```sh
+cwr build "$REPO/examples/refworld-upgrades/U1/A" --out u1/build
+PAIR_A=$(ls u1/build)
+cwr build "$REPO/examples/refworld-upgrades/U1/B" --out u1/build --previous "$PAIR_A" --x-version-only
+PAIR_B=$(ls u1/xbuild)
+VI=$(cwr instance create "u1/build/$PAIR_A")
+cwr instance upgrade "$VI" "u1/xbuild/$PAIR_B" --allow-experimental
+cwr instance notice "$VI"
+```
 
-| Metric | In one line |
+```text
+WORLD RECOMPILED  0.2.0 -> 0.3.0   (sha256:a4e291c7... -> sha256:a01965b8...)
+```
+
+## Shared setup
+
+These values come from the `[campaign]` section of the pre-registration. They are choices fixed
+before execution, not measurements.
+
+| Item | Value |
 |---|---|
-| task success | `success.py` true for the final state and ledger; 1 or 0 per Instance |
-| turns to success | First turn after which the predicate holds; failures reported separately, never as a large number |
-| primitive calls | Count of `primitive` records |
-| failure rate by code | Failing records per code divided by primitive calls |
-| repeated-failure rate | Failing records that repeat an earlier failure of the same primitive and code in the same Instance, over all failing records |
-| rule reuse rate | Rule-reuse tasks whose later encounter of the reused rule shows no failure on that rule |
-| post-upgrade misuse rate | Post-upgrade turns calling a changed primitive under its old rule, over post-upgrade turns |
-| partial rate | Turns with status partial over all turns |
-| probing ratio | read_only calls per mutating or external call; a secondary H1 proxy only |
+| World | `refworld`, the control Build for every hypothesis |
+| Task suite | 60 tasks in [benchmark/suite.kvx](../../benchmark/suite.kvx): 20 short, 20 medium, 20 long |
+| Seeds | 1 to 10 for every task and arm |
+| Gateway mode | replay, against recorded cassettes |
+| Context | manual, recompile notice, ledger tail, last result envelope |
+| Ledger tail | 20 records, except in H3 |
+| Turn limit | 15 short, 40 medium, 120 long, never above 200 |
+| Output limit | 16,000 tokens per turn |
+| Stop rule | first turn whose success predicate holds, the turn limit, budget exhaustion, a model error or an `INVARIANT_VIOLATION` |
 
-Tokens at the model boundary are harness-recorded per turn in the attempt record, not a ledger quantity, and are reported only as a secondary H2 measure labelled as harness-recorded.
-The metric functions are pure and unit-tested on synthetic ledgers:
+Each task directory under [benchmark/tasks](../../benchmark/tasks/README.md) holds the instruction,
+the initial state, the rules the task depends on and a `success.py` predicate over final state and
+ledger.
 
-```sh
-python3 -m unittest discover -s benchmark/harness/tests -t .
-```
+## Record the cassettes
 
-## 8. Analysis
-
-> **Implemented, not yet qualified.** Source: [benchmark/analyse.py](../../benchmark/analyse.py). Driver: [tests/cwr/cases/5_2.py](../../tests/cwr/cases/5_2.py), [tests/cwr/cases/5_3.py](../../tests/cwr/cases/5_3.py). CWR-018 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
-
-```text
-python3 benchmark/analyse.py [--results DIR] [--prereg FILE] [--metrics FILE] [--arms FILE] [--suite FILE]
-        [--upgrades FILE] [--tasks-dir DIR] [--out FILE] [--check REPORT] [--live] [--draft-ok]
-        [--require-complete] [--print-digests]
-```
-
-The analysis reads ledgers and attempt records under `benchmark/results/` and the registered definitions in `benchmark/preregistration.kvx`. For every arm and bin it reports the mean of each metric across tasks and seeds with a 95% bootstrap confidence interval from 10,000 resamples over Instances. Bins are never pooled. Drift arms are reported per drift specification and pooled. Ledgers with different cassette digests are never pooled. `--check` recomputes and compares with an existing report. The four research reports go to `research/h1-stability.md`, `research/h2-direct-action.md`, `research/h3-long-context.md` and `research/h4-controlled-change.md`; the release pins the digest of each result directory ([RELEASE.md](../../RELEASE.md)).
-
-## 9. Live versus replay
-
-> **Implemented, not yet qualified.** Source: [benchmark/harness/run.py](../../benchmark/harness/run.py). Driver: [tests/cwr/cases/5_1.py](../../tests/cwr/cases/5_1.py). CWR-017 has no accepted attempt in the evidence registry, so this section describes shipped code, not verified behaviour.
-
-All campaigns run in replay mode. A live-mode run of the frozen arm against the stub servers is permitted as a robustness check; its attempt records carry `mode = "live"`, it is written under `benchmark/results/live/`, and it is never pooled with replay results. Live runs against real external services are out of scope for the first campaign.
-
-## 10. What counts as a result
-
-> **Verified, component tier.** Evidence: CWR-019, attempt record [tests/cwr/evidence/CWR-019/20261106T133347Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T133347Z-1.json), outcome PASS, accepted by the independent checker and written to [tests/cwr/registry.kvx](../../tests/cwr/registry.kvx) by the runner. Source: [tests/cwr/qualify.py](../../tests/cwr/qualify.py), [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py), driver [tests/cwr/cases/0_2.py](../../tests/cwr/cases/0_2.py). The case status in `spec/cwr/spec.kvx` stays UNRUN until task 6.2 updates statuses from the registry. This covers the runner and checker only; it says nothing about a campaign or a hypothesis.
-
-Qualification attempts run through one runner, which executes a case's task drivers, invokes the independent checker and appends one immutable attempt record to the hash-chained index `tests/cwr/evidence/index.jsonl`:
-
-```text
-python3 tests/cwr/qualify.py --case CWR-NNN
-python3 tests/cwr/qualify.py --case CWR-NNN --task W.N
-python3 tests/cwr/qualify.py --task W.N
-python3 tests/cwr/qualify.py --check-registry
-```
-
-The first form qualifies a whole case; the `--task` forms record a component attempt for one task's registered subset, which never changes the case status; `--check-registry` validates the registry against the specification. The checker is a separate program that reads only attempt records, ledgers, final state and the registry, and refuses zero-assertion, tampered, stale-Build and mismatched-seed evidence. It can be run on its own; for CWR-019 it reports the accepted attempt:
+Campaigns run in replay mode, so every arm sees identical adapter responses. The recorder runs each
+task's reference solution through the real kernel against the stub servers, once per seed. Here it
+records one task:
 
 ```sh
-python3 tests/cwr/check_evidence.py --status CWR-019
+python3 "$REPO/benchmark/stubs/record_refworld.py" record --set suite --tasks t003-tennis-note --out cassettes
 ```
 
-- A hypothesis result requires the complete arm matrix with 10 seeds per task and the pre-registered metric definitions. A component PASS never implies a hypothesis result.
-- A campaign whose result contradicts its registered direction is reported as such.
-- A changed Build hash, cassette digest, model identity or sampling settings, K, compiler or kernel revision, suite digest or metric definition invalidates the affected evidence.
-- Any run containing `INVARIANT_VIOLATION` is excluded and reported, because the Build that produced it is defective.
+```text
+record_refworld: suite: 10 cassettes, 10 turns, digest sha256:7bd66d41...
+```
 
-## 11. Threats to validity
+A full set holds every task. Its digest is registered, and ledgers recorded against different
+cassette digests are never pooled.
 
-| Threat | Mitigation |
+## Run cells
+
+`run.py` runs one cell: one hypothesis, arm, task and seed. It creates the Instance, renders the
+context, sends it to the model, runs the reply as a turn, exports state after every turn and stops
+by the stop rule. It never compiles a Build.
+
+| `--model` | Meaning |
 |---|---|
-| Model nondeterminism | 10 seeds per task; fixed, recorded sampling settings; variance reported |
-| Cassette staleness | Cassette digest in every ledger header; ledgers with different digests are not pooled |
-| Task leakage | Reference solutions show each task needs its listed rules; tasks with no rule-dependent primitive are excluded |
-| K confounds | K fixed at 20 for H1 and H2; swept only in H3 |
-| Drift schedule choice | Specifications drawn from each task's `rules` file by a seeded rule, committed before the run and reported per specification |
-| One-primitive arm is artificial | Stated as the cleanest in-world ablation of direct action; no claim beyond CWR |
-| Notice wording | The version-only arm isolates the version signal; U6 controls for notice noise |
-| Replay removes external variance | Replay is the registered condition; the live robustness run is reported separately |
+| `gateway` | The registered model. Credentials are read from the environment. |
+| `stub` | A deterministic offline player that replays the task's reference solution and opens no socket. Use it to test the pipeline. |
 
-## 12. Open points in the contract
+`--allow-unregistered` runs under the draft registration and marks each attempt
+`registered = false`. This pilot runs two seeds of both H2 arms with the stub player:
 
-The three points this guide left open on its first edition are settled by registration in [benchmark/preregistration.kvx](../../benchmark/preregistration.kvx) and the harness README ([benchmark/harness/README.md](../../benchmark/harness/README.md)): turn limits are registered per bin with 200 as the cap, the H3 K sweep runs on the full suite (a superset of both readings), and `run.py` and `analyse.py` have the command lines shown above. Two registered choices remain worth knowing: "primitive calls" counts `primitive` and `adapter` records (convention C1), and the H3 frozen-versus-drift reuse direction is registered at K = 20 only, because the drift arms run only at K = 20.
+```sh
+pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --cassettes cassettes/suite --results results --home runs "$@"; }
+pilot --arm script --seed 1 --builds build --build "$CONTROL"
+pilot --arm script --seed 2 --builds build --build "$CONTROL"
+pilot --arm one-primitive --seed 1 --builds xbuild --build "$ONE"
+pilot --arm one-primitive --seed 2 --builds xbuild --build "$ONE"
+```
+
+```text
+H2/script t003-tennis-note seed 1 mode replay: success after 1 turns
+H2/script t003-tennis-note seed 2 mode replay: success after 2 turns
+H2/one-primitive t003-tennis-note seed 1 mode replay: turn_limit after 15 turns
+H2/one-primitive t003-tennis-note seed 2 mode replay: turn_limit after 15 turns
+```
+
+The stub player replays scripts written for the control world, so these outcomes test the
+pipeline. They say nothing about a model.
+
+Each cell writes one directory:
+
+```text
+results/h2/script/t003-tennis-note/1/
+  ledger.jsonl          the Instance's ledger
+  final_state.kvx       the final state as the success predicate sees it
+  states/turn_0001.kvx  the state after each turn
+  attempt.kvx           Build, Instance, seed, cassette digest, model, revisions, timing, exit status, token counts, metrics
+```
+
+## Metrics
+
+The definitions are normative in the pre-registration and implemented once in
+[benchmark/harness/metrics.py](../../benchmark/harness/metrics.py), whose digest is registered.
+
+| Metric | Definition |
+|---|---|
+| `task_success` | `success.py` on the final state and full ledger: 1 or 0 |
+| `turns_to_success` | First turn after which the predicate holds. Undefined on failure. |
+| `primitive_calls` | Call records: kinds `primitive` and `adapter` |
+| `failure_rate.<CODE>` | Failing call records with that code, divided by primitive calls |
+| `repeated_failure_rate` | Failing calls that repeat an earlier failing (primitive, code) pair, divided by failing calls |
+| `rule_reuse` | Whether a rule learned early is respected when the primitive is used again later |
+| `post_upgrade_misuse_rate` | Post-upgrade turns that call a changed primitive under its old rule, divided by post-upgrade turns |
+| `turns_to_first_correct_use` | Turns from the upgrade to the first successful call of a changed primitive |
+| `partial_rate` | Turns with status `partial`, divided by turns |
+| `probing_ratio` | Read-only calls divided by mutating and external calls |
+| `proposals_after_upgrade` | Proposal records after the upgrade |
+| `drift_records` | Records of kind `drift` |
+
+A rate with a zero denominator is undefined and left out of that metric's sample. Token counts are
+recorded by the harness at the model boundary. They are not ledger quantities and are reported
+separately.
+
+## Analyse
+
+`analyse.py` recomputes every metric from the ledgers. For each arm and group it reports the mean
+over Instances with a 95% percentile bootstrap interval from 10,000 resamples. It labels each
+registered direction `consistent`, `inconsistent` or `inconclusive` from the interval of the
+difference.
+
+```sh
+python3 "$REPO/benchmark/analyse.py" --results results --draft-ok
+python3 "$REPO/benchmark/analyse.py" --results results --draft-ok --check results/analysis.json
+```
+
+```text
+wrote results/analysis.json; excluded 0; incomplete matrices: H1, H2, H3, H4
+report equals the recomputation from ledgers
+```
+
+The analysis never pools bins, cassette digests or live and replay runs. It excludes, and reports,
+unregistered attempts, Instances with an `INVARIANT_VIOLATION` record and attempts that ended in a
+model or kernel error. Without `--draft-ok` it refuses a draft registration:
+
+```text
+$ python3 "$REPO/benchmark/analyse.py" --results results
+analyse.py refused: pre-registration is a draft; missing: campaign.model, campaign.sampling, campaign.suite_digest, campaign.cassette_digest, campaign.upgrades_digest, arms.control.build, arms.h2.one-primitive.build, meta.status (must be "registered")
+```
+
+| Exit | Meaning |
+|---|---|
+| 0 | Report written, or `--check` matched |
+| 1 | `--check` found a difference |
+| 2 | Draft registration without `--draft-ok` |
+| 3 | `metrics.py` or `arms.kvx` differs from its registered digest |
+| 4 | Integrity failure: a ledger disagrees with its cell, or cassette digests would be pooled |
+| 5 | `--require-complete` and a cell of the arm matrix is missing |
+
+## Full campaigns
+
+[benchmark/campaigns/h1h2.py](../../benchmark/campaigns/h1h2.py) drives H1 and H2 over the whole
+matrix: 60 tasks, 10 seeds and every arm.
+
+| Subcommand | Purpose |
+|---|---|
+| `plan` | Print the derived drift schedule of every task |
+| `register` | Compile the Builds and write the campaign files |
+| `run` | Execute missing cells, in parallel, against the registered Builds |
+| `status` | Count done and missing cells per arm |
+| `analyse` | Run the analysis per hypothesis |
+| `report` | Render the research reports |
+
+```sh
+python3 "$REPO/benchmark/campaigns/h1h2.py" status
+```
+
+```text
+{
+ "H1/drift-1": {
+  "done": 0,
+  "missing": 600,
+  "retry": 0
+ },
+ ...
+```
+
+A hypothesis result needs the complete arm matrix under a registered pre-registration. A changed
+Build hash, cassette digest, model identity, tail size, compiler or kernel revision, suite digest
+or metric definition invalidates the affected results. A metric changed after execution is a new
+pre-registration and a new campaign.
+
+The normative contract for experiments is [spec/cwr/experiments.md](../../spec/cwr/experiments.md).

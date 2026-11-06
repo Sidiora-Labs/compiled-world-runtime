@@ -12,17 +12,24 @@ only what is observable from outside the kernel: result envelopes, ledger files,
 the stubs' own request logs (`GET /_stub/log`), connection counters on decoy listeners, and strace.
 
 The copied refworld keeps the shipped adapters, record shapes and fixtures, which speak the stub wire
-protocol of benchmark/stubs/README.md; the copy only adds rules and probes. The publish.post contract declares `undeclared_status = "INVALID"`
-(world-source.md section 7) so both undeclared fallbacks (UNAVAILABLE and INVALID) are exercised, and a
-fixture case with an undeclared status proves the compiler's contract tests apply the same fallback as
-the gateway (a negative-control build that expects UNAVAILABLE must be refused).
-adapters/publish/live.py (publish.delete) and lib/world.py (world.version) additionally try to open a
-TCP connection to a probe listener, directly and from a child process started through
-_posixsubprocess.fork_exec (which raises no audit event), and record what happened and the process's
-seccomp state in a report file. The listener must never see a connection, neither while `cwr build`
-runs them in its contract tests (with bubblewrap, and without it, where the kernel's seccomp network
-seal must be in force) nor while the kernel runs them; a final unsandboxed control run of the same
-probe code shows the listener does count both. examples/refworld itself is not modified.
+protocol of benchmark/stubs/README.md; the copy only adds rules. The publish.post contract declares
+`undeclared_status = "INVALID"` (world-source.md section 7) so both undeclared fallbacks (UNAVAILABLE
+and INVALID) are exercised, and a fixture case with an undeclared status proves the compiler's contract
+tests apply the same fallback as the gateway (a negative-control build that expects UNAVAILABLE must be
+refused).
+
+Network closure (7.1). A network probe tries to open a TCP connection to a probe listener, directly and
+from a child process started through _posixsubprocess.fork_exec (which raises no audit event). Written
+into World Source with plain reflective names, or reached through a fullwidth-spelled `exec` that Python
+folds to the builtin, `cwr build` must refuse it before any world code runs. To reach the kernel's
+runtime network seal anyway, the driver places the same probe in lib/world.py (world.version) and
+adapters/publish/live.py (publish.delete) of the compiled Build and reseals it with the Build hash
+recomputed from compiler.md section 7: a test-only Build standing for world code that a lint gap would
+let through. The listener must never see a connection while the kernel runs it; a final unsandboxed
+control run of the same probe code shows the listener does count both. A build without bubblewrap is
+traced with strace to show every world-code worker exec is preceded by the seccomp network seal, and
+the cargo unit test of the seal proves sockets are denied to a sealed process and its descendants.
+examples/refworld itself is not modified.
 
 Further variants of the aligned copy: retry_after_ratio = 3 (retry_after scaled to ticks), and three
 adapters that omit a code the gateway would need (TIMEOUT; DUPLICATE_KEY on a key adapter; a live.py
@@ -100,6 +107,18 @@ class Results:
 
 
 R = Results()
+
+# Releasing a `key` adapter's key on RATE_LIMITED departs from the literal text of kernel.md section 7
+# (only a defect releases the key); the driver asserts that behaviour only together with this recorded
+# deviation.
+DEVIATION = "finding.task_2_3_rate_limited_key_release"
+
+
+def deviation_recorded() -> bool:
+    q = REPO / "spec/cwr/qualification.kvx"
+    text = q.read_text() if q.is_file() else ""
+    m = re.search(r"(?ms)^\[" + re.escape(DEVIATION) + r"\]\n(.*?)(?=^\[|\Z)", text)
+    return bool(m) and "RATE_LIMITED" in m.group(1) and "kernel.md section 7" in m.group(1)
 
 
 def run(cmd, **kw) -> subprocess.CompletedProcess:
@@ -248,7 +267,7 @@ class Listener:
 # The world under test
 # ------------------------------------------------------------------------------------------------
 
-# The network probe placed in lib/ and live.py. Three attempts, each recorded in a report file when the
+# The network probe placed in the test-only Build's lib/ and live.py. Three attempts, each recorded in a report file when the
 # filesystem allows it: a direct socket; a child process started through _posixsubprocess.fork_exec,
 # which raises no audit event (so an interpreter-level guard alone cannot see it), whose child connects;
 # and the kernel's view of the process (/proc/self/status Seccomp and NoNewPrivs).
@@ -283,43 +302,31 @@ PROBE_IMPL = """def _probe_impl() -> None:
             f.write(" ".join(notes) + "\\n")
     except BaseException:
         pass
+    if __PROBE_RAISE__:
+        raise RuntimeError("probe-notes: " + " ".join(notes))
 """
 
 
-# The compiler's closure lint (CWR-L001, crates/cwr-compiler/src/pyimports.rs) refuses
-# `__builtins__`, `vars`, `exec` and the other reflective routes by token. A hostile author is not
-# bound by that list's spelling: Python folds identifiers to NFKC, so the fullwidth `ｅｘｅｃ` below
-# is the builtin `exec` at run time while the lexical lint sees an unknown name. The probe body
-# travels as a string literal, which the lint skips. This is what lets the probe reach the
-# kernel's runtime network seal (clause 7.1's defence in depth) from compiled world code at all;
-# the same probe written with plain names is refused at build time (closure_lint_refuses_probe).
-EXEC_NFKC = "\uff45\uff58\uff45\uff43"
-
-
-def probe_impl(port: int, report: Path) -> str:
-    return PROBE_IMPL.replace("__PROBE_PORT__", str(port)).replace("__PROBE_REPORT__", str(report))
-
-
-def probe_code(port: int, report: Path) -> str:
+def probe_impl(port: int, report: Path, loud: bool = False) -> str:
+    """The probe; `loud` makes it raise its notes, so they surface in the kernel's defect trace."""
     return (
-        "def _probe_network() -> None:\n"
-        "    ns = {}\n"
-        f"    {EXEC_NFKC}({probe_impl(port, report)!r}, ns)\n"
-        '    ns["_probe_impl"]()\n'
+        PROBE_IMPL.replace("__PROBE_PORT__", str(port))
+        .replace("__PROBE_REPORT__", str(report))
+        .replace("__PROBE_RAISE__", str(loud))
+    )
+
+
+def probe_code(port: int, report: Path, loud: bool = False) -> str:
+    return (
+        probe_impl(port, report, loud)
+        + "\n\ndef _probe_network() -> None:\n"
+        + "    _probe_impl()\n"
     )
 
 
 def probe_report(report: Path) -> list[str]:
     return report.read_text().splitlines() if report.exists() else []
 
-
-LIB_PROBE = (
-    "\n\n"
-    + "__PROBE_CODE__"
-    + """
-
-def version(state: Any) -> str:"""
-)
 
 UNDECLARED_CASE = """
 [case.undeclared_status]
@@ -341,6 +348,84 @@ def diagnostics(rep: dict) -> list[str]:
     ]
 
 
+def build_hash(root: Path) -> str:
+    """The Build hash of compiler.md section 7, recomputed independently: relative paths sorted
+    bytewise; per entry the path bytes, NUL, the length in decimal, NUL, the bytes; an empty
+    directory is `<path>/` with length 0; manifest.kvx enters without its final `hash` line."""
+    entries: list[tuple[bytes, bytes]] = []
+    for d, dirs, files in os.walk(root):
+        rel = Path(d).relative_to(root)
+        if rel != Path(".") and not dirs and not files:
+            entries.append(((rel.as_posix() + "/").encode(), b""))
+        for f in files:
+            r = (rel / f).as_posix()
+            data = (Path(d) / f).read_bytes()
+            if r == "manifest.kvx":
+                lines = data.decode().splitlines(keepends=True)
+                if not lines or not lines[-1].startswith('hash = "sha256:'):
+                    raise SystemExit("manifest.kvx does not end with its hash line")
+                data = "".join(lines[:-1]).encode()
+            entries.append((r.encode(), data))
+    h = hashlib.sha256()
+    for path, data in sorted(entries):
+        h.update(path + b"\0" + str(len(data)).encode() + b"\0" + data)
+    return h.hexdigest()
+
+
+def inject_probe(path: Path, anchor: str, port: int, report: Path, loud: bool = False) -> None:
+    """Defines the network probe before `anchor` (a `def` line) and calls it first in that function."""
+    t = path.read_text()
+    if t.count(anchor) != 1:
+        raise SystemExit(f"could not place the network probe in {path}")
+    t = t.replace(anchor, "\n\n" + probe_code(port, report, loud).rstrip("\n") + "\n" + anchor, 1)
+    head = re.escape(anchor.strip("\n"))
+    t, n = re.subn(
+        "(" + head + r"\n(?:\s+\"\"\".*?\"\"\"\n)?)",
+        r"\1    _probe_network()\n",
+        t,
+        count=1,
+        flags=re.S,
+    )
+    if n != 1:
+        raise SystemExit(f"could not call the network probe in {path}")
+    path.write_text(t)
+
+
+def probed_build(
+    clean: Path, dest: Path, port: int, report: Path, loud: bool = False
+) -> tuple[Path, str]:
+    """A test-only Build: the compiled `clean` Build with the network probe placed in lib/world.py
+    (world.version) and adapters/publish/live.py (publish.delete) after compilation, resealed with
+    the Build hash recomputed here. The compiler's closure lint refuses this probe in World Source
+    (closure_lint_refuses_probe), so it can reach the kernel's runtime network seal only through a
+    Build edited after compilation; it stands for world code that a lint gap would let through.
+    With `loud` the probe raises its notes after its attempts, so they surface in the defect trace.
+    Returns the Build directory and the recomputed hash of `clean`, which must equal its name."""
+    clean_hash = build_hash(clean)
+    tmp = dest / ("probed-loud" if loud else "probed")
+    shutil.copytree(clean, tmp, copy_function=shutil.copyfile)
+    for d, _dirs, _files in os.walk(tmp):
+        os.chmod(d, 0o755)
+    inject_probe(tmp / "lib/world.py", "\n\ndef version(state: Any) -> str:\n", port, report, loud)
+    inject_probe(
+        tmp / "adapters/publish/live.py",
+        "\n\ndef delete(gateway: Any, post_id: str) -> None:\n",
+        port,
+        report,
+        loud,
+    )
+    hexd = build_hash(tmp)
+    m = tmp / "manifest.kvx"
+    lines = m.read_text().splitlines(keepends=True)
+    m.write_text("".join(lines[:-1]) + f'hash = "sha256:{hexd}"\n')
+    out = dest / hexd
+    tmp.rename(out)
+    for d, _dirs, files in os.walk(out):
+        for f in files:
+            os.chmod(Path(d) / f, 0o444)
+    return out, clean_hash
+
+
 class World:
     def __init__(self, cwr: Path, scratch: Path) -> None:
         self.cwr = cwr
@@ -352,7 +437,6 @@ class World:
 
     def prepare(
         self,
-        probe_port: int,
         name: str = "src",
         undeclared_expect: str = "INVALID",
         status_fallback: bool = False,
@@ -361,8 +445,7 @@ class World:
         """The aligned copy of refworld. `undeclared_expect`: the code the added fixture case expects for
         an undeclared status of publish.post; `status_fallback`: also give publish.status (which does not
         declare INVALID) `undeclared_status = "INVALID"`, which the compiler must refuse; `retry_ratio`:
-        give search.query and publish.post `retry_after_ratio = <n>`. The probe report of this copy is
-        `probe-<name>.txt` in the scratch directory."""
+        give search.query and publish.post `retry_after_ratio = <n>`."""
         src = self.scratch / name
         shutil.copytree(REFWORLD, src, ignore=shutil.ignore_patterns("README.md", "__pycache__"))
         wk = src / "world.kvx"
@@ -370,43 +453,6 @@ class World:
         if n != 1:
             raise SystemExit("could not set limits.wall_ms in the copy of world.kvx")
         wk.write_text(w)
-        # The shipped adapters speak the stub wire protocol; only the network probe is added,
-        # called first thing in publish.delete.
-        report = self.scratch / f"probe-{name}.txt"
-        pl = src / "adapters/publish/live.py"
-        t = pl.read_text()
-        anchor = "\n\ndef delete(gateway: Any, post_id: str) -> None:\n"
-        if t.count(anchor) != 1:
-            raise SystemExit("could not place the network probe in adapters/publish/live.py")
-        t = t.replace(
-            anchor, "\n\n" + probe_code(probe_port, report).rstrip("\n") + "\n" + anchor, 1
-        )
-        t = re.sub(
-            r"(def delete\(gateway: Any, post_id: str\) -> None:\n(?:\s+\"\"\".*?\"\"\"\n)?)",
-            r"\1    _probe_network()\n",
-            t,
-            count=1,
-            flags=re.S,
-        )
-        pl.write_text(t)
-        lib = src / "lib/world.py"
-        s = lib.read_text()
-        old = "\n\ndef version(state: Any) -> str:"
-        if s.count(old) != 1:
-            raise SystemExit("could not place the network probe in lib/world.py")
-        s = s.replace(
-            old,
-            LIB_PROBE.replace("__PROBE_CODE__", probe_code(probe_port, report)),
-            1,
-        )
-        s = re.sub(
-            r"(def version\(state: Any\) -> str:\n(?:\s+\"\"\".*?\"\"\"\n)?)",
-            r"\1    _probe_network()\n",
-            s,
-            count=1,
-            flags=re.S,
-        )
-        lib.write_text(s)
         # The undeclared-status fallback is a contract rule (world-source.md section 7).
         kvx = src / "adapters/publish.kvx"
         k = kvx.read_text()
@@ -455,8 +501,8 @@ class World:
         rep = json.loads(p.stdout) if p.stdout.strip().startswith("{") else {}
         return p.returncode, rep, p.stderr
 
-    def build(self, probe_port: int) -> Path:
-        src = self.prepare(probe_port)
+    def build(self) -> Path:
+        src = self.prepare()
         self.src = src
         rc, rep, err = self.compile(src)
         b = rep.get("build") or {}
@@ -998,8 +1044,10 @@ def failure_paths(
         and vias["p_ratelimited"] == "service"
         and vias["p_repeat_rl"] == "service"
         and sent_bodies(k5) == 2
-        and "stored first outcome" not in outcomes["p_repeat_rl"].get("detail", ""),
-        f"a RATE_LIMITED outcome is not stored as the key's outcome (the service declined to process it): the identical repeat was sent to the service again "
+        and "stored first outcome" not in outcomes["p_repeat_rl"].get("detail", "")
+        and deviation_recorded(),
+        f"a RATE_LIMITED outcome is not stored as the key's outcome (the service declined to process it; recorded deviation from kernel.md section 7 "
+        f"in spec/cwr/qualification.kvx [{DEVIATION}]: {deviation_recorded()}): the identical repeat was sent to the service again "
         f"(via {vias['p_repeat_rl']}, k5 sent {sent_bodies(k5)} times, answered {code(outcomes['p_repeat_rl'])} by the stub's own window)",
     )
     dto = outcomes["p_dup_after_timeout"].get("detail", "")
@@ -1084,7 +1132,8 @@ def failure_paths(
         code(outcomes["del_ok"]) is None
         and outcomes.get("version") is not None
         and probe.count == 0,
-        f"adapters/publish/live.py (publish.delete) and lib/world.py (world.version) both tried to connect to a probe listener from inside the kernel; it saw {probe.count} connections",
+        f"adapters/publish/live.py (publish.delete) and lib/world.py (world.version) of the test-only Build both tried to connect to a probe listener from inside the kernel; "
+        f"it saw {probe.count} connections (probe reports: {probe_report(world.scratch / 'probe-kernel.txt')})",
     )
     R.check(
         "7.1",
@@ -1456,11 +1505,47 @@ def modes(world: World, build: Path, stubs: dict[str, Stub], scratch: Path) -> N
     )
 
 
+def runtime_seal(world: World, clean: Path, probe: Listener) -> None:
+    """7.1 at run time: lib/ and adapter code that try the network from inside the kernel never reach
+    it. The loud test-only Build raises the probe's notes after both attempts, so the defect proves the
+    probe ran to its end; strace shows each attempted connect() to the probe port failing."""
+    dest = world.scratch / "builds-probed-loud"
+    dest.mkdir()
+    build, _ = probed_build(clean, dest, probe.port, world.scratch / "probe-loud.txt", loud=True)
+    iid = world.create(build, 31)
+    before = probe.count
+    trace = world.scratch / "strace-runtime-probe.txt"
+    calls = [("del", "publish.delete", {"post_id": "post_probe"}), ("v", "world.version", {})]
+    _rc, env, _err, _ = world.turn(iid, script(calls), strace_out=trace)
+    o = (env or {}).get("returned") or {}
+    vd = (o.get("v") or {}).get("detail") or ""
+    notes = vd.split("probe-notes: ", 1)[1].split() if "probe-notes: " in vd else []
+    lines = trace.read_text().splitlines() if trace.exists() else []
+    attempts = [ln for ln in lines if "connect(" in ln and f"htons({probe.port})" in ln]
+    connected = [ln for ln in attempts if re.search(r"\) = 0$", ln)]
+    recs = {r["primitive"]: r for r in world.ledger(iid) if r.get("primitive") in ENDPOINT_PATHS}
+    del_rec = recs.get("publish.delete") or {}
+    R.check(
+        "7.1",
+        code(o.get("v")) == "INVARIANT_VIOLATION"
+        and bool(notes)
+        and "socket=connected" not in notes
+        and code(o.get("del")) == "INVARIANT_VIOLATION"
+        and (del_rec.get("gateway") or {}).get("via") == "none"
+        and len(attempts) >= 4
+        and not connected
+        and probe.count == before,
+        f"the probe ran to its end inside the kernel in lib/world.py (world.version defect: {notes}) and in adapters/publish/live.py "
+        f"(publish.delete INVARIANT_VIOLATION from the raised notes, nothing sent: via {(del_rec.get('gateway') or {}).get('via')}); "
+        f"strace saw {len(attempts)} connect() calls to the probe port from the kernel's process tree (direct sockets and fork_exec children), "
+        f"{len(connected)} succeeded, and the listener counted {probe.count - before} connections",
+    )
+
+
 def compile_time(world: World, build: Path, probe: Listener) -> None:
     """7.1 at build time and 7.2 compiler/gateway agreement on the contract's undeclared_status."""
     tests = json.loads((build / "tests.json").read_text())
     cases = tests.get("cases", [])
-    ran = {c["target"] for c in cases if c.get("passed")}
     und = [
         c
         for c in cases
@@ -1471,7 +1556,7 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
         len(und) == 1 and und[0].get("got") == "INVALID" and und[0].get("passed") is True,
         f"the compiler's contract tests map an undeclared status (418) of publish.post to the contract's undeclared_status: case undeclared_status got {und[0].get('got') if und else None}",
     )
-    neg_src = world.prepare(probe.port, "src-neg-expect", undeclared_expect="UNAVAILABLE")
+    neg_src = world.prepare("src-neg-expect", undeclared_expect="UNAVAILABLE")
     rc, rep_, _ = world.compile(neg_src, "builds-neg")
     msgs = diagnostics(rep_)
     hit = [m for m in msgs if "undeclared_status" in m and "INVALID" in m]
@@ -1480,7 +1565,7 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
         rc != 0 and not (rep_.get("build") or {}).get("dir") and bool(hit),
         f"negative control: the same world with a fixture expecting UNAVAILABLE for that status is refused by cwr build (exit {rc}: {hit[0][:110] if hit else msgs[:2]})",
     )
-    neg2 = world.prepare(probe.port, "src-neg-fallback", status_fallback=True)
+    neg2 = world.prepare("src-neg-fallback", status_fallback=True)
     rc2, rep2, _ = world.compile(neg2, "builds-neg2")
     msgs2 = diagnostics(rep2)
     hit2 = [m for m in msgs2 if "undeclared_status" in m and "publish.status" in m]
@@ -1489,23 +1574,9 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
         rc2 != 0 and bool(hit2),
         f"an undeclared_status the adapter does not declare in failures (INVALID on publish.status) is refused at compile time, never patched at runtime (exit {rc2}: {hit2[0][:110] if hit2 else msgs2[:2]})",
     )
-    main_report = probe_report(world.scratch / "probe-src.txt")
-    R.check(
-        "7.1",
-        probe.count == 0
-        and {"world.version", "publish.delete"} <= ran
-        and main_report
-        and all(
-            "socket=PermissionError" in ln and "fork_exec=PermissionError" in ln
-            for ln in main_report
-        ),
-        f"cwr build ran lib/world.py (world.version) and adapters/publish/live.py (publish.delete), both carrying the network probe, in its contract tests "
-        f"({len(cases)} cases, three builds); the probe listener saw {probe.count} connections: the compiler's world-code worker has no network; "
-        f"the probe's {len(main_report)} reports all say the direct socket and the _posixsubprocess.fork_exec child were refused ({main_report[:1]})",
-    )
     # Compile-time closure: the same probe with plain reflective names (`__builtins__`, `vars`) in
     # lib/world.py is refused by cwr build before any world code runs.
-    plain = world.prepare(probe.port, "src-plain-probe")
+    plain = world.prepare("src-plain-probe")
     lw = plain / "lib/world.py"
     lw.write_text(
         lw.read_text().rstrip("\n")
@@ -1523,9 +1594,33 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
         and not probe_report(world.scratch / "probe-plain.txt"),
         f"closure_lint_refuses_probe: lib/world.py carrying the probe with plain reflective names is refused by cwr build (exit {rc4}, {len(msgs4)} diagnostics: {refl[:1]}) and none of it ran",
     )
-    # No bubblewrap (CWR_BWRAP names a missing file): the worker's audit hook plus the kernel's seccomp
-    # network seal, which an escape past the hook (a process spawned without any audit event) would meet.
-    nb = world.prepare(probe.port, "src-no-bwrap")
+    # The same probe reached through `exec` spelled in fullwidth letters, which Python folds to the
+    # builtin `exec` (NFKC identifiers) while a token list would see an unknown name: also refused.
+    nfkc = world.prepare("src-nfkc-probe")
+    lw = nfkc / "lib/world.py"
+    exec_nfkc = "\uff45\uff58\uff45\uff43"
+    impl = probe_impl(probe.port, world.scratch / "probe-nfkc.txt")
+    lw.write_text(
+        lw.read_text().rstrip("\n")
+        + "\n\n\ndef _probe_network() -> None:\n"
+        + "    ns = {}\n"
+        + f"    {exec_nfkc}({impl!r}, ns)\n"
+        + '    ns["_probe_impl"]()\n'
+    )
+    rc5, rep5, _err5 = world.compile(nfkc, "builds-nfkc-probe")
+    msgs5 = diagnostics(rep5)
+    hit5 = [m for m in msgs5 if exec_nfkc in m or "exec" in m]
+    R.check(
+        "7.1",
+        rc5 != 0
+        and not (rep5.get("build") or {}).get("dir")
+        and bool(hit5)
+        and not probe_report(world.scratch / "probe-nfkc.txt"),
+        f"closure_lint_refuses_probe: the probe reached through a fullwidth-spelled exec (NFKC-folded to the builtin) is refused by cwr build too (exit {rc5}: {hit5[:1]}) and none of it ran",
+    )
+    # No bubblewrap (CWR_BWRAP names a missing file): the compiler's world-code worker still runs
+    # under the kernel's seccomp network seal, applied before the worker's exec.
+    nb = world.prepare("src-no-bwrap")
     trace = world.scratch / "strace-build-no-bwrap.txt"
     rc3, _rep3, _err3 = world.compile(
         nb,
@@ -1534,6 +1629,10 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
         strace_out=trace,
     )
     lines = trace.read_text().splitlines() if trace.exists() else []
+
+    def pid_of(ln: str) -> str:
+        return ln.split(None, 1)[0]
+
     bwrap_exec = [
         ln
         for ln in lines
@@ -1542,33 +1641,26 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
     py_exec = [
         ln
         for ln in lines
-        if "execve(" in ln and "python" in ln.split("execve(", 1)[1].split(",", 1)[0]
+        if "execve(" in ln
+        and "python" in ln.split("execve(", 1)[1].split(",", 1)[0]
+        and "= 0" in ln
     ]
-    probe_connects = [ln for ln in lines if "connect(" in ln and f"htons({probe.port})" in ln]
-    sealed = [
-        ln for ln in lines if "PR_SET_SECCOMP" in ln and "SECCOMP_MODE_FILTER" in ln and "= 0" in ln
+    sealed_at: dict[str, int] = {}
+    for n, ln in enumerate(lines):
+        if "PR_SET_SECCOMP" in ln and "SECCOMP_MODE_FILTER" in ln and "= 0" in ln:
+            sealed_at.setdefault(pid_of(ln), n)
+    unsealed = [
+        ln
+        for n, ln in enumerate(lines)
+        if ln in py_exec and not (pid_of(ln) in sealed_at and sealed_at[pid_of(ln)] < n)
     ]
-    nb_report = probe_report(world.scratch / "probe-src-no-bwrap.txt")
-    nb_ok = bool(nb_report) and all(
-        "socket=PermissionError" in ln
-        and "fork_exec=PermissionError" in ln
-        and "Seccomp:2" in ln
-        and "NoNewPrivs:1" in ln
-        for ln in nb_report
-    )
+    connects = [ln for ln in lines if "connect(" in ln and "AF_INET" in ln]
     R.check(
         "7.1",
-        rc3 == 0
-        and lines
-        and not bwrap_exec
-        and py_exec
-        and sealed
-        and nb_ok
-        and not probe_connects
-        and probe.count == 0,
-        f"without bubblewrap the compiler's worker still has no network: cwr build exit {rc3} ran the probed lib/ and live.py through {len(py_exec)} python execs and 0 bwrap execs; "
-        f"strace saw {len(sealed)} successful prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) before the worker's exec, {len(probe_connects)} connect() calls to the probe port, and the listener {probe.count} connections; "
-        f"all {len(nb_report)} probe reports from inside the worker show the socket and the _posixsubprocess.fork_exec child refused and the process under a seccomp filter with no_new_privs ({nb_report[:1]})",
+        rc3 == 0 and lines and not bwrap_exec and py_exec and not unsealed and not connects,
+        f"without bubblewrap the compiler's world-code worker is still sealed: cwr build exit {rc3}, 0 bwrap execs, "
+        f"{len(py_exec)} python worker execs each preceded in its own process by a successful prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) "
+        f"({len(sealed_at)} sealed processes, {len(unsealed)} unsealed execs), {len(connects)} inet connect() calls",
     )
     # The seal itself, without the interpreter guard: processes and grandchildren under it cannot open a socket.
     R.check(
@@ -1662,15 +1754,16 @@ return r
         vias == ["service", "service", "service", "store"]
         and sent == 3
         and o["d4_again"].get("ok") == o["d4_after"].get("ok")
-        and o["d4_after"].get("ok") is not None,
-        f"key adapter: RATE_LIMITED released the key (the service did not process the request), so both repeats were sent (stub saw digest-4 {sent} times; ledger via {vias}); "
+        and o["d4_after"].get("ok") is not None
+        and deviation_recorded(),
+        f"key adapter (recorded deviation [{DEVIATION}]: {deviation_recorded()}): RATE_LIMITED released the key (the service did not process the request), so both repeats were sent (stub saw digest-4 {sent} times; ledger via {vias}); "
         f"the first non-rate-limited outcome is stored and its identical replay returns the same receipt from the store",
     )
 
 
 def retry_ratio(world: World, stubs: dict[str, Stub], probe: Listener) -> None:
     """7.2: RATE_LIMITED retry_after is converted to ticks by the contract's declared retry_after_ratio."""
-    src = world.prepare(probe.port, "src-ratio3", retry_ratio=3)
+    src = world.prepare("src-ratio3", retry_ratio=3)
     rc, rep_, _err = world.compile(src, "builds-ratio3")
     bdir = (rep_.get("build") or {}).get("dir")
     if not R.check(
@@ -1749,7 +1842,7 @@ def gateway_needs(world: World, probe: Listener) -> None:
     ]
     seen = []
     for name, rel, old, new, want in variants:
-        src = world.prepare(probe.port, name)
+        src = world.prepare(name)
         f = src / rel
         t = f.read_text()
         if t.count(old) != 1:
@@ -2103,12 +2196,22 @@ def main() -> int:
         world = World(cwr, scratch)
         probe = Listener()
         decoy = Listener()
-        build = world.build(probe.port)
+        clean = world.build()
         try:
-            compile_time(world, build, probe)
+            compile_time(world, clean, probe)
         except Exception as exc:
             tb = traceback.format_exc().strip().splitlines()
             R.check("7.1", False, f"compile_time raised {exc!r} at {tb[-3:]}")
+        (scratch / "builds-probed").mkdir()
+        build, clean_hash = probed_build(
+            clean, scratch / "builds-probed", probe.port, scratch / "probe-kernel.txt"
+        )
+        R.check(
+            "7.1",
+            clean_hash == clean.name and build.name != clean.name,
+            f"test-only Build: the network probe was placed in the compiled lib/world.py and adapters/publish/live.py and the Build resealed "
+            f"(the hash recomputed here from compiler.md section 7 equals the compiler's for the clean Build: {clean_hash == clean.name}; probed Build sha256:{build.name[:16]}...)",
+        )
         stubs = {
             "search": Stub("search", 7, scratch),
             "publish": Stub("publish", 7, scratch),
@@ -2120,6 +2223,7 @@ def main() -> int:
             "decoy": f"http://127.0.0.1:{decoy.port}",
         }
         for clause, scenario, args in (
+            ("7.1", runtime_seal, (world, clean, probe)),
             ("7.2", failure_paths, (world, build, stubs, probe, decoy)),
             ("7.1", closure_and_endpoints, (world, build, stubs)),
             ("7.5", modes, (world, build, stubs, scratch)),

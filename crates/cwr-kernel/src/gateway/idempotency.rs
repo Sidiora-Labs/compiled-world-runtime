@@ -25,7 +25,8 @@
 //! with a stale rate limit and make `retry_after` meaningless for the key). Releasing the key on
 //! `RATE_LIMITED` departs from the literal text of kernel.md section 7 ("the declared failure the
 //! call produced (a defect releases the key)"), under which a declared `RATE_LIMITED` would be
-//! stored; it is recorded as a deviation of task 2.3. The refworld manual's rate-limit example
+//! stored; it is recorded as deviation `finding.task_2_3_rate_limited_key_release` in
+//! spec/cwr/qualification.kvx. The refworld manual's rate-limit example
 //! (manual/examples.md, repeat `publish.post` under the same key at `retry_at`) and the benchmark's
 //! reference simulator (benchmark/tasks/_authoring/refsim.py) both rely on the release. A `pending` entry
 //! left by a crash is visible through [`KeyStore::pending`] for recovery (task 2.4).

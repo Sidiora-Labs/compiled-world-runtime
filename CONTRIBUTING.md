@@ -141,6 +141,46 @@ A change is ready for review when every item below holds.
 - Documentation states what the software does. A behaviour that is not yet qualified is named as
   such once, in the document's status line.
 
+## Commit and push
+
+Every completed unit of work ends with a commit and a push. Enable the repository hooks once:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The pre-commit hook refuses credential files, hunks that look like a credential value and files
+without the source header. The commit-msg hook enforces the message format:
+
+```
+[spec:cwr/2.4] Recover a killed turn and replay the ledger
+
+Recovery keeps every primitive the ledger committed and discards the one
+in flight; replay rebuilds state from the ledger and cassettes.
+
+Task: 2.4
+Cases: CWR-010
+Verify: python3 tests/cwr/cases/2_4.py (exit 0)
+```
+
+| Rule | Detail |
+|---|---|
+| Scope | `spec:cwr/W.N` for a specification task; `spec:cwr` for the pack; `docs`, `tooling`, `review:<area>`, `suite`, `campaign`, `release`, `chore` |
+| Subject | Imperative, capitalised, 72 characters at most, no final period |
+| Body | What changed and why, wrapped at 72 columns |
+| Trailers | `Task`, `Cases` and `Verify` are required for a `spec:cwr/W.N` scope; a change written by an automated assistant adds `Co-Authored-By` |
+
+Stage explicit paths with `git add <paths>` and commit only the files of the unit you finished.
+Then push:
+
+```sh
+git pull --rebase --autostash origin main && git push origin main
+```
+
+On an index lock or a rejected push, wait and retry. Never force-push.
+`python3 tools/commit_msg.py --example` prints a valid message and
+`python3 tools/commit_msg.py <file>` checks one.
+
 ## Licensing of contributions
 
 CWR is licensed under Sidiora DEV OSS-1.0 (`LicenseRef-Sidiora-DEV-OSS-1.0`). The full text is in

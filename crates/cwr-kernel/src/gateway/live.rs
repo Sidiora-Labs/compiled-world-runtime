@@ -8,7 +8,11 @@
 //!   `stub://<server>/<path>` resolved through the operator's stub map to
 //!   `http://host:port/<path>`. Any other scheme, an unmapped stub server or a malformed endpoint
 //!   is refused as a transport error before any socket exists. One request per call, never a
-//!   retry, under one total host-time deadline of the contract's `timeout_ms`.
+//!   retry, under one total host-time deadline of the contract's `timeout_ms` (shortened to the
+//!   turn's remaining `wall_ms` by the gateway). The deadline covers the address lookup too: a
+//!   host name is resolved on a helper thread the call stops waiting for at the deadline. A
+//!   response larger than [`MAX_RESPONSE_BYTES`] is abandoned as [`RESPONSE_TOO_LARGE`], which the
+//!   gateway normalises to `INVALID`, so a misbehaving service cannot exhaust kernel memory.
 //! * [`AdapterCode`]: the worker that runs the Build's `adapters/<module>/live.py`, the
 //!   gateway-side implementation an author ships per adapter module (world-source.md section 7).
 //!   It runs in the same kind of sandbox as `lib/` (an empty network namespace, a read-only view
@@ -18,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::process::{Child, ChildStdin};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -132,15 +136,27 @@ fn timed_out(e: &std::io::Error) -> bool {
     matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
 }
 
+/// Largest response, head and body, the client reads; past it the response is abandoned.
+pub const MAX_RESPONSE_BYTES: usize = crate::rpc::MAX_FRAME;
+
+/// Transport error reported for a response larger than [`MAX_RESPONSE_BYTES`].
+pub const RESPONSE_TOO_LARGE: &str = "ResponseTooLarge";
+
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Parses a complete or partial response buffer: `Some` once the head and (with a
-/// Content-Length) the whole body have arrived, or at EOF.
-fn parse_response(buf: &[u8], eof: bool) -> Option<Result<RawResponse, String>> {
-    let head_end = find(buf, b"\r\n\r\n")?;
-    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+/// The end of the response head (the offset of `\r\n\r\n`) in `buf`, searching only the bytes
+/// that can complete it after the first `searched` bytes were already searched without a match.
+fn head_end_in(buf: &[u8], searched: usize) -> Option<usize> {
+    let from = searched.saturating_sub(3);
+    find(buf.get(from..)?, b"\r\n\r\n").map(|i| from + i)
+}
+
+/// Parses a complete or partial response buffer whose head ends at `head_end`: `Some` once
+/// (with a Content-Length) the whole body has arrived, or at EOF.
+fn parse_response(buf: &[u8], head_end: usize, eof: bool) -> Option<Result<RawResponse, String>> {
+    let head = String::from_utf8_lossy(buf.get(..head_end)?).to_string();
     let mut lines = head.split("\r\n");
     let status_line = lines.next().unwrap_or("");
     let mut parts = status_line.split_whitespace();
@@ -158,7 +174,8 @@ fn parse_response(buf: &[u8], eof: bool) -> Option<Result<RawResponse, String>> 
             headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    let body = &buf[head_end + 4..];
+    let body = buf.get(head_end + 4..)?;
+
     let length = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
@@ -181,33 +198,50 @@ fn parse_response(buf: &[u8], eof: bool) -> Option<Result<RawResponse, String>> 
     }))
 }
 
+/// The first address of `host:port`. An IP literal needs no lookup; a host name is resolved on a
+/// helper thread and the caller stops waiting at `deadline` (`Err(Timeout)`), so a slow resolver
+/// never stretches the call past its deadline.
+fn lookup(host: &str, port: u16, deadline: &Deadline) -> Result<SocketAddr, RawResponse> {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, port));
+    }
+    let Some(left) = deadline.remaining() else {
+        return Err(RawResponse::Timeout);
+    };
+    let (tx, rx) = mpsc::channel();
+    let name = host.to_string();
+    std::thread::spawn(move || {
+        let first = (name.as_str(), port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut a| a.next());
+        let _ = tx.send(first);
+    });
+    match rx.recv_timeout(left) {
+        Ok(Some(addr)) => Ok(addr),
+        Ok(None) | Err(RecvTimeoutError::Disconnected) => Err(RawResponse::TransportError {
+            error: "gaierror".into(),
+        }),
+        Err(RecvTimeoutError::Timeout) => Err(RawResponse::Timeout),
+    }
+}
+
 /// Sends one POST with `body` to `target` and returns the raw response in cassette form. The
 /// whole exchange (address lookup, connect, send, receive) shares `deadline`; on expiry the
-/// answer is [`RawResponse::Timeout`]. Never retries: a failure is reported, not repeated.
+/// answer is [`RawResponse::Timeout`]. A response above [`MAX_RESPONSE_BYTES`] is a transport
+/// error [`RESPONSE_TOO_LARGE`]. Never retries: a failure is reported, not repeated.
 pub fn post(
     target: &Target,
     body: &[u8],
     headers: &[(&str, String)],
     deadline: &Deadline,
 ) -> RawResponse {
-    let addrs: Vec<_> = match (
-        target.host.trim_start_matches('[').trim_end_matches(']'),
-        target.port,
-    )
-        .to_socket_addrs()
-    {
-        Ok(a) => a.collect(),
-        Err(_) => {
-            return RawResponse::TransportError {
-                error: "gaierror".into(),
-            }
-        }
+    let addr = match lookup(&target.host, target.port, deadline) {
+        Ok(a) => a,
+        Err(r) => return r,
     };
-    let Some(addr) = addrs.first() else {
-        return RawResponse::TransportError {
-            error: "gaierror".into(),
-        };
-    };
+    let addr = &addr;
     let Some(left) = deadline.remaining() else {
         return RawResponse::Timeout;
     };
@@ -243,6 +277,7 @@ pub fn post(
         };
     }
     let mut buf = Vec::new();
+    let mut head_end: Option<usize> = None;
     let mut chunk = [0u8; 8192];
     loop {
         let Some(left) = deadline.remaining() else {
@@ -256,7 +291,12 @@ pub fn post(
                         error: "RemoteDisconnected".into(),
                     };
                 }
-                return match parse_response(&buf, true) {
+                let Some(he) = head_end else {
+                    return RawResponse::TransportError {
+                        error: "IncompleteRead".into(),
+                    };
+                };
+                return match parse_response(&buf, he, true) {
                     Some(Ok(r)) => r,
                     Some(Err(e)) => RawResponse::TransportError { error: e },
                     None => RawResponse::TransportError {
@@ -265,11 +305,22 @@ pub fn post(
                 };
             }
             Ok(n) => {
+                if buf.len() + n > MAX_RESPONSE_BYTES {
+                    return RawResponse::TransportError {
+                        error: RESPONSE_TOO_LARGE.into(),
+                    };
+                }
+                let searched = buf.len();
                 buf.extend_from_slice(&chunk[..n]);
-                match parse_response(&buf, false) {
-                    Some(Ok(r)) => return r,
-                    Some(Err(e)) => return RawResponse::TransportError { error: e },
-                    None => {}
+                if head_end.is_none() {
+                    head_end = head_end_in(&buf, searched);
+                }
+                if let Some(he) = head_end {
+                    match parse_response(&buf, he, false) {
+                        Some(Ok(r)) => return r,
+                        Some(Err(e)) => return RawResponse::TransportError { error: e },
+                        None => {}
+                    }
                 }
             }
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
@@ -606,9 +657,73 @@ mod tests {
         );
     }
 
+    fn parse(buf: &[u8], eof: bool) -> Option<Result<RawResponse, String>> {
+        parse_response(buf, head_end_in(buf, 0)?, eof)
+    }
+
+    #[test]
+    fn head_search_resumes_across_chunks() {
+        let buf = b"HTTP/1.0 200 OK\r\nA: b\r\n\r\n{}";
+        let full = head_end_in(buf, 0).unwrap();
+        for split in 0..buf.len() {
+            let found = head_end_in(&buf[..split], 0).or_else(|| head_end_in(buf, split));
+            assert_eq!(found, Some(full), "split at {split}");
+        }
+    }
+
+    #[test]
+    fn lookup_of_a_literal_needs_no_resolver_and_a_name_obeys_the_deadline() {
+        let d = Deadline::after_ms(1000);
+        assert_eq!(
+            lookup("127.0.0.1", 9, &d).unwrap(),
+            "127.0.0.1:9".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            lookup("[::1]", 9, &d).unwrap(),
+            "[::1]:9".parse::<SocketAddr>().unwrap()
+        );
+        let expired = Deadline::after_ms(1);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            lookup("localhost", 9, &expired).unwrap_err(),
+            RawResponse::Timeout
+        );
+    }
+
+    #[test]
+    fn an_oversized_response_is_abandoned() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let serve = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut req = [0u8; 4096];
+            let _ = s.read(&mut req);
+            let _ = s.write_all(b"HTTP/1.0 200 OK\r\n\r\n");
+            let chunk = vec![b'x'; 1 << 20];
+            for _ in 0..(MAX_RESPONSE_BYTES >> 20) + 1 {
+                if s.write_all(&chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        let t = Target {
+            host: "127.0.0.1".into(),
+            port,
+            path: "/x".into(),
+        };
+        let r = post(&t, b"{}", &[], &Deadline::after_ms(20_000));
+        assert_eq!(
+            r,
+            RawResponse::TransportError {
+                error: RESPONSE_TOO_LARGE.into()
+            }
+        );
+        serve.join().unwrap();
+    }
+
     #[test]
     fn response_parsing() {
-        let r = parse_response(b"HTTP/1.0 429 Too Many\r\nContent-Type: application/json\r\nX-CWR-Retry-After-Ticks: 5\r\nServer: x\r\nContent-Length: 2\r\n\r\n{}", false).unwrap().unwrap();
+        let r = parse(b"HTTP/1.0 429 Too Many\r\nContent-Type: application/json\r\nX-CWR-Retry-After-Ticks: 5\r\nServer: x\r\nContent-Length: 2\r\n\r\n{}", false).unwrap().unwrap();
         match r {
             RawResponse::Http {
                 status,
@@ -622,9 +737,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(
-            parse_response(b"HTTP/1.0 200 OK\r\nContent-Length: 10\r\n\r\n{}", false).is_none()
-        );
+        assert!(parse(b"HTTP/1.0 200 OK\r\nContent-Length: 10\r\n\r\n{}", false).is_none());
     }
 
     #[test]

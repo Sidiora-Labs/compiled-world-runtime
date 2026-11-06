@@ -6,19 +6,28 @@
 //!
 //! The envelope is the one the kernel stored when it ended the previous turn (an executed turn, a
 //! protocol refusal or a turn closed by recovery). It is rendered as one line of canonical JSON with
-//! exactly the six fields `status`, `returned`, `error`, `trace`, `world` and `resources`. Before
-//! rendering it is checked against the ledger: it must belong to the last `turn` record (same turn,
-//! world time and Build), so a context never shows a stale envelope from an abandoned lineage, and
-//! its status and error code must come from the closed sets. There is no envelope before the first
-//! turn; the component is then absent.
+//! exactly the six fields `status`, `returned`, `error`, `trace`, `world` and `resources`.
+//!
+//! [`store`] keeps one envelope per `turn` record, at `envelopes/<chain>.json` keyed by the hex of
+//! the record's chain hash, which is unique to that record in that lineage. [`render`] selects the
+//! envelope of the ledger's last live `turn` record, so after `cwr instance restore` to an earlier
+//! snapshot the context shows the envelope of the restored lineage's last turn, never one from the
+//! abandoned lineage. The selected envelope must agree with its record (turn, world time, Build and
+//! status), and its status and error code must come from the closed sets. When no stored envelope
+//! belongs to the last turn record (a crash between the record and the envelope write, or an
+//! Instance written before per-turn envelopes), the component is absent rather than an error. There
+//! is no envelope before the first turn; the component is then absent too.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cwr_contract::Code;
 use serde_json::Value;
 
 use crate::executor::LAST_ENVELOPE;
-use crate::{canonical_json, io_err, KernelError, Result};
+use crate::{canonical_json, io_err, write_atomic, KernelError, Result};
+
+/// Directory of per-turn envelopes inside an Instance directory.
+pub const ENVELOPES_DIR: &str = "envelopes";
 
 /// The six envelope fields, in canonical (sorted) order.
 pub const FIELDS: [&str; 6] = ["error", "resources", "returned", "status", "trace", "world"];
@@ -86,32 +95,73 @@ pub fn last_turn_record(records: &[Value]) -> Option<&Value> {
     records.iter().rev().find(|r| r["kind"] == "turn")
 }
 
+/// Where the envelope of `turn_record` is kept, or `None` when the record has no valid chain hash.
+pub fn envelope_path(instance_dir: &Path, turn_record: &Value) -> Option<PathBuf> {
+    let chain = turn_record["chain"].as_str()?;
+    let hex = chain.strip_prefix("sha256:").unwrap_or(chain);
+    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(instance_dir.join(ENVELOPES_DIR).join(format!("{hex}.json")))
+}
+
+/// Stores `env` as the envelope of the durable `turn_record`: under [`ENVELOPES_DIR`] keyed by
+/// the record's chain hash, and as the Instance's last result envelope. Both writes are atomic.
+pub fn store(instance_dir: &Path, turn_record: &Value, env: &Value) -> Result<()> {
+    let bytes = format!("{}\n", canonical_json(env));
+    let path = envelope_path(instance_dir, turn_record).ok_or_else(|| {
+        bad(format!(
+            "turn record {} carries no chain hash to key its envelope",
+            turn_record["seq"]
+        ))
+    })?;
+    let dir = instance_dir.join(ENVELOPES_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| io_err("create", &dir, e))?;
+    write_atomic(&path, bytes.as_bytes())?;
+    write_atomic(&instance_dir.join(LAST_ENVELOPE), bytes.as_bytes())
+}
+
+/// Whether `env` belongs to `turn`: same turn, world time, Build and status.
+fn belongs(env: &Value, turn: &Value) -> bool {
+    let w = &env["world"];
+    w["turn"] == turn["turn"]
+        && w["time"] == turn["world_time"]
+        && w["build"] == turn["build"]
+        && env["status"] == turn["status"]
+}
+
+/// Reads and shape-checks one stored envelope; `None` when the file does not exist.
+fn read_envelope(path: &Path) -> Result<Option<Value>> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io_err("read", path, e)),
+    };
+    let env: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| bad(format!("{} is not JSON: {e}", path.display())))?;
+    check_shape(&env)?;
+    Ok(Some(env))
+}
+
 /// The rendered component 4 for an Instance directory and its live ledger records: `None` before
-/// the first turn, otherwise the stored envelope as canonical JSON, checked against the last
-/// `turn` record.
+/// the first turn or when no stored envelope belongs to the last `turn` record, otherwise that
+/// record's envelope as canonical JSON. A stored envelope that is not JSON or not of the envelope
+/// shape is [`KernelError::Corrupt`].
 pub fn render(instance_dir: &Path, records: &[Value]) -> Result<Option<String>> {
     let Some(turn) = last_turn_record(records) else {
         return Ok(None);
     };
-    let path = instance_dir.join(LAST_ENVELOPE);
-    let bytes = std::fs::read(&path).map_err(|e| io_err("read", &path, e))?;
-    let env: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| bad(format!("{} is not JSON: {e}", path.display())))?;
-    check_shape(&env)?;
-    let w = &env["world"];
-    if w["turn"] != turn["turn"] || w["time"] != turn["world_time"] || w["build"] != turn["build"] {
-        return Err(bad(format!(
-            "it belongs to turn {} at world time {} of {}, but the ledger's last turn record is turn {} at world time {} of {}",
-            w["turn"], w["time"], w["build"], turn["turn"], turn["world_time"], turn["build"]
-        )));
+    let candidates = envelope_path(instance_dir, turn)
+        .into_iter()
+        .chain(std::iter::once(instance_dir.join(LAST_ENVELOPE)));
+    for path in candidates {
+        if let Some(env) = read_envelope(&path)? {
+            if belongs(&env, turn) {
+                return Ok(Some(canonical_json(&env)));
+            }
+        }
     }
-    if env["status"] != turn["status"] {
-        return Err(bad(format!(
-            "status {} disagrees with the ledger's turn record status {}",
-            env["status"], turn["status"]
-        )));
-    }
-    Ok(Some(canonical_json(&env)))
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -144,24 +194,46 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let header = json!({"kind": "header", "turn": 0, "world_time": 0, "build": "sha256:b"});
         assert_eq!(render(&dir, std::slice::from_ref(&header)).unwrap(), None);
-        let turn = json!({"kind": "turn", "turn": 1, "world_time": 10, "build": "sha256:b", "status": "ok"});
-        assert!(
-            render(&dir, &[header.clone(), turn.clone()]).is_err(),
-            "missing file"
+        let turn = json!({"kind": "turn", "turn": 1, "world_time": 10, "build": "sha256:b", "status": "ok", "chain": "sha256:aa01"});
+        assert_eq!(
+            render(&dir, &[header.clone(), turn.clone()]).unwrap(),
+            None,
+            "no stored envelope: the component is absent, not an error"
         );
-        std::fs::write(
-            dir.join(LAST_ENVELOPE),
-            canonical_json(&env("ok", Value::Null)),
-        )
-        .unwrap();
+        store(&dir, &turn, &env("ok", Value::Null)).unwrap();
         let r = render(&dir, &[header.clone(), turn.clone()])
             .unwrap()
             .unwrap();
         assert_eq!(r, canonical_json(&env("ok", Value::Null)));
-        let later = json!({"kind": "turn", "turn": 2, "world_time": 20, "build": "sha256:b", "status": "ok"});
+        let later = json!({"kind": "turn", "turn": 2, "world_time": 20, "build": "sha256:b", "status": "ok", "chain": "sha256:bb02"});
+        assert_eq!(
+            render(&dir, &[header.clone(), turn.clone(), later.clone()]).unwrap(),
+            None,
+            "a crash before the envelope of turn 2 was written leaves the component absent"
+        );
+        let mut env2 = env("ok", Value::Null);
+        env2["world"]["turn"] = json!(2);
+        env2["world"]["time"] = json!(20);
+        store(&dir, &later, &env2).unwrap();
+        assert_eq!(
+            render(&dir, &[header.clone(), turn.clone(), later])
+                .unwrap()
+                .unwrap(),
+            canonical_json(&env2)
+        );
+        assert_eq!(
+            render(&dir, &[header.clone(), turn.clone()])
+                .unwrap()
+                .unwrap(),
+            canonical_json(&env("ok", Value::Null)),
+            "after a restore to turn 1 the context shows turn 1's envelope, not the abandoned one"
+        );
+        std::fs::write(dir.join(LAST_ENVELOPE), "not json").unwrap();
+        let p = envelope_path(&dir, &turn).unwrap();
+        std::fs::write(&p, "{}").unwrap();
         assert!(
-            render(&dir, &[header, turn, later]).is_err(),
-            "stale envelope"
+            render(&dir, &[header, turn]).is_err(),
+            "a stored envelope of the wrong shape is corruption"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

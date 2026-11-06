@@ -197,55 +197,76 @@ pub struct KeyStore {
 }
 
 impl KeyStore {
-    /// Opens (creating the directory if needed) the store under `dir`. A torn final line, the
-    /// only damage a crash during an append can leave, is ignored.
+    /// Opens (creating the directory if needed) the store under `dir`. A torn final line (bytes
+    /// after the last newline), the only damage a crash during an append can leave, is cut off
+    /// the file and the file is fsynced before the store accepts appends, so the next event
+    /// starts on a line of its own. Any other unreadable line is an error.
     pub fn open(dir: &Path) -> Result<KeyStore, String> {
         fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        KeyStore::load(dir, true)
+    }
+
+    /// Reads the store under `dir`; with `repair`, a torn final line is also cut off the file.
+    fn load(dir: &Path, repair: bool) -> Result<KeyStore, String> {
         let path = dir.join(STORE_FILE);
         let mut slots = BTreeMap::new();
-        if let Ok(text) = fs::read_to_string(&path) {
-            let lines: Vec<&str> = text.split('\n').collect();
-            for (i, line) in lines.iter().enumerate() {
-                if line.is_empty() {
-                    continue;
+        let raw = match fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let complete = raw.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        if repair && complete < raw.len() {
+            OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .and_then(|f| {
+                    f.set_len(complete as u64)?;
+                    f.sync_all()
+                })
+                .map_err(|e| {
+                    format!("cannot cut the torn final line of {}: {e}", path.display())
+                })?;
+        }
+        let text = std::str::from_utf8(&raw[..complete])
+            .map_err(|e| format!("{} is not UTF-8: {e}", path.display()))?;
+        for (i, line) in text.split('\n').enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(line)
+                .map_err(|e| format!("{} line {}: {e}", path.display(), i + 1))?;
+            let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let k = (s("adapter"), s("key"));
+            match s("event").as_str() {
+                "pending" => {
+                    slots.insert(
+                        k,
+                        Slot::Pending {
+                            payload_hash: s("payload_hash"),
+                            request_hash: s("request_hash"),
+                        },
+                    );
                 }
-                let v: Value = match serde_json::from_str(line) {
-                    Ok(v) => v,
-                    Err(_) if i + 1 == lines.len() => break,
-                    Err(e) => return Err(format!("{} line {}: {e}", path.display(), i + 1)),
-                };
-                let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-                let k = (s("adapter"), s("key"));
-                match s("event").as_str() {
-                    "pending" => {
-                        slots.insert(
-                            k,
-                            Slot::Pending {
-                                payload_hash: s("payload_hash"),
-                                request_hash: s("request_hash"),
-                            },
-                        );
-                    }
-                    "done" => {
-                        slots.insert(
-                            k,
-                            Slot::Done {
-                                payload_hash: s("payload_hash"),
-                                request_hash: s("request_hash"),
-                                outcome: Stored::from_event(&v),
-                            },
-                        );
-                    }
-                    "cleared" => {
-                        slots.remove(&k);
-                    }
-                    other => {
-                        return Err(format!(
-                            "{} line {}: unknown event {other:?}",
-                            path.display(),
-                            i + 1
-                        ))
-                    }
+                "done" => {
+                    slots.insert(
+                        k,
+                        Slot::Done {
+                            payload_hash: s("payload_hash"),
+                            request_hash: s("request_hash"),
+                            outcome: Stored::from_event(&v),
+                        },
+                    );
+                }
+                "cleared" => {
+                    slots.remove(&k);
+                }
+                other => {
+                    return Err(format!(
+                        "{} line {}: unknown event {other:?}",
+                        path.display(),
+                        i + 1
+                    ))
                 }
             }
         }
@@ -354,7 +375,7 @@ impl KeyStore {
     /// store. Used by `cwr instance keys`, which must not write to the Instance it inspects.
     pub fn read(dir: &Path) -> Result<KeyStore, String> {
         if dir.is_dir() {
-            KeyStore::open(dir)
+            KeyStore::load(dir, false)
         } else {
             Ok(KeyStore {
                 path: dir.join(STORE_FILE),
@@ -487,7 +508,7 @@ mod tests {
             .open(d.join(STORE_FILE))
             .unwrap();
         f.write_all(b"{\"event\":\"do").unwrap();
-        let s = KeyStore::open(&d).unwrap();
+        let mut s = KeyStore::open(&d).unwrap();
         assert_eq!(
             s.pending(),
             vec![(
@@ -496,6 +517,15 @@ mod tests {
                 "sha256:r".to_string()
             )]
         );
+        // The torn bytes are gone, so an append after the reopen starts on its own line and every
+        // later open reads the store.
+        s.begin("publish.post", "\"k2\"", "sha256:p2", "sha256:r2")
+            .unwrap();
+        drop(s);
+        let text = fs::read_to_string(d.join(STORE_FILE)).unwrap();
+        assert!(!text.contains("{\"event\":\"do"), "{text}");
+        let s = KeyStore::open(&d).unwrap();
+        assert_eq!(s.pending().len(), 2);
         let _ = fs::remove_dir_all(&d);
     }
 }

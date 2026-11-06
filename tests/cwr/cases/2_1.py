@@ -1039,8 +1039,11 @@ def scenario_snapshots(k: Kernel, base: Path, base_hash: str, work: Path) -> Non
     )
 
 
+# One tail renderer (crates/cwr-kernel/src/surface/tail.rs) for `cwr instance tail` and the context:
+# every line, turn lines included, carries the turn, the world time, the primitive (`turn` or
+# `turn.protocol` on a turn line), the status and the code (model-surface.md section 6, clause 9.4).
 TAIL_RE = re.compile(
-    r"^t(\d+)\s+(?:wt(\d+)\s+(\S+)|turn)\s+(ok|error|partial|drift)(?:\s+([A-Z_]+))?(?:\s+(\w+=\S+))*$"
+    r"^t(\d+)\s+wt(\d+)\s+(\S+)\s+(ok|error|partial|drift)(?:\s+([A-Z_]+))?(?:\s+(\w+=\S+))*$"
 )
 
 
@@ -1062,7 +1065,8 @@ def tail_matches(lines: list[str], records: list[dict], k: int | None) -> list[s
         if r["kind"] == "turn":
             ok = (
                 int(turn) == r["turn"]
-                and wt is None
+                and int(wt) == r["world_time"]
+                and name == (r.get("primitive") or "turn")
                 and status == r["status"]
                 and code == r.get("code")
                 and f"calls={r['calls']}" in line

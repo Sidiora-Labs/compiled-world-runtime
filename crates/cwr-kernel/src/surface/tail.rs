@@ -7,10 +7,11 @@
 //! The tail renders the last K records of kinds `primitive`, `adapter`, `turn`, `drift` and
 //! `proposal`, oldest first, one line each. Every line carries the turn (`t<n>`), the world time
 //! (`wt<n>`), the primitive, the status and, when there is one, the code, so a model can read from
-//! the tail alone when each action happened and how it ended. Primitive, adapter, drift and
-//! proposal lines are the kernel's own rendering ([`crate::ledger::render_line`]). A `turn` line
-//! names `turn`, or the pseudo-primitive of a refused turn (`turn.protocol`), in the primitive
-//! column and adds `calls=<n>`:
+//! the tail alone when each action happened and how it ended. This module is the only tail
+//! renderer: the context ([`super::context`]) and `cwr instance tail` ([`Instance::tail`]) both
+//! use it. A call line adds `retry_after=<n>` and `limit=<name>` when the record carries them. A
+//! `turn` line names `turn`, or the pseudo-primitive of a refused turn (`turn.protocol`), in the
+//! primitive column and adds `calls=<n>`:
 //!
 //! ```text
 //! t37  wt413  fs.delete            ok
@@ -27,8 +28,13 @@
 
 use serde_json::Value;
 
-use crate::ledger::{render_line, TailSize, TAIL_KINDS};
+use crate::ledger::{visible_to_model, TailSize};
+#[cfg(doc)]
+use crate::state::Instance;
 use crate::{KernelError, Result};
+
+/// Record kinds the tail renders (model-surface.md section 6).
+pub const TAIL_KINDS: [&str; 5] = ["primitive", "adapter", "turn", "drift", "proposal"];
 
 /// Width of the primitive column (the name is followed by one space).
 const NAME_WIDTH: usize = 20;
@@ -61,27 +67,59 @@ fn status_code(status: &str, code: Option<&str>, extras: &[String]) -> String {
     s
 }
 
-/// One tail line for `record`, or `None` for kinds the tail omits (header, upgrade, recovery).
+/// One tail line for `record`, or `None` for kinds the tail omits (header, upgrade, recovery)
+/// and for a `drift` record not marked visible (the drift grammar has no visibility key, so
+/// injected drift never reaches the tail; model-surface.md section 8).
 pub fn line(record: &Value) -> Option<String> {
     let kind = record["kind"].as_str()?;
-    if !TAIL_KINDS.contains(&kind) {
+    if !TAIL_KINDS.contains(&kind) || !visible_to_model(record) {
         return None;
-    }
-    if kind != "turn" {
-        return render_line(record);
     }
     let turn = format!("t{}", record["turn"].as_u64()?);
     let wt = format!("wt{}", record["world_time"].as_u64()?);
-    let name = record["primitive"].as_str().unwrap_or("turn");
-    let status = record["status"].as_str()?;
-    let calls: Vec<String> = record["calls"]
-        .as_u64()
-        .map(|n| format!("calls={n}"))
-        .into_iter()
-        .collect();
+    let (name, status, code, extras) = match kind {
+        "turn" => {
+            let calls: Vec<String> = record["calls"]
+                .as_u64()
+                .map(|n| format!("calls={n}"))
+                .into_iter()
+                .collect();
+            (
+                record["primitive"].as_str().unwrap_or("turn"),
+                record["status"].as_str()?,
+                record["code"].as_str(),
+                calls,
+            )
+        }
+        "drift" => (
+            record["primitive"].as_str().unwrap_or("drift"),
+            "drift",
+            None,
+            record["change"]
+                .as_str()
+                .map(|c| vec![c.to_string()])
+                .unwrap_or_default(),
+        ),
+        _ => {
+            let outcome = &record["outcome"];
+            let mut extras = Vec::new();
+            if let Some(n) = record["retry_after"].as_u64() {
+                extras.push(format!("retry_after={n}"));
+            }
+            if let Some(l) = record["limit"].as_str() {
+                extras.push(format!("limit={l}"));
+            }
+            (
+                record["primitive"].as_str().unwrap_or(kind),
+                outcome["status"].as_str().unwrap_or("ok"),
+                outcome["code"].as_str(),
+                extras,
+            )
+        }
+    };
     let rendered = format!(
         "{turn:<3}  {wt:<5}  {name:<NAME_WIDTH$} {}",
-        status_code(status, record["code"].as_str(), &calls)
+        status_code(status, code, &extras)
     );
     Some(rendered.trim_end().to_string())
 }
@@ -142,6 +180,25 @@ t39  wt425  turn.protocol        error  INVALID  calls=0
         let last2 = render(&records, TailSize::Last(2));
         assert_eq!(last2.lines().count(), 2);
         assert!(last2.starts_with("t38  wt415  publish.post"));
+    }
+
+    #[test]
+    fn limits_and_visible_drift_are_rendered_and_hidden_drift_is_not() {
+        let mut limit = prim(4, 40, "world.now", "error", Some("LIMIT"));
+        limit["limit"] = json!("primitive_calls");
+        assert_eq!(
+            line(&limit).unwrap(),
+            "t4   wt40   world.now            error  LIMIT  limit=primitive_calls"
+        );
+        let hidden = json!({"kind": "drift", "turn": 8, "world_time": 70, "primitive": "fs.delete",
+                            "change": "precondition_added", "visible": false});
+        assert_eq!(line(&hidden), None);
+        let mut shown = hidden.clone();
+        shown["visible"] = json!(true);
+        assert_eq!(
+            line(&shown).unwrap(),
+            "t8   wt70   fs.delete            drift  precondition_added"
+        );
     }
 
     #[test]

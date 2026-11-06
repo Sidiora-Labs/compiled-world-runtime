@@ -27,6 +27,15 @@ impl Deadline {
         }
     }
 
+    /// The same deadline, moved earlier to `at` when `at` comes first (the turn's wall-clock
+    /// deadline). [`Deadline::budget_ms`] stays the contract's `timeout_ms`.
+    pub fn capped(self, at: Instant) -> Deadline {
+        Deadline {
+            at: self.at.min(at),
+            budget_ms: self.budget_ms,
+        }
+    }
+
     /// The contract's `timeout_ms` this deadline was made from.
     pub fn budget_ms(&self) -> u64 {
         self.budget_ms

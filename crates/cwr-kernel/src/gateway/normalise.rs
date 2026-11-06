@@ -258,9 +258,20 @@ pub fn normalise(rules: &Rules, raw: Option<&RawResponse>) -> Normalised {
                 "no response within the contract's timeout_ms of host time",
             )
         }
+        Some(RawResponse::TransportError { error }) if error == super::live::RESPONSE_TOO_LARGE => {
+            return rules.fail(
+                Code::Invalid,
+                None,
+                format!(
+                    "the response exceeded {} bytes and was abandoned: malformed response",
+                    super::live::MAX_RESPONSE_BYTES
+                ),
+            )
+        }
         Some(RawResponse::TransportError { error }) => {
             return rules.fail(Code::Unavailable, None, format!("transport error: {error}"))
         }
+
         Some(RawResponse::Http {
             status,
             headers,

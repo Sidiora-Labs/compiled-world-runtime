@@ -8,15 +8,20 @@
       independent checker (`tests/cwr/check_evidence.py --status CWR-NNN`) from accepted case-scope
       attempt records in the hash-chained attempt index; component (task-scope) records never count.
       Closure is refused, and every blocking item listed, when any case is missing (UNRUN), not PASS,
-      tampered (the checker reports damage), zero-assertion, stale-Build (a PASS whose Build came from
-      a compiler, kernel or SDK revision that is no longer the current tree) or disagrees with the
-      registry; when a clause maps to no PASS case; when a hypothesis report or its pre-registration
+      tampered (the checker reports damage), zero-assertion, stale (a PASS recorded from a product,
+      compiler, kernel, SDK or, for integration and campaign cases, harness revision that is no longer
+      the current tree; a PASS judged by a checker revision that is no longer current; for CWR-019,
+      which qualifies the checker rather than the product, a registry or schema that changed since; a
+      record the checker reports stale) or disagrees with
+      the registry; when a clause maps to no PASS case; when a hypothesis report or its pre-registration
       is missing; or when owner acceptance is not recorded. Exit 0 ACCEPTED, 1 REFUSED, 2 unusable.
 
   python3 tests/cwr/closure.py --run [--case CWR-NNN ...] [--timeout S]
       Run tests/cwr/qualify.py --case for every case (or the named ones) in order, so every task
       driver runs fresh and every outcome becomes an immutable attempt record. Writes the run log
       tests/cwr/evidence/closure/run-<UTC>.json. Exit 0 when every case was attempted, 1 otherwise.
+      Each qualify.py run leads its own process group, which is reaped on exit, on an interrupt and
+      on SIGTERM, so no driver child outlives the run.
 
   python3 tests/cwr/closure.py --apply [--since SEQ] [--run-log FILE]
       Update spec/cwr/spec.kvx from registry outcomes only: meta status in_progress and stage
@@ -56,6 +61,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import runner_support  # noqa: E402  tests/cwr/runner_support.py, importable after the insert above
+
 DEFAULT_ROOT = HERE.parents[1]
 SPEC_REL = "spec/cwr/spec.kvx"
 QUAL_REL = "spec/cwr/qualification.kvx"
@@ -72,11 +81,11 @@ DEFAULT_REPORTS = {
     "H3": "research/h3-long-context.md",
     "H4": "research/h4-controlled-change.md",
 }
-REVISION_TREES = {
-    "compiler_revision": "crates/cwr-compiler",
-    "kernel_revision": "crates/cwr-kernel",
-    "sdk_revision": "sdk/python/cwr",
-}
+SCHEMA_REL = "tests/cwr/evidence.schema.json"
+# The case whose oracle is built into the checker: its evidence also depends on the registry and schema.
+SELF_CASE = "CWR-019"
+RUNNER_META_KEYS = {"index_length", "index_head"}
+RUNNER_CASE_KEYS = {"status", "evidence"}
 SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
 CASE_RE = re.compile(r"^CWR-\d{3}$")
 ACCEPTANCE = "progress.owner_acceptance"
@@ -155,19 +164,38 @@ def read_kvx(root: Path, rel: str) -> dict:
     return parse_kvx(path.read_text(), rel)
 
 
-def tree_digest(directory: Path) -> str | None:
-    """The source-tree digest tests/cwr/qualify.py records as a revision (same algorithm)."""
-    if not directory.is_dir():
-        return None
-    digest = hashlib.sha256()
-    for path in sorted(directory.rglob("*")):
-        rel = path.relative_to(directory)
-        if not path.is_file() or {"target", "__pycache__", ".git"} & set(rel.parts):
-            continue
-        digest.update(
-            str(rel.as_posix()).encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest()
-        )
-    return "sha256:" + digest.hexdigest()
+def file_digest(path: Path) -> str | None:
+    return sha256_bytes(path.read_bytes()) if path.is_file() else None
+
+
+def case_registry_digest(registry: dict, case_id: str) -> str:
+    """The registry digest a record pins (the same definition as qualify.py and check_evidence.py)."""
+    meta = {k: v for k, v in registry.get("meta", {}).items() if k not in RUNNER_META_KEYS}
+    case = {
+        k: v for k, v in registry.get(f"case.{case_id}", {}).items() if k not in RUNNER_CASE_KEYS
+    }
+    return sha256_bytes(
+        json.dumps({"case": case, "meta": meta}, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def stale_items(root: Path, registry: dict, ident: str, tier, record: dict, current: dict) -> list:
+    """Why a PASS record no longer describes the current tree, checker, registry or schema."""
+    items = []
+    # CWR-019 qualifies the checker, not the product: its basis is the checker, registry and schema
+    compared = () if ident == SELF_CASE else runner_support.compared_revisions(tier)
+    changed = [key for key in compared if record.get(key) != current.get(key)]
+    if changed:
+        items.append(f"recorded {', '.join(changed)} differ from the current tree")
+    checker = record.get("checker") if isinstance(record.get("checker"), dict) else {}
+    if checker.get("revision") != file_digest(root / CHECKER_REL):
+        items.append("judged by a checker revision that is no longer tests/cwr/check_evidence.py")
+    if ident == SELF_CASE:
+        if record.get("registry_sha256") != case_registry_digest(registry, ident):
+            items.append(f"the registry entry of {ident} changed since the record was written")
+        if record.get("schema_sha256") != file_digest(root / SCHEMA_REL):
+            items.append("the evidence schema changed since the record was written")
+    return items
 
 
 def clean_env() -> dict:
@@ -310,7 +338,7 @@ def assemble(root: Path) -> dict:
         blocking.append(
             f"registry cases {sorted(registry_cases)} differ from spec cases {sorted(spec_cases)}"
         )
-    current = {key: tree_digest(root / rel) for key, rel in REVISION_TREES.items()}
+    current = runner_support.revisions(root)
     cases: list[dict] = []
     pass_builds: set[str] = set()
     for ident in sorted(spec_cases, key=case_key):
@@ -322,6 +350,18 @@ def assemble(root: Path) -> dict:
         if derived.get("integrity_errors"):
             items.append(
                 "tampered or damaged evidence: " + "; ".join(derived["integrity_errors"][:3])
+            )
+        elif derived.get("evidence_stale"):
+            reasons = next(
+                (
+                    s.get("reasons", [])
+                    for s in derived.get("stale_records") or []
+                    if s.get("record") == evidence
+                ),
+                [],
+            )
+            items.append(
+                f"stale evidence: {evidence} must be qualified again: " + "; ".join(reasons[:2])
             )
         elif status == "UNRUN":
             components = derived.get("component_records") or []
@@ -343,8 +383,10 @@ def assemble(root: Path) -> dict:
                 f"unresolved required failure: {status} in {evidence}"
                 + (f" ({reason})" if reason else "")
             )
-        if derived.get("integrity_errors") == [] and (
-            (entry.get("status"), entry.get("evidence")) != (status, evidence)
+        if (
+            derived.get("integrity_errors") == []
+            and not derived.get("evidence_stale")
+            and ((entry.get("status"), entry.get("evidence")) != (status, evidence))
         ):
             items.append(
                 f"registry records {entry.get('status')} from {entry.get('evidence')} but the "
@@ -357,19 +399,21 @@ def assemble(root: Path) -> dict:
                 if not record.get("observed"):
                     items.append(f"zero-assertion evidence: {evidence} observed no assertion")
                 builds = [b for b in (record.get("builds") or []) if isinstance(b, str)]
-                if builds:
-                    stale = [
-                        key
-                        for key in REVISION_TREES
-                        if record.get(key) is not None and record.get(key) != current[key]
-                    ]
-                    if stale:
-                        items.append(
-                            f"stale-Build evidence: {evidence} used Build(s) {builds} from "
-                            f"{', '.join(stale)} that differ from the current tree"
+                stale = stale_items(
+                    root, registry, ident, spec_cases[ident].get("tier"), record, current
+                )
+                if stale:
+                    items.append(
+                        (
+                            f"stale-Build evidence: {evidence} used Build(s) {builds}"
+                            if builds
+                            else f"stale evidence: {evidence}"
                         )
-                    else:
-                        pass_builds.update(builds)
+                        + ": "
+                        + "; ".join(stale)
+                    )
+                else:
+                    pass_builds.update(builds)
         cases.append(
             {
                 "case": ident,
@@ -501,8 +545,9 @@ def run_all(root: Path, cases: list[str], timeout: float) -> tuple[Path, dict]:
             "--timeout",
             str(timeout),
         ]
-        process = subprocess.run(
-            command, cwd=root, capture_output=True, text=True, env=dict(os.environ)
+        # qualify.py leads its own process group; the group is reaped however the run ends
+        process = runner_support.run_group(
+            command, cwd=root, env=dict(os.environ), timeout=None, text=True
         )
         out = log_dir / f"{case}.log"
         out.write_text(
@@ -632,6 +677,9 @@ def apply(root: Path, since: int, run_log: Path | None) -> dict:
                 f"{case}: the evidence store is damaged; statuses are not applied: "
                 + "; ".join(result["integrity_errors"][:2])
             )
+        if result.get("status") is None:
+            # stale evidence: no outcome is derivable under the current inputs until it is re-run
+            result = dict(result, status="UNRUN")
         derived[case] = result
     entries = [e for e in read_index(root) if isinstance(e.get("seq"), int) and e["seq"] >= since]
     latest: dict[str, tuple[dict, dict, dict]] = {}
@@ -792,7 +840,7 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
     """Build refworld, create an Instance, run a long task, upgrade across U1 and replay, all with
     the real cwr CLI. Each step records its command and exit code; a failed step stops the rest."""
     work = Path(tempfile.mkdtemp(prefix="cwr-journey-"))
-    home, builds_dir = work / "home", work / "builds"
+    home, builds_dir, pair_dir = work / "home", work / "builds", work / "pair-builds"
     steps: list[dict] = []
     hashes: dict[str, str] = {}
     state: dict = {}
@@ -819,8 +867,8 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
         steps.append(entry)
         return entry.get("exit_code") == 0
 
-    def build(label: str, source: str, previous: str | None = None) -> dict:
-        args = ["build", source, "--out", builds_dir, "--json"]
+    def build(label: str, source: str, out: Path, previous: str | None = None) -> dict:
+        args = ["build", source, "--out", out, "--json"]
         if previous:
             args += ["--previous", previous]
         process = cli(args)
@@ -869,14 +917,31 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
             "stderr_tail": process.stderr.strip()[-400:],
         }
 
+    def accepts_fenced() -> bool:
+        """Whether `cwr instance turn` takes a fenced python block (the turn protocol), probed on a
+        throwaway Instance so the journey Instance runs only the task's own turns."""
+        probe_home = work / "probe"
+        made = cli(["instance", "create", "--home", probe_home, "--build", state["refworld-dir"]])
+        script = work / "probe.txt"
+        script.write_text("```python\nreturn 7\n```\n")
+        process = cli(
+            ["instance", "turn", made.stdout.strip(), "--home", probe_home, "--script", script]
+        )
+        try:
+            envelope = strict_json(process.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return False
+        return envelope.get("status") == "ok" and envelope.get("returned") == 7
+
     def long_task() -> dict:
         solution = load_module(root / "benchmark/solutions" / f"{task}.py", f"solution_{task}")
         generator = solution.turns()
         body, envelopes = next(generator), []
         cassette = work / "cassette.jsonl"
+        fenced = accepts_fenced()
         while True:
             script = work / f"turn-{len(envelopes) + 1}.txt"
-            script.write_text(body)
+            script.write_text(f"```python\n{body}```\n" if fenced else body)
             process = cli(
                 [
                     "instance",
@@ -908,6 +973,8 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
             except StopIteration:
                 break
         state["cassette"] = cassette
+        # the pre-upgrade Instance directory (ledger, scripts, objects) is what the replay reproduces
+        shutil.copytree(home / "instances" / state["id"], work / "pre-upgrade")
         kernel_state = cli(["instance", "state", state["id"], "--home", home])
         directory = home / "instances" / state["id"]
         ledger = common.load_ledger(directory / "ledger.jsonl")
@@ -936,6 +1003,8 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
                 home,
                 "--builds",
                 builds_dir,
+                "--builds",
+                pair_dir,
             ]
         )
         return {
@@ -949,33 +1018,31 @@ def journey(root: Path, cwr: Path) -> tuple[dict, int]:
             [
                 "instance",
                 "replay",
-                state["id"],
-                "--home",
-                home,
+                work / "pre-upgrade" / "ledger.jsonl",
                 "--builds",
                 builds_dir,
                 "--cassette",
                 state["cassette"],
-                "--initial",
-                state["initial"],
+                "--into-home",
+                work / "replay-home",
             ]
         )
         return {
-            "command": "cwr instance replay <id> --cassette <journey cassette> --initial <state>",
+            "command": ("cwr instance replay <pre-upgrade ledger> --cassette <journey cassette>"),
             "exit_code": process.returncode,
             "stderr_tail": (process.stdout + process.stderr).strip()[-400:],
         }
 
-    step("build refworld", lambda: build("refworld", "examples/refworld"))
+    step("build refworld", lambda: build("refworld", "examples/refworld", builds_dir))
     step("create Instance", create)
     step(f"run long task {task}", long_task)
-    step("build U1 side A", lambda: build("U1-A", "examples/refworld-upgrades/U1/A"))
+    step("build U1 side A", lambda: build("U1-A", "examples/refworld-upgrades/U1/A", pair_dir))
     step(
         "build U1 side B",
-        lambda: build("U1-B", "examples/refworld-upgrades/U1/B", hashes.get("U1-A")),
+        lambda: build("U1-B", "examples/refworld-upgrades/U1/B", pair_dir, hashes.get("U1-A")),
     )
     step("upgrade across U1", upgrade)
-    step("replay", replay)
+    step("replay the pre-upgrade ledger", replay)
     shutil.rmtree(work, ignore_errors=True)
     complete = all(s.get("exit_code") == 0 for s in steps)
     result = {
@@ -995,7 +1062,7 @@ def record_journey(root: Path, result: dict) -> None:
     )
     fields = {
         "revision": "compiler {compiler_revision}; kernel {kernel_revision}; sdk {sdk_revision}".format(
-            **{k: tree_digest(root / rel) for k, rel in REVISION_TREES.items()}
+            **runner_support.revisions(root)
         ),
         "command": "python3 tests/cwr/closure.py --journey",
         "exit_code": 0 if result["complete"] else 1,
@@ -1059,6 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cwr", help="with --journey: the cwr binary (default: built with cargo)")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    runner_support.raise_on_sigterm()
     try:
         if args.run:
             spec = read_kvx(root, SPEC_REL)

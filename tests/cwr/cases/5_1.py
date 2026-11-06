@@ -48,6 +48,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -129,6 +132,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("5.1", protocol.ok_bad(R))
 
 
 def run(cmd, env: dict | None = None, timeout: int = TIMEOUT, **kw) -> subprocess.CompletedProcess:
@@ -624,15 +628,20 @@ def main() -> int:
         report_path = work / "analysis.json"
         a1 = analyse(work, "--results", work / "results", "--out", report_path)
         report = json.loads(report_path.read_text()) if a1.returncode == 0 else {}
-        check_metrics(work, report, attempts, a1, report_path)
-        check_ledger_only(work, report_path, attempts)
-        check_live_exclusion(work, report, live_dir, report_path)
+        with OBS.observe("CWR-017.a2"):
+            check_metrics(work, report, attempts, a1, report_path)
+        with OBS.observe("CWR-017.a2"):
+            check_ledger_only(work, report_path, attempts)
+        with OBS.observe("CWR-017.a3"):
+            check_live_exclusion(work, report, live_dir, report_path)
     finally:
         if os.environ.get("CWR_KEEP_WORK"):
             print(f"work directory kept: {work}")
         else:
             shutil.rmtree(work, ignore_errors=True)
 
+    OBS.claim("CWR-017.a1", clause="12.1")
+    OBS.emit()
     failed = 0
     for clause in CLAUSES:
         ok, bad = R.ok[clause], R.bad[clause]

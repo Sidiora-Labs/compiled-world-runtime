@@ -50,6 +50,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -78,6 +81,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("4.1", protocol.ok_bad(R))
 
 
 def canonical(value: Any) -> str:
@@ -977,11 +981,17 @@ def main() -> int:
             )
         else:
             contracts = check_world(build, report, rc)
-            check_contract_failures(build, contracts)
-            check_stubs_static(contracts, work, rr)
+            with OBS.observe("CWR-014.a1"):
+                check_contract_failures(build, contracts)
+            with OBS.observe("CWR-014.a2"):
+                check_stubs_static(contracts, work, rr)
 
             frozen: dict = {}
-            paths = check_frozen(frozen)
+            with (
+                OBS.observe("CWR-014.a3", match="cassette_digest"),
+                OBS.observe("CWR-014.a4", match="frozen cassettes|digest .* equals the frozen"),
+            ):
+                paths = check_frozen(frozen)
 
             # A fresh record of the adapters set reproduces the frozen bytes.
             rec = work / "rec"
@@ -1042,15 +1052,25 @@ def main() -> int:
                     r2.returncode == 0,
                     f"fresh adapters set replays offline: {r2.stdout.strip()[-200:]}",
                 )
-                check_scenarios(rec, logs, rep, contracts)
+                with (
+                    OBS.observe("CWR-014.a1", match="reached every declared failure"),
+                    OBS.observe("CWR-014.a2", match="maps to a declared code"),
+                    OBS.observe("CWR-009.a1", match="record mode wrote exactly what the stubs saw"),
+                    OBS.observe(
+                        "CWR-009.a8", match="replay mode reached the same outcome sets offline"
+                    ),
+                ):
+                    check_scenarios(rec, logs, rep, contracts)
             else:
                 R.check("11.5", False, f"record failed: {p.stderr[-800:]}")
 
             if paths:
-                replay_frozen(rr_path, cwr, build, work / "replay-frozen")
+                with OBS.observe("CWR-014.a4"), OBS.observe("CWR-009.a8"):
+                    replay_frozen(rr_path, cwr, build, work / "replay-frozen")
                 content = CASSETTES / "refworld-adapters/content/seed-1.jsonl"
                 check_miss_and_live(rr, cwr, build, work, content)
 
+    OBS.emit()
     failed = 0
     for c in CLAUSES:
         if R.bad[c] or not R.ok[c]:

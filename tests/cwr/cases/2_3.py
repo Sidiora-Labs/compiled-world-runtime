@@ -68,6 +68,9 @@ import traceback
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -107,6 +110,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("2.3", protocol.ok_bad(R))
 
 # Releasing a `key` adapter's key on RATE_LIMITED departs from the literal text of kernel.md section 7
 # (only a defect releases the key); the driver asserts that behaviour only together with this recorded
@@ -2263,6 +2267,14 @@ def main() -> int:
             print(f"scratch kept at {scratch}", file=sys.stderr)
         else:
             shutil.rmtree(scratch, ignore_errors=True)
+    OBS.claim("CWR-009.a2", match="a stub 503 maps only to the declared code UNAVAILABLE")
+    OBS.claim("CWR-009.a3", match="TIMEOUT after .* ms of host time")
+    OBS.claim("CWR-009.a4", match="different payload is DUPLICATE_KEY")
+    OBS.claim("CWR-009.a5", match="identical replay returns the original receipt")
+    OBS.claim("CWR-009.a6", match="malformed body maps to INVALID")
+    OBS.claim("CWR-009.a7", match="world_time advanced by exactly")
+    OBS.claim("CWR-009.a9", match="cassette miss")
+    OBS.emit()
     failed = 0
     for c in CLAUSES:
         if R.bad[c] or not R.ok[c]:

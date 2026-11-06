@@ -12,7 +12,9 @@
 #   subsets                    task id -> the registered component subset that task's driver reports; the
 #                              union covers the inventory; a task-scope PASS never changes the case status
 #   requires_build             true when a PASS must name a registered Build hash
-#   registered_builds          sha256:<64hex> Build hashes a PASS may use; empty until the Builds exist
+#   registered_builds          sha256:<64hex> Build hashes a PASS may use; empty until the Builds exist.
+#                              Added only by `python3 tests/cwr/qualify.py --register-build CWR-NNN <hash>`,
+#                              which refuses a hash with no Build directory whose manifest names it
 #   registered_seeds           seeds a PASS may use; empty means any seed recorded in the ledger header
 #   cassette_digest            registered cassette set digest or null; when set a PASS must match it
 #   status, evidence           UNRUN with evidence null, or the outcome of the latest checker-accepted
@@ -24,8 +26,12 @@
 # index entry, an indexed record that is missing and a rewritten entry are all detected by the checker.
 # Each assertion is recomputed by an independent oracle (built into tests/cwr/check_evidence.py for CWR-019,
 # tests/cwr/oracles/CWR_NNN.py for every other case, added by the task that owns the case); an assertion with
-# no oracle is UNVERIFIED and can never be PASS.
-# Campaign cases also carry matrix (hypothesis -> arms, task count, seeds per task) and
+# no oracle is UNVERIFIED and can never be PASS. A case without its oracle is a recorded deviation in
+# spec/cwr/qualification.kvx ([finding.qualification_oracles_missing]).
+# A record pins registry_sha256 over [meta] without index_length and index_head plus its case section
+# without status and evidence, so recording attempts never makes older records stale.
+# Campaign cases also carry matrix (hypothesis -> arms, task count, seeds per task; an arm matches the ledger
+# header arm H<n>/<arm> compared in lower case with only letters, digits and '-', so K=20 matches H3/k20) and
 # preregistration_digest (null until benchmark/preregistration.kvx is committed); a campaign PASS needs the
 # complete matrix and a matching pre-registration digest.
 # Every experimental arm is a CWR Build with one pillar ablated; nothing here names any other agent or harness.
@@ -33,7 +39,7 @@
 [meta]
 format = "cwr.registry"
 registry_version = 1
-schema_version = 1
+schema_version = 2
 spec = "spec/cwr/spec.kvx"
 schema = "tests/cwr/evidence.schema.json"
 evidence_root = "tests/cwr/evidence"

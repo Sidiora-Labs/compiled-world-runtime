@@ -49,6 +49,9 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -90,8 +93,11 @@ class Results:
         self.passed: dict[str, int] = {k: 0 for k in CLAUSES}
         self.evidence: dict[str, list[str]] = {k: [] for k in CLAUSES}
         self.bad: dict[str, list[str]] = {k: [] for k in CLAUSES}
+        # every check with its label, for the qualification protocol's attribution
+        self.labels: dict[str, list[tuple[bool, str]]] = {k: [] for k in CLAUSES}
 
     def check(self, clause: str, condition, failure: str) -> bool:
+        self.labels[clause].append((bool(condition), failure))
         if condition:
             self.passed[clause] += 1
         else:
@@ -119,6 +125,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("4.2", protocol.pairs(R.labels))
 
 
 def target_dir() -> Path:
@@ -608,6 +615,11 @@ def main() -> int:
     shutil.rmtree(work, ignore_errors=True)
     shutil.rmtree(homes, ignore_errors=True)
     print(f"4_2: {time.monotonic() - started:.0f}s", file=sys.stderr)
+    OBS.claim("CWR-015.a1", match="on two replay runs|predicate false on frozen")
+    OBS.claim("CWR-015.a2", match="primitives, bin|primitive_count|measured bins|: counts \\[")
+    OBS.claim("CWR-015.a3", match="replay differs|predicate true when idle|on two replay runs")
+    OBS.claim("CWR-015.a4", match="predicate audit|common\\.py audit")
+    OBS.emit()
     return R.report()
 
 

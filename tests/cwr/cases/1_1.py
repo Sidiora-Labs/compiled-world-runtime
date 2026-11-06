@@ -41,6 +41,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 REFWORLD = REPO / "examples/refworld"
 PACK_EXAMPLE = REPO / "spec/cwr/examples/refworld"
@@ -99,6 +102,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("1.1", protocol.ok_bad(R))
 TRIGGERED: dict[str, list[str]] = {}
 
 
@@ -1445,13 +1449,24 @@ def main() -> int:
     CWR, tests_ok, tests_evidence = cargo()
     R.check("4.1", tests_ok, f"cargo test -p cwr-compiler: {tests_evidence}")
     try:
-        clean_sources()
-        pack_example()
-        five_seeded_defects()
-        visibility()
+        with OBS.observe("CWR-002.a1"):
+            clean_sources()
+        with OBS.observe("CWR-002.a1"):
+            pack_example()
+        with (
+            OBS.observe("CWR-002.a2", match="hidden precondition|V001 located"),
+            OBS.observe("CWR-002.a3", match="host import"),
+            OBS.observe("CWR-002.a4", match="unknown key|C001 located"),
+            OBS.observe("CWR-002.a5", match="duplicate primitive|C002 names"),
+            OBS.observe("CWR-002.a6", match="missing module"),
+        ):
+            five_seeded_defects()
+        with OBS.observe("CWR-002.a2"):
+            visibility()
         failure_codes()
         closure_layout()
-        imports()
+        with OBS.observe("CWR-002.a3"):
+            imports()
         remaining_codes()
         ordering_and_stopping()
         listed = lint_codes_listed()
@@ -1472,6 +1487,7 @@ def main() -> int:
         if SCRATCH.exists():
             os.chmod(SCRATCH, 0o700)
         shutil.rmtree(SCRATCH, ignore_errors=True)
+    OBS.emit()
     failed = False
     for clause in CLAUSES:
         bad = R.bad[clause]

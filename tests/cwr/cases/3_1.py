@@ -34,6 +34,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -82,6 +85,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("3.1", protocol.ok_bad(R))
 
 
 def run(cmd, **kw) -> subprocess.CompletedProcess:
@@ -1024,10 +1028,21 @@ def main() -> int:
         kern = Kernel(cwr, scratch, stub)
         ctl = kern.build("control", REFWORLD)
         u6b = kern.build("u6b", UPGRADES / "U6/B")
-        contracts = check_manual(ctl, u6b)
+        with OBS.observe("CWR-012.a5"):
+            contracts = check_manual(ctl, u6b)
         check_enforcement(kern, ctl, contracts)
-        ids = main_run(kern, ctl, contracts)
-        check_tail_sizes(kern, ctl, ids)
+        with (
+            OBS.observe("CWR-012.a1", match="start with the Build's manual\\.md byte for byte"),
+            OBS.observe(
+                "CWR-012.a2",
+                "CWR-012.a3",
+                match="protocol-invalid messages refused|no write in any refused message|after each refusal",
+            ),
+            OBS.observe("CWR-012.a4", match="component 4|no context carries|tail line"),
+        ):
+            ids = main_run(kern, ctl, contracts)
+        with OBS.observe("CWR-012.a4", match="each context renders K"):
+            check_tail_sizes(kern, ctl, ids)
         check_notice(kern)
     finally:
         stub.stop()
@@ -1035,6 +1050,7 @@ def main() -> int:
             shutil.rmtree(scratch, ignore_errors=True)
         else:
             print(f"scratch kept at {scratch}", file=sys.stderr)
+    OBS.emit()
     failed = 0
     for c in CLAUSES:
         if R.bad[c] or not R.ok[c]:

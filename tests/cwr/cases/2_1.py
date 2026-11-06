@@ -37,6 +37,9 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE = REPO / "crates/cwr-kernel/tests/fixtures/minbuild"
 CLAUSES = ["1.5", "6.6", "8.1", "8.2", "9.4"]
@@ -84,6 +87,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("2.1", protocol.ok_bad(R))
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -1163,7 +1167,8 @@ def main() -> int:
             + " (tail format equals the model-surface.md section 6 example byte for byte)",
         )
 
-        scenario_clock_and_host_time(k, base, ticks, ticks_hash)
+        with OBS.observe("CWR-006.a3", match="host"):
+            scenario_clock_and_host_time(k, base, ticks, ticks_hash)
         hidden = k.create(ticks_hash, "--seed", "4")
         lh, _ = k.probe(hidden, 'world.history:{"n":5}')
         refused = k("probe", hidden, "world.seed")
@@ -1172,9 +1177,15 @@ def main() -> int:
             "seed" not in lh[0]["returned"][0] and refused.returncode != 0,
             "with rng.seed_visible false world.history hides the header seed and world.seed is not enumerated, so it is refused",
         )
-        scenario_rng(k, base, base_hash)
-        scenario_ledger(k, exe, base, base_hash, xbuild, xflag, tampered, work)
-        scenario_snapshots(k, base, base_hash, work)
+        with OBS.observe("CWR-006.a4"):
+            scenario_rng(k, base, base_hash)
+        with (
+            OBS.observe("CWR-006.a2", match="fsynced|byte prefix|complete records"),
+            OBS.observe("CWR-006.a5", match="truncated"),
+        ):
+            scenario_ledger(k, exe, base, base_hash, xbuild, xflag, tampered, work)
+        with OBS.observe("CWR-006.a1", match="restore|snapshot"):
+            scenario_snapshots(k, base, base_hash, work)
         scenario_tail(k, base_hash)
     except Exception as e:  # a crash is a failure of every clause not yet judged, with the reason
         import traceback
@@ -1188,6 +1199,7 @@ def main() -> int:
                 p.chmod(0o755 if p.is_dir() else 0o644)
         shutil.rmtree(work, ignore_errors=True)
 
+    OBS.emit()
     failed = False
     for c in CLAUSES:
         ok, bad = R.ok[c], R.bad[c]

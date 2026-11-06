@@ -49,6 +49,7 @@ PACK = REPO / "spec/cwr"
 CLOSURE_REL = "tests/cwr/closure.py"
 QUALIFY_REL = "tests/cwr/qualify.py"
 CHECKER_REL = "tests/cwr/check_evidence.py"
+SUPPORT_REL = "tests/cwr/runner_support.py"
 SCHEMA_REL = "tests/cwr/evidence.schema.json"
 REGISTRY_REL = "tests/cwr/registry.kvx"
 INDEX_REL = "tests/cwr/evidence/index.jsonl"
@@ -107,14 +108,17 @@ from pathlib import Path
 CONF = json.loads({conf!r})
 out = Path(os.environ["CWR_EVIDENCE_DIR"])
 cases = [c for c in os.environ.get("CWR_CASES", "").split(",") if c]
+STATE = "sha256:" + "5" * 64
 instances = []
 for case in cases:
     inst_id = "01FX" + CONF["task"].replace(".", "") + case[-3:]
     ledger = out / "ledgers" / (inst_id + ".jsonl")
     ledger.parent.mkdir(parents=True, exist_ok=True)
     base = {{"instance": inst_id, "build": CONF["build"], "experimental": None}}
+    # campaign ledgers carry the harness arm form H<n>/<arm> and the task's initial-state digest
+    arm = "H1/frozen" if case == "CWR-018" else "frozen"
     rows = [dict(base, seq=0, turn=0, world_time=0, kind="header", primitive=None, seed=7, tail_size=20,
-                 arm="frozen", model=CONF["model"]["identity"], created_from=None)]
+                 arm=arm, model=CONF["model"]["identity"], created_from=None, initial_state=STATE)]
     for n in range(1, 4):
         rows.append(dict(base, seq=n, turn=1, world_time=n, kind="primitive", primitive="fs.read",
                          params_hash=None, preconditions=[],
@@ -125,11 +129,11 @@ for case in cases:
     state = out / "state" / (inst_id + ".json")
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({{"fs": {{"/a": "x"}}, "kv": {{}}}}, sort_keys=True) + "\n")
-    entry = {{"id": inst_id, "seed": 7, "tail_size": 20, "arm": "frozen", "case": case,
+    entry = {{"id": inst_id, "seed": 7, "tail_size": 20, "arm": arm, "case": case,
               "build": CONF["build"], "ledger": "ledgers/" + inst_id + ".jsonl",
               "final_state": "state/" + inst_id + ".json"}}
     if case == "CWR-018":
-        entry.update(hypothesis="H1", task="t001")
+        entry.update(hypothesis="H1", task="t001-copy-readme", initial_state_digest=STATE)
     instances.append(entry)
 manifest = {{"build_hash": CONF["build"], "gateway_mode": "replay", "model": CONF["model"],
              "instances": instances}}
@@ -333,24 +337,36 @@ def checkout_closure() -> dict | None:
         f"before={before} after={after}",
     )
     source = (REPO / CLOSURE_REL).read_text()
-    tree = ast.parse(source)
-    imports = {
-        alias.name.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    } | {
-        (node.module or "").split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
-    foreign = sorted(i for i in imports if i not in sys.stdlib_module_names and i != "__future__")
+    support = (REPO / SUPPORT_REL).read_text()
+
+    def imported(text: str) -> set:
+        tree = ast.parse(text)
+        return {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            (node.module or "").split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+
+    # closure may share tests/cwr/runner_support.py with the runner; that module is stdlib-only too
+    foreign = sorted(
+        i
+        for i in imported(source) | imported(support)
+        if i not in sys.stdlib_module_names and i not in ("__future__", "runner_support")
+    )
     R.add(
         ("14.4", "13.1"),
         (),
-        not foreign and "validate_spec" not in source and "authoring-validation" not in source,
-        "closure imports only the standard library and never reads the authoring validator or "
-        "its report",
+        not foreign
+        and all(
+            "validate_spec" not in s and "authoring-validation" not in s for s in (source, support)
+        ),
+        "closure and its runner support module import only the standard library and never read "
+        "the authoring validator or its report",
         f"foreign={foreign}",
     )
     return report
@@ -388,7 +404,7 @@ def build_root(work: Path) -> tuple[Path, dict, str]:
         'assumption = "fixture"\n'
         "product_evidence = false\n"
     )
-    for rel in (QUALIFY_REL, CHECKER_REL, SCHEMA_REL, CLOSURE_REL):
+    for rel in (QUALIFY_REL, CHECKER_REL, SCHEMA_REL, CLOSURE_REL, SUPPORT_REL):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, root / rel)
     for rel in (
@@ -404,6 +420,12 @@ def build_root(work: Path) -> tuple[Path, dict, str]:
     )
     (root / "benchmark").mkdir(parents=True)
     (root / "benchmark/preregistration.kvx").write_text(prereg)
+    # campaign task labels are verified against the suite
+    (root / "benchmark/suite.kvx").write_text(
+        '[task.t001-copy-readme]\nbin = "short"\n'
+        if not (REPO / "benchmark/suite.kvx").is_file()
+        else (REPO / "benchmark/suite.kvx").read_text()
+    )
     prereg_digest = sha_bytes(prereg.encode())
     for n, rel in enumerate(REPORTS, 1):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)

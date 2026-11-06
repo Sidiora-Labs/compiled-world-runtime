@@ -62,6 +62,9 @@ import threading
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 REFWORLD = REPO / "examples/refworld"
 CLAUSES = ["1.4", "2.4", "2.5", "4.5", "4.6", "9.2"]
@@ -109,6 +112,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("1.3", protocol.ok_bad(R))
 SCRATCH = Path(tempfile.mkdtemp(prefix="cwr-1_3-"))
 CWR = Path()
 
@@ -1703,13 +1707,25 @@ def main() -> int:
     ok, ev = cargo()
     CWR = target_dir() / "debug" / "cwr"
     R.check("4.6", ok, ev)
-    a, _b, contracts = check_determinism()
+    with OBS.observe("CWR-005.a1"):
+        a, _b, contracts = check_determinism()
     check_functions_of_contracts(a)
-    check_identity_and_tamper(a)
-    check_manual(a, REFWORLD, contracts)
+    with OBS.observe("CWR-005.a2", match="tamper|modification|fails verification|bytes"):
+        check_identity_and_tamper(a)
+    with (
+        OBS.observe(
+            "CWR-005.a3",
+            match="exactly one manual entry|no manual entry without|content-not-guaranteed|labels the adapter|section 10 indexes",
+        ),
+        OBS.observe(
+            "CWR-005.a4", match="contracts\\.json|manual entry whose signa|exactly one manual entry"
+        ),
+    ):
+        check_manual(a, REFWORLD, contracts)
     check_sdk(a, REFWORLD, contracts)
     check_sdk_files(a, contracts)
     check_kernel_labels(a, contracts)
+    OBS.emit()
     allpass = True
     for c in CLAUSES:
         bad = R.bad[c]

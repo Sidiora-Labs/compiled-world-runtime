@@ -8,6 +8,9 @@
   python3 tests/cwr/qualify.py --task W.N                  component: run one driver, one record per case
                                                            whose registered subsets name the task
   python3 tests/cwr/qualify.py --check-registry            validate the registry against spec.kvx
+  python3 tests/cwr/qualify.py --repair-pin                re-pin the index head after an interrupted append
+  python3 tests/cwr/qualify.py --register-build CWR-NNN sha256:<64hex>
+                                                           register a Build a case's PASS may use
 
 Driver protocol. A task driver is tests/cwr/cases/W_N.py, run as `python3 <driver>` from the repository
 root with these environment variables added:
@@ -16,15 +19,26 @@ root with these environment variables added:
 Its stdout lines
   ASSERT <CWR-NNN.aK> PASS|FAIL [diagnostic]      one observed assertion
   BLOCKED <missing resource>                      the attempt could not run (never lowers a target)
-are the observations; every other line is ignored. A driver that touched Builds or Instances writes
-$CWR_EVIDENCE_DIR/attempt.json:
+are the observations; every other line is ignored. tests/cwr/cases/protocol.py emits both for a
+driver. A driver that touched Builds or Instances writes $CWR_EVIDENCE_DIR/attempt.json:
   {"build_hash", "builds", "experimental_flags", "world": {"name", "version"}, "cassette_digest",
    "gateway_mode", "model": {"identity", "sampling"}, "preregistration_digest", "sandbox",
    "instances": [{"id", "seed", "tail_size", "arm", "hypothesis", "task", "build",
                   "initial_state_digest", "ledger": "<path in CWR_EVIDENCE_DIR>",
                   "final_state": "<path in CWR_EVIDENCE_DIR>" | null, "case": optional CWR-NNN}],
    "final_states": ["<path in CWR_EVIDENCE_DIR>", ...]}       attempt-level final state (no Instance)
-Every key is optional; ledgers and final state must be files inside CWR_EVIDENCE_DIR.
+Every key is optional; ledgers and final state must be regular files inside CWR_EVIDENCE_DIR, never
+symbolic links, and never the runner's own driver.stdout.log, driver.stderr.log or attempt.json.
+experimental_flags carry the flag name the kernel stamps on ledger records, `x-<flag>` (kernel.md
+section 8), never the command line form.
+
+Outcome. FAIL is decided first: any observed FAIL, any FAIL recomputed by the case oracle, a driver
+that timed out, or a driver that exited non-zero without reporting BLOCKED. BLOCKED only when every
+observation passed and registered assertions of the blocked driver are missing. Otherwise PASS when
+the inventory is complete and every recomputed assertion passed, FAIL in any other case.
+
+Copied driver logs and attempt.json have the repository root and home directory replaced by
+<repo> and <home> before they are hashed; a record names no host.
 
 For each case the runner reserves tests/cwr/evidence/<case>/<timestamp>-<n>/ with an exclusive mkdir,
 where <timestamp> is the attempt's UTC start second (it cannot be chosen), copies the driver logs and
@@ -40,7 +54,13 @@ tests/cwr/evidence/index.jsonl (seq, prev = sha256 of the previous line, record 
 case, scope, task, outcome, accepted, appended_at), and the new head and length are pinned in the
 registry's [meta] index_head and index_length. The index order is the attempt order. Only a
 checker-accepted case-scope record updates the case's status and evidence in registry.kvx; a
-task-scope (component) record never changes a case status.
+task-scope (component) record never changes a case status. If the runner stops after an index append
+and before the re-pin, every later run is refused until `--repair-pin` re-pins the tail; it accepts
+only entries that chain correctly from the pinned head and whose records exist with the indexed sha256.
+
+`--register-build` adds a Build hash to a case's registered_builds under the same lock. It refuses a
+hash whose Build directory (build/<hex>, xbuild/<hex> or any directory below build/ and xbuild/
+named by the hash) is missing or whose manifest.kvx names a different hash.
 
 Exit codes: 0 PASS, 1 FAIL, 3 BLOCKED, 2 refused (invalid registry, unknown case or task, missing
 driver, no registered inventory), 4 the checker rejected the record as written.
@@ -57,6 +77,7 @@ import platform
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -65,6 +86,10 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import runner_support  # noqa: E402  tests/cwr/runner_support.py, importable after the insert above
+
 CHECKER = HERE / "check_evidence.py"
 DEFAULT_ROOT = HERE.parents[1]
 REGISTRY_REL = "tests/cwr/registry.kvx"
@@ -72,17 +97,18 @@ SPEC_REL = "spec/cwr/spec.kvx"
 EVIDENCE_REL = "tests/cwr/evidence"
 INDEX_REL = "tests/cwr/evidence/index.jsonl"
 GENESIS = "sha256:" + "0" * 64
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SCHEMA_REL = "tests/cwr/evidence.schema.json"
 TIERS = {"component", "integration", "campaign", "release"}
 STATUSES = {"UNRUN", "PASS", "FAIL", "BLOCKED"}
 ASSERT_LINE = re.compile(r"^ASSERT (\S+) (PASS|FAIL)(?: (.*))?$")
 BLOCKED_LINE = re.compile(r"^BLOCKED (\S.*)$")
 SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
-REVISION_TREES = {
-    "compiler_revision": "crates/cwr-compiler",
-    "kernel_revision": "crates/cwr-kernel",
-    "sdk_revision": "sdk/python/cwr",
-}
+FLAG = re.compile(r"^x-[a-z][a-z-]*$")
+CASE_ID = re.compile(r"^CWR-\d{3}$")
+RESERVED = {"driver.stdout.log", "driver.stderr.log", "attempt.json"}
+RUNNER_META_KEYS = {"index_length", "index_head"}
+RUNNER_CASE_KEYS = {"status", "evidence"}
 EXIT = {"PASS": 0, "FAIL": 1, "BLOCKED": 3}
 
 
@@ -110,19 +136,25 @@ def sha256_file(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-def tree_digest(directory: Path) -> str | None:
-    """Content digest of a source tree (path and bytes of every file), or None when absent."""
-    if not directory.is_dir():
-        return None
-    digest = hashlib.sha256()
-    for path in sorted(directory.rglob("*")):
-        rel = path.relative_to(directory)
-        if not path.is_file() or {"target", "__pycache__", ".git"} & set(rel.parts):
-            continue
-        digest.update(
-            str(rel.as_posix()).encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest()
-        )
-    return "sha256:" + digest.hexdigest()
+def case_registry_digest(sections: dict, case_id: str) -> str:
+    """What a record pins as registry_sha256: the [meta] section without the index pin and the case's
+    own section without the runner-maintained status and evidence, as canonical JSON. Appending to the
+    index or recording another attempt never changes it; changing what the case requires does."""
+    meta = {k: v for k, v in sections.get("meta", {}).items() if k not in RUNNER_META_KEYS}
+    case = {
+        k: v for k, v in sections.get(f"case.{case_id}", {}).items() if k not in RUNNER_CASE_KEYS
+    }
+    return sha256_bytes(
+        json.dumps({"case": case, "meta": meta}, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def scrub(data: bytes, root: Path) -> bytes:
+    """Replace the repository root and the home directory in copied text by <repo> and <home>."""
+    for path, label in ((str(root), b"<repo>"), (str(Path.home()), b"<home>")):
+        if len(path) > 1:
+            data = re.sub(re.escape(path.encode()) + rb"(?![A-Za-z0-9_.-])", label, data)
+    return data
 
 
 def attempt_digest(directory: Path) -> str:
@@ -187,7 +219,6 @@ class Registry:
         if not self.path.is_file():
             raise RefusedError(f"registry missing: {REGISTRY_REL}")
         self.text = self.path.read_text()
-        self.sha256 = sha256_bytes(self.text.encode())
         self.sections = parse_kvx(self.text, REGISTRY_REL)
         self.meta = self.sections.get("meta", {})
         self.cases = {k[5:]: v for k, v in self.sections.items() if k.startswith("case.")}
@@ -206,7 +237,8 @@ class Registry:
             or self.meta.get("schema_version") != SCHEMA_VERSION
         ):
             errors.append(
-                "registry meta must declare format cwr.registry, registry_version and schema_version 1"
+                "registry meta must declare format cwr.registry, registry_version and "
+                f"schema_version {SCHEMA_VERSION}"
             )
         if (
             type(self.meta.get("index_length")) is not int
@@ -298,8 +330,10 @@ class Registry:
                     errors.append(f"{where}: {fld} must be a list")
             if not all(
                 isinstance(b, str) and SHA.match(b) for b in case.get("registered_builds") or []
+            ) or len(set(case.get("registered_builds") or [])) != len(
+                case.get("registered_builds") or []
             ):
-                errors.append(f"{where}: registered_builds must be sha256:<64hex>")
+                errors.append(f"{where}: registered_builds must be distinct sha256:<64hex>")
             if case.get("cassette_digest") is not None and not SHA.match(
                 str(case.get("cassette_digest"))
             ):
@@ -330,9 +364,27 @@ class Registry:
                 hits += 1
         if hits != wanted:
             raise RefusedError(f"registry: cannot locate every line of {updates}")
-        temp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        temp.write_text("".join(lines))
-        os.replace(temp, self.path)
+        durable_replace(self.path, "".join(lines).encode())
+
+
+def durable_replace(path: Path, data: bytes) -> None:
+    """Replace path with data so a crash leaves either the old or the new file, never an empty one:
+    write and fsync a temporary file, rename it over path, then fsync the directory."""
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view) :]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(temp, path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 @contextmanager
@@ -377,11 +429,137 @@ def read_index(root: Path, meta: dict) -> tuple[list[dict], str | None]:
         prev = sha256_bytes(line.encode())
     head = prev if entries else None
     if meta.get("index_length") != len(entries) or meta.get("index_head") != head:
+        hint = (
+            "; if a run stopped after appending, `python3 tests/cwr/qualify.py --repair-pin` "
+            "re-pins a correctly chained tail"
+            if isinstance(meta.get("index_length"), int) and len(entries) > meta["index_length"]
+            else ""
+        )
         raise RefusedError(
             f"{INDEX_REL}: head {head} and length {len(entries)} do not match the registry's pinned "
-            f"index_head {meta.get('index_head')} and index_length {meta.get('index_length')}"
+            f"index_head {meta.get('index_head')} and index_length {meta.get('index_length')}{hint}"
         )
     return entries, head
+
+
+def chained_entries(root: Path) -> list[tuple[dict, str]]:
+    """Every index entry with the sha256 of its line, verifying the chain but not the registry pin."""
+    path = root / INDEX_REL
+    data = path.read_bytes() if path.is_file() else b""
+    if data and not data.endswith(b"\n"):
+        raise RefusedError(f"{INDEX_REL}: the final entry is truncated; repair it by hand")
+    out, prev = [], GENESIS
+    try:
+        lines = data.decode().splitlines()
+    except UnicodeDecodeError as error:
+        raise RefusedError(f"{INDEX_REL}: not UTF-8: {error}") from error
+    for number, line in enumerate(lines):
+        try:
+            entry = strict_json(line)
+        except ValueError as error:
+            raise RefusedError(f"{INDEX_REL}: entry {number} is not JSON: {error}") from error
+        if (
+            not isinstance(entry, dict)
+            or entry.get("seq") != number
+            or entry.get("prev") != prev
+            or line != index_line(entry)
+        ):
+            raise RefusedError(f"{INDEX_REL}: entry {number} breaks the chain")
+        prev = sha256_bytes(line.encode())
+        out.append((entry, prev))
+    return out
+
+
+def repair_pin(root: Path) -> dict:
+    """Re-pin the registry to the index after an interrupted append. Only a tail that chains from the
+    pinned head, whose records exist with the indexed sha256, is accepted; the case status of every
+    accepted case-scope tail entry is applied in index order. The caller holds the index lock."""
+    registry = Registry(root)
+    meta = registry.meta
+    pinned, head = meta.get("index_length"), meta.get("index_head")
+    entries = chained_entries(root)
+    if not isinstance(pinned, int) or pinned < 0 or pinned > len(entries):
+        raise RefusedError(
+            f"the registry pins index_length {pinned!r} but the index holds {len(entries)} entries; "
+            "an entry was removed, which no repair can undo"
+        )
+    if (entries[pinned - 1][1] if pinned else None) != head:
+        raise RefusedError(
+            f"the pinned index_head {head} is not the hash of entry {pinned - 1}; the index was rewritten"
+        )
+    tail = entries[pinned:]
+    updates: dict[str, dict] = {}
+    for entry, _ in tail:
+        rel = entry.get("record")
+        if not isinstance(rel, str) or not re.fullmatch(
+            r"tests/cwr/evidence/CWR-\d{3}/\d{8}T\d{6}Z-[1-9]\d*\.json", rel
+        ):
+            raise RefusedError(f"index entry {entry.get('seq')} names no attempt record path")
+        path = root / rel
+        if path.is_symlink() or not path.is_file():
+            raise RefusedError(f"index entry {entry['seq']}: record {rel} is missing")
+        if sha256_file(path) != entry.get("record_sha256"):
+            raise RefusedError(f"index entry {entry['seq']}: record {rel} differs from its sha256")
+        if entry.get("scope") == "case" and entry.get("accepted") is True:
+            case_id = entry.get("case")
+            if not isinstance(case_id, str) or f"case.{case_id}" not in registry.sections:
+                raise RefusedError(f"index entry {entry['seq']} names unknown case {case_id!r}")
+            updates[f"case.{case_id}"] = {"status": entry.get("outcome"), "evidence": rel}
+    if not tail:
+        return {"repaired": False, "index_length": pinned, "index_head": head}
+    updates["meta"] = {"index_head": tail[-1][1], "index_length": len(entries)}
+    registry.update(updates)
+    return {"repaired": True, "index_length": len(entries), "index_head": tail[-1][1]}
+
+
+def find_build(root: Path, build: str) -> Path | None:
+    """The Build directory named by a hash under build/ or xbuild/ whose manifest names that hash."""
+    hexdigest = build.split(":", 1)[1]
+    for base in ("build", "xbuild"):
+        top = root / base
+        if not top.is_dir():
+            continue
+        candidates = [top / hexdigest, *sorted(top.glob(f"**/{hexdigest}"))]
+        for directory in candidates:
+            manifest = directory / "manifest.kvx"
+            if directory.is_symlink() or not manifest.is_file():
+                continue
+            with suppress(RefusedError, OSError, UnicodeDecodeError):
+                sections = parse_kvx(manifest.read_text(), str(manifest))
+                if sections.get("build", {}).get("hash") == build:
+                    return directory
+    return None
+
+
+def register_build(root: Path, case_id: str, build: str) -> dict:
+    """Add build to case_id's registered_builds. The caller holds the index lock."""
+    registry = Registry(root)
+    if registry.errors:
+        raise RefusedError("invalid registry: " + "; ".join(registry.errors))
+    if not CASE_ID.match(case_id) or case_id not in registry.cases:
+        raise RefusedError(f"unknown case {case_id}")
+    if not SHA.match(build):
+        raise RefusedError(f"{build!r} is not a sha256:<64hex> Build hash")
+    case = registry.cases[case_id]
+    if case.get("requires_build") is not True:
+        raise RefusedError(f"case {case_id} does not use a Build (requires_build is false)")
+    directory = find_build(root, build)
+    if directory is None:
+        raise RefusedError(
+            f"no Build directory with manifest hash {build} exists under build/ or xbuild/"
+        )
+    builds = list(case.get("registered_builds") or [])
+    if build in builds:
+        return {"case": case_id, "build": build, "registered": False, "builds": builds}
+    builds.append(build)
+    registry.update({f"case.{case_id}": {"registered_builds": builds}})
+    return {
+        "case": case_id,
+        "build": build,
+        "registered": True,
+        "directory": str(directory.relative_to(root)),
+        "builds": builds,
+    }
 
 
 # ------------------------------------------------------------------ running drivers
@@ -407,22 +585,16 @@ def run_driver(root: Path, task: str, cases: list[str], workdir: Path, timeout: 
     )
     started = time.monotonic()
     stdout_path, stderr_path = out_dir / "driver.stdout.log", out_dir / "driver.stderr.log"
-    timed_out = False
     with open(stdout_path, "wb") as out, open(stderr_path, "wb") as err:
-        process = subprocess.Popen(
-            command, cwd=root, env=env, stdout=out, stderr=err, stdin=subprocess.DEVNULL
+        # the driver leads its own process group, which is reaped however the wait ends
+        result = runner_support.run_group(
+            command, cwd=root, env=env, timeout=timeout, stdout=out, stderr=err
         )
-        try:
-            exit_code = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-            exit_code, timed_out = None, True
     return {
         "task": task,
         "command": ["python3", str(driver.relative_to(root))],
-        "exit_code": exit_code,
-        "timed_out": timed_out,
+        "exit_code": result.returncode,
+        "timed_out": result.timed_out,
         "duration_ms": int((time.monotonic() - started) * 1000),
         "dir": out_dir,
         "stdout": stdout_path,
@@ -432,6 +604,8 @@ def run_driver(root: Path, task: str, cases: list[str], workdir: Path, timeout: 
 
 def load_manifest(run: dict) -> tuple[dict, list[str]]:
     path = run["dir"] / "attempt.json"
+    if path.is_symlink():
+        return {}, [f"task {run['task']}: attempt.json is a symbolic link and is ignored"]
     if not path.is_file():
         return {}, []
     try:
@@ -454,8 +628,7 @@ def sanitise(manifest: dict, task: str) -> tuple[dict, list[str]]:
         "build_hash": lambda v: v is None or is_sha(v),
         "builds": lambda v: isinstance(v, list) and all(is_sha(b) for b in v),
         "experimental_flags": lambda v: (
-            isinstance(v, list)
-            and all(isinstance(f, str) and re.fullmatch(r"--x-[a-z-]+", f) for f in v)
+            isinstance(v, list) and all(isinstance(f, str) and FLAG.match(f) for f in v)
         ),
         "world": lambda v: (
             v is None
@@ -528,13 +701,60 @@ def sanitise(manifest: dict, task: str) -> tuple[dict, list[str]]:
 
 
 def inside(base: Path, rel) -> Path | None:
+    """The regular file rel names inside base, or None. Absolute paths, `..`, a symbolic link at any
+    component and the runner's own file names are refused, so a driver can never make the runner copy
+    a file from outside its evidence directory into published evidence."""
     if not isinstance(rel, str) or not rel:
         return None
     pure = PurePosixPath(rel)
-    if pure.is_absolute() or ".." in pure.parts:
+    if not pure.parts or pure.is_absolute() or ".." in pure.parts or pure.name in RESERVED:
         return None
-    path = base / rel
-    return path if path.is_file() else None
+    path = base
+    for part in pure.parts:
+        path = path / part
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            return None
+        if stat.S_ISLNK(mode):
+            return None
+    if not stat.S_ISREG(mode):
+        return None
+    try:
+        if not path.resolve(strict=True).is_relative_to(base.resolve(strict=True)):
+            return None
+    except OSError:
+        return None
+    return path
+
+
+def copy_artifact(src: Path, dst: Path) -> None:
+    """Copy a vetted regular file without following links; dst must not exist yet."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst, follow_symlinks=False)
+
+
+def copy_text(src: Path, dst: Path, root: Path) -> None:
+    """Copy a driver log or manifest with the repository root and home directory scrubbed."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(scrub(src.read_bytes(), root))
+
+
+def blocked_lines(text: str) -> list[str]:
+    return [m.group(1) for m in map(BLOCKED_LINE.match, text.splitlines()) if m]
+
+
+def decide_outcome(
+    failed: list[str], hard: list[str], blocked: list[str], shortfalls: list[str]
+) -> str:
+    """FAIL first (an observed or recomputed FAIL, a timeout, a non-zero exit without BLOCKED), then
+    BLOCKED (a blocked driver whose registered assertions are missing), then PASS only with nothing
+    short."""
+    if failed or hard:
+        return "FAIL"
+    if blocked:
+        return "BLOCKED"
+    return "FAIL" if shortfalls else "PASS"
 
 
 # ------------------------------------------------------------------ attempt records
@@ -602,7 +822,8 @@ def build_record(
     prefix = f"{EVIDENCE_REL}/{record_id}"
     diagnostics: list[str] = []
 
-    invocations, observed, blocked = [], [], []
+    invocations, observed = [], []
+    run_blocked: dict[str, list[str]] = {}
     scalars: dict[str, object] = {}
     builds: list[str] = []
     flags: list[str] = []
@@ -618,9 +839,10 @@ def build_record(
     for run in runs:
         target = attempt_dir / run["task"]
         target.mkdir()
-        shutil.copyfile(run["stdout"], target / "driver.stdout.log")
-        shutil.copyfile(run["stderr"], target / "driver.stderr.log")
-        for line in (target / "driver.stdout.log").read_text(errors="replace").splitlines():
+        copy_text(run["stdout"], target / "driver.stdout.log", root)
+        copy_text(run["stderr"], target / "driver.stderr.log", root)
+        stdout_text = (target / "driver.stdout.log").read_text(errors="replace")
+        for line in stdout_text.splitlines():
             match = ASSERT_LINE.match(line)
             if match and match.group(1).startswith(case_id + "."):
                 observed.append(
@@ -630,9 +852,7 @@ def build_record(
                         "diagnostic": match.group(3) or "",
                     }
                 )
-            match = BLOCKED_LINE.match(line)
-            if match:
-                blocked.append(match.group(1))
+        run_blocked[run["task"]] = blocked_lines(stdout_text)
         invocations.append(
             {
                 "task": run["task"],
@@ -650,7 +870,7 @@ def build_record(
         manifest, more = sanitise(manifest, run["task"])
         diagnostics += problems + more
         if manifest:
-            shutil.copyfile(run["dir"] / "attempt.json", target / "attempt.json")
+            copy_text(run["dir"] / "attempt.json", target / "attempt.json", root)
         for key in (
             "build_hash",
             "cassette_digest",
@@ -680,8 +900,12 @@ def build_record(
                 )
                 continue
             ledger_dst = target / inst["ledger"]
-            ledger_dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(ledger_src, ledger_dst)
+            if ledger_dst.exists():
+                diagnostics.append(
+                    f"task {run['task']}: instance {inst.get('id')!r} reuses ledger {inst['ledger']}"
+                )
+                continue
+            copy_artifact(ledger_src, ledger_dst)
             ledger = {
                 "path": f"{prefix}/{run['task']}/{inst['ledger']}",
                 "sha256": sha256_file(ledger_dst),
@@ -695,8 +919,8 @@ def build_record(
                     )
                 else:
                     state_dst = target / inst["final_state"]
-                    state_dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(state_src, state_dst)
+                    if not state_dst.exists():
+                        copy_artifact(state_src, state_dst)
                     final = {
                         "path": f"{prefix}/{run['task']}/{inst['final_state']}",
                         "sha256": sha256_file(state_dst),
@@ -728,9 +952,8 @@ def build_record(
                 )
                 continue
             state_dst = target / rel
-            state_dst.parent.mkdir(parents=True, exist_ok=True)
             if not state_dst.exists():
-                shutil.copyfile(state_src, state_dst)
+                copy_artifact(state_src, state_dst)
             finals.append(
                 {"path": f"{prefix}/{run['task']}/{rel}", "sha256": sha256_file(state_dst)}
             )
@@ -752,20 +975,23 @@ def build_record(
         diagnostics.append(f"coverage gaps: {gaps}")
     if unexpected:
         diagnostics.append(f"assertions outside the registered inventory: {unexpected}")
-    failed = [o["id"] for o in observed if o["outcome"] != "PASS"]
+    failed = [o["id"] for o in observed if o["outcome"] != "PASS" and o["id"] in expected]
     if failed:
         diagnostics.append(f"failed assertions: {failed}")
+    hard, blocked = [], []
     for run in runs:
         if run["timed_out"]:
-            diagnostics.append(f"task {run['task']} driver timed out")
+            hard.append(f"task {run['task']} driver timed out")
+        elif run["exit_code"] != 0 and not run_blocked[run["task"]]:
+            hard.append(f"task {run['task']} driver exited {run['exit_code']}")
         elif run["exit_code"] != 0:
-            diagnostics.append(f"task {run['task']} driver exited {run['exit_code']}")
-    if blocked:
-        outcome = "BLOCKED"
-    elif diagnostics:
-        outcome = "FAIL"
-    else:
-        outcome = "PASS"
+            diagnostics.append(f"task {run['task']} driver exited {run['exit_code']} (blocked)")
+        # a BLOCKED line counts for this case only when assertions of that driver's subset are missing
+        subset = {f"{case_id}.{k}" for k in case["subsets"].get(run["task"], [])}
+        if run_blocked[run["task"]] and subset & set(gaps):
+            blocked += run_blocked[run["task"]]
+    diagnostics += hard
+    outcome = decide_outcome(failed, hard, blocked, diagnostics)
 
     ledger_digest = None
     if ledgers:
@@ -775,6 +1001,7 @@ def build_record(
         ledger_digest = sha256_bytes(lines.encode())
     model = scalars.get("model")
     world = scalars.get("world")
+    revisions = runner_support.revisions(root)
     record = {
         "schema_version": SCHEMA_VERSION,
         "record_id": record_id,
@@ -786,7 +1013,8 @@ def build_record(
         "clauses": clauses,
         "spec_revision": sha256_file(root / SPEC_REL),
         "registry_version": registry.meta.get("registry_version"),
-        "registry_sha256": registry.sha256,
+        "registry_sha256": case_registry_digest(registry.sections, case_id),
+        "schema_sha256": sha256_file(HERE / "evidence.schema.json"),
         "build_hash": scalars.get("build_hash", builds[0] if len(builds) == 1 else None),
         "builds": builds,
         "experimental_flags": flags,
@@ -800,9 +1028,8 @@ def build_record(
         "gateway_mode": scalars.get("gateway_mode"),
         "model": model,
         "preregistration_digest": scalars.get("preregistration_digest"),
-        **{key: tree_digest(root / rel) for key, rel in REVISION_TREES.items()},
+        **revisions,
         "host": {
-            "hostname": platform.node(),
             "os": platform.platform(),
             "machine": platform.machine(),
             "python": platform.python_version(),
@@ -831,6 +1058,7 @@ def build_record(
         "checker": {
             "program": "tests/cwr/check_evidence.py",
             "revision": sha256_file(CHECKER),
+            "basis": GENESIS,
             "accepted": False,
             "errors": ["pending"],
         },
@@ -873,7 +1101,16 @@ def qualify(
     # first pass: the checker's independent recomputation of every registered assertion
     verdict = run_checker(root, record)
     record["recomputed"] = list(verdict.get("recomputed_assertions", []))
-    if record["outcome"] == "PASS" and any(a["outcome"] != "PASS" for a in record["recomputed"]):
+    # a FAIL the oracle recomputes for an observed assertion is a FAIL even when a driver reported
+    # BLOCKED; assertions missing because of the block carry no verdict of their own
+    recomputed_failed = [
+        a
+        for a in record["recomputed"]
+        if a["outcome"] == "FAIL" and a["id"] not in record["coverage_gaps"]
+    ]
+    if record["outcome"] == "BLOCKED" and recomputed_failed:
+        record["outcome"], record["blocked_reason"] = "FAIL", None
+    if record["outcome"] != "BLOCKED" and any(a["outcome"] != "PASS" for a in record["recomputed"]):
         record["outcome"] = "FAIL"
         record["diagnostics"] = record["diagnostics"] + [
             f"independent oracle: {a['id']} {a['outcome']}: {a['diagnostic']}"
@@ -893,9 +1130,11 @@ def qualify(
             for s in verdict.get("shortfalls", [])
             if "independent checker: " + s not in record["diagnostics"]
         ]
+    basis = verdict.get("basis")
     record["checker"] = {
         "program": "tests/cwr/check_evidence.py",
         "revision": sha256_file(CHECKER),
+        "basis": basis if isinstance(basis, str) and SHA.match(basis) else GENESIS,
         "accepted": bool(verdict.get("accepted")),
         "errors": list(verdict.get("errors", [])),
     }
@@ -952,6 +1191,17 @@ def main(argv: list[str] | None = None) -> int:
         "--check-registry", action="store_true", help="validate the registry and exit"
     )
     parser.add_argument(
+        "--repair-pin",
+        action="store_true",
+        help="re-pin the registry to a correctly chained index tail after an interrupted append",
+    )
+    parser.add_argument(
+        "--register-build",
+        nargs=2,
+        metavar=("CASE", "BUILD"),
+        help="add a Build hash, whose Build directory exists, to a case's registered_builds",
+    )
+    parser.add_argument(
         "--root", default=str(DEFAULT_ROOT), help="repository root (default: this checkout)"
     )
     parser.add_argument(
@@ -959,7 +1209,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    runner_support.raise_on_sigterm()
     try:
+        if args.repair_pin or args.register_build:
+            with locked(root / INDEX_REL):
+                result = (
+                    repair_pin(root)
+                    if args.repair_pin
+                    else register_build(root, *args.register_build)
+                )
+            print(json.dumps(result, sort_keys=True))
+            return 0
         registry = Registry(root)
         if args.check_registry:
             print(

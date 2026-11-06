@@ -41,6 +41,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -682,16 +685,19 @@ def check_analysis(c: Clauses, campaigns: dict, prereg: dict) -> None:
 
 def main() -> int:
     c = Clauses()
+    observer = protocol.Observer("5.2", protocol.ok_bad(c))
     build = run(["cargo", "build", "-q", "-p", "cwr-cli"])
     if build.returncode != 0:
         for clause in CLAUSES:
             c.check(clause, False, f"cargo build failed: {build.stderr.strip()[-300:]}")
+        observer.emit()
         return c.report()
     binary = cwr_binary()
     missing = [str(p.relative_to(REPO)) for p in CAMPAIGN.values() if not p.exists()]
     if missing:
         for clause in CLAUSES:
             c.check(clause, False, f"campaign files missing: {', '.join(missing)}")
+        observer.emit()
         return c.report()
     campaigns = {h: read_kvx(p) for h, p in CAMPAIGN.items()}
     prereg = read_kvx(PREREG)
@@ -708,10 +714,20 @@ def main() -> int:
     check_drift_builds(c, binary, h1, control_manual)
     live_drift_probe(c, binary, h1)
     check_one_primitive(c, binary, h2)
-    ledgers = check_matrix(c, campaigns, prereg)
-    check_drift_ledgers(c, ledgers, h1)
+    with (
+        observer.observe("CWR-018.a1", match=r"^H1"),
+        observer.observe("CWR-018.a2", match=r"^H2"),
+    ):
+        ledgers = check_matrix(c, campaigns, prereg)
+    with observer.observe("CWR-018.a5"):
+        check_drift_ledgers(c, ledgers, h1)
     check_one_primitive_ledgers(c, ledgers)
-    check_analysis(c, campaigns, prereg)
+    with (
+        observer.observe("CWR-018.a7", match=r"recomputation|mean and 95%|analyse\.py"),
+        observer.observe("CWR-018.a8", match=r"registered digest|pre-registration|registered at"),
+    ):
+        check_analysis(c, campaigns, prereg)
+    observer.emit()
     return c.report()
 
 

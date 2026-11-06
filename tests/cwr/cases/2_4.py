@@ -41,6 +41,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parents[3]
@@ -63,6 +66,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("2.4", protocol.ok_bad(R))
 
 
 def run(cmd, env: dict | None = None, timeout: int = TIMEOUT, **kw) -> subprocess.CompletedProcess:
@@ -1099,7 +1103,8 @@ def main() -> int:
         truncated_tail(wd)
         implicit_and_live(wd)
         rng_checks(wd)
-        replay_checks(wd)
+        with OBS.observe("CWR-010.a4", match="replay|final state digest"):
+            replay_checks(wd)
     finally:
         for s in stubs.values():
             s.stop()
@@ -1107,6 +1112,10 @@ def main() -> int:
             print(f"scratch kept at {scratch}", file=sys.stderr)
         else:
             shutil.rmtree(scratch, ignore_errors=True)
+    OBS.claim("CWR-010.a1", match="stub saw exactly")
+    OBS.claim("CWR-010.a2", match="recovered from snapshot|closed UNAVAILABL")
+    OBS.claim("CWR-010.a3", match="identical retry answered via|stub saw exactly")
+    OBS.emit()
     rc = 0
     for c in CLAUSES:
         bad, ok = R.bad[c], R.ok[c]

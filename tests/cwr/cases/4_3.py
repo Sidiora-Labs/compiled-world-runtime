@@ -64,6 +64,9 @@ sys.path.insert(0, str(PREDICATES))
 import common  # noqa: E402  benchmark/predicates/common.py, the predicate helper module
 from cwr_core import kvx  # noqa: E402  importable only after the sys.path insert above
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol  # noqa: E402  tests/cwr/cases/protocol.py, the runner protocol of every driver
+
 
 class Results:
     """Evidence per clause; a clause passes when it has evidence and no failure."""
@@ -79,6 +82,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("4.3", protocol.ok_bad(R))
 # Pre-upgrade failures the SDK raised before any RPC, so no ledger record names the primitive.
 SDK_REFUSALS: list[str] = []
 
@@ -899,6 +903,22 @@ def main() -> int:
             remove_tree(scratch)
     for line in SDK_REFUSALS:
         print(f"NOTE sandbox-side refusal without a ledger call record: {line}")
+    OBS.claim(
+        "CWR-016.a1",
+        match="ContractDiff entries match|bump derived|equals B's contract_diff|equals it \\(migration",
+    )
+    OBS.claim("CWR-016.a2", match="post-upgrade solution succeeds")
+    OBS.claim("CWR-016.a3", match="solution fails with the documented code")
+    OBS.claim(
+        "CWR-016.a4",
+        "CWR-011.a4",
+        match="notice in the first context after the upgrade equals|notice names",
+    )
+    OBS.claim(
+        "CWR-011.a2",
+        match="one upgrade record|state equals the Build's migrations|state unchanged by an upgrade|cwr instance upgrade rc|failing-migration",
+    )
+    OBS.emit()
     rc = 0
     for c in CLAUSES:
         bad, ok = R.bad[c], R.ok[c]

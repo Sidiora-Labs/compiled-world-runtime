@@ -28,6 +28,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 PAIRS = REPO / "examples" / "refworld-upgrades"
 UPGRADES = REPO / "benchmark" / "upgrades.kvx"
@@ -66,6 +69,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("2.5", protocol.pairs(R.items))
 
 
 # ----------------------------------------------------------------------------------------------- tooling
@@ -1255,19 +1259,36 @@ def main() -> int:
     try:
         home = Home(work / "home")
         builds: dict = {}
-        pairs = run_pairs(work, home, frozen, builds)
+        with (
+            OBS.observe("CWR-011.a2", match="upgrade|migrated state|no migration declared"),
+            OBS.observe("CWR-011.a4", match="notice"),
+        ):
+            pairs = run_pairs(work, home, frozen, builds)
         if set(pairs) != set(frozen["meta"]["pairs"]):
             R.check("5.2", False, f"pairs upgraded: {sorted(pairs)}")
+            OBS.emit()
             return 0 if R.report() else 1
-        run_failures(work, home, pairs)
-        run_chain(work, home, pairs)
-        run_experimental(work, home, pairs)
-        run_outbox(work, home, pairs)
-        run_closure(work, home, pairs, BUILD_DIGESTS)
+        with (
+            OBS.observe(
+                "CWR-011.a3", match="failing migration|crash mid-migration|after the rollback"
+            ),
+            OBS.observe("CWR-011.a6", match="upgrade to 0\\.2\\.0"),
+            OBS.observe("CWR-011.a7", match="otherworld"),
+        ):
+            run_failures(work, home, pairs)
+        with OBS.observe("CWR-011.a2"):
+            run_chain(work, home, pairs)
+        with OBS.observe("CWR-011.a6", match="lower version"):
+            run_experimental(work, home, pairs)
+        with OBS.observe("CWR-011.a5"):
+            run_outbox(work, home, pairs)
+        with OBS.observe("CWR-011.a1"):
+            run_closure(work, home, pairs, BUILD_DIGESTS)
     except Exception as e:
         R.check("5.2", False, f"driver error: {type(e).__name__}: {str(e)[:600]}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    OBS.emit()
     return 0 if R.report() else 1
 
 

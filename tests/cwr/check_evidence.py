@@ -27,22 +27,39 @@ Outcomes are recomputed, never copied. For each record the checker
     oracle is UNVERIFIED and can never be PASS, whatever the driver printed. CWR-019 has a built-in
     oracle; the oracle of any other case is tests/cwr/oracles/CWR_NNN.py exposing recompute(ctx),
     vetted before loading (standard library only, no process, network, file or dynamic-code access);
-  * recomputes the outcome (PASS, FAIL or BLOCKED) and refuses a record whose claimed outcome is not
-    supported; in particular PASS with no assertions, PASS with a Build hash that is not the
-    registered Build, PASS over a modified ledger, PASS with a seed that does not match the ledger
-    header, PASS with an incomplete inventory and a campaign PASS without the complete arm matrix and
-    pre-registration.
+  * recomputes the outcome and refuses a record whose claimed outcome is not supported; in particular
+    PASS with no assertions, PASS with a Build hash that is not the registered Build, PASS over a
+    modified ledger, PASS with a seed that does not match the ledger header, PASS with an incomplete
+    inventory and a campaign PASS without the complete arm matrix and pre-registration. FAIL is
+    decided before BLOCKED: an observed or recomputed FAIL, a timeout or a non-zero exit without a
+    BLOCKED line is FAIL, and BLOCKED needs a blocked driver whose registered assertions are missing;
+  * derives a campaign Instance's hypothesis and arm from its ledger header arm (`H<n>/<arm>`, the
+    arm compared to the registered matrix after dropping case and every character but letters,
+    digits and `-`, so `K=20` is `k20`), and binds its task label to recorded data: the label must
+    be a task of benchmark/suite.kvx (an upgrade pair task `u<n>-...` for H4), the Instance's
+    initial-state digest must equal the ledger header's, every Instance of one task must start from
+    one initial state and two tasks never share one.
+
+Integrity and conformance are separate verdicts. Integrity (the record's own hashes, its attempt
+directory, logs, ledgers, final state, its index entry and the chain) is checked against the record
+alone; a failure is damage. Conformance (the record against the current registry, schema, checker and
+oracle) can change without anyone touching the record. Each record pins the checker basis it was
+accepted under (checker revision, schema digest, oracle digest and the case's registry digest); a
+conformance failure under an unchanged basis is damage, under a changed basis the record is stale.
+A stale record is never accepted and blocks closure, but --status reports it apart from damage.
 
 A task-scope (component) record never changes a case status: --status derives the status of a case
-from accepted case-scope records only, in attempt-index order, so a component PASS leaves the parent
-case UNRUN. A record missing from the index, or an indexed record that is missing, is reported.
+from intact case-scope records accepted when written, in attempt-index order, so a component PASS
+leaves the parent case UNRUN. A record missing from the index, or an indexed record that is missing,
+is reported. Malformed input (a ledger that is not UTF-8, an index entry of the wrong shape) is a
+located refusal, never a crash.
 
 Usage:
   check_evidence.py [--root DIR] RECORD.json [RECORD.json ...]   exit 0 iff every record is accepted
   check_evidence.py [--root DIR] --staged -                       check one record read from stdin
   check_evidence.py [--root DIR] --status CWR-NNN                 derive the case status
 Exit codes: 0 accepted (or status derived from an intact index), 1 rejected (or the evidence store is
-damaged), 2 usage or unreadable input.
+damaged, or the deciding record is stale), 2 usage or unreadable input.
 """
 
 from __future__ import annotations
@@ -71,7 +88,13 @@ ASSERT_LINE = re.compile(r"^ASSERT (\S+) (PASS|FAIL)(?: (.*))?$")
 BLOCKED_LINE = re.compile(r"^BLOCKED (\S.*)$")
 RECORD_NAME = re.compile(r"^(\d{8}T\d{6}Z)-([1-9]\d*)\.json$")
 SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
+RECORD_PATH = re.compile(r"^tests/cwr/evidence/CWR-\d{3}/\d{8}T\d{6}Z-[1-9]\d*\.json$")
 GENESIS = "sha256:" + "0" * 64
+SUITE_REL = "benchmark/suite.kvx"
+HYPOTHESIS_ARM = re.compile(r"^(H[1-4])/(.+)$")
+PAIR_TASK = re.compile(r"^u([1-9]\d*)-[a-z0-9-]+$")
+RUNNER_META_KEYS = {"index_length", "index_head"}
+RUNNER_CASE_KEYS = {"status", "evidence"}
 CLOCK_SKEW = timedelta(minutes=5)
 INDEX_FIELDS = {
     "seq",
@@ -183,6 +206,31 @@ def index_line(entry: dict) -> str:
 
 def index_hash(line: str) -> str:
     return sha256_bytes(line.encode())
+
+
+def canonical_digest(value) -> str:
+    return sha256_bytes(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+
+
+def case_registry_digest(registry: dict, case_id: str) -> str:
+    """The registry digest a record pins: [meta] without the index pin and the case's own section
+    without the runner-maintained status and evidence, as canonical JSON."""
+    meta = {k: v for k, v in registry.get("meta", {}).items() if k not in RUNNER_META_KEYS}
+    case = {
+        k: v for k, v in registry.get(f"case.{case_id}", {}).items() if k not in RUNNER_CASE_KEYS
+    }
+    return canonical_digest({"case": case, "meta": meta})
+
+
+def normal_arm(label) -> str:
+    """An arm label in comparable form: lower case, only letters, digits and '-' (K=20 is k20)."""
+    return re.sub(r"[^a-z0-9-]", "", str(label).lower())
+
+
+def header_arm(label) -> tuple[str | None, str | None]:
+    """(hypothesis, normalised arm) of a ledger header arm `H<n>/<arm>`; (None, None) otherwise."""
+    match = HYPOTHESIS_ARM.match(label) if isinstance(label, str) else None
+    return (match.group(1), normal_arm(match.group(2))) if match else (None, None)
 
 
 # ------------------------------------------------------------------ evidence stores
@@ -299,7 +347,12 @@ def load_index(store, meta: dict, now: datetime | None = None) -> tuple[list[dic
     if data and not data.endswith(b"\n"):
         errors.append("the final index entry is truncated")
     prev, last_time, seen = GENESIS, None, set()
-    for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines()):
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        errors.append(f"the index is not UTF-8 at byte {error.start}")
+        lines = []
+    for number, line in enumerate(lines):
         try:
             entry = strict_json(line)
         except ValueError as error:
@@ -307,6 +360,10 @@ def load_index(store, meta: dict, now: datetime | None = None) -> tuple[list[dic
             break
         if not isinstance(entry, dict) or set(entry) != INDEX_FIELDS:
             errors.append(f"entry {number} must carry exactly {sorted(INDEX_FIELDS)}")
+            break
+        shape = index_entry_problem(entry)
+        if shape:
+            errors.append(f"entry {number}: {shape}")
             break
         if line != index_line(entry):
             errors.append(f"entry {number} is not in canonical form")
@@ -342,6 +399,32 @@ def load_index(store, meta: dict, now: datetime | None = None) -> tuple[list[dic
             "(an entry was removed, added or rewritten)"
         )
     return entries, errors
+
+
+def index_entry_problem(entry: dict) -> str | None:
+    """The first field of an index entry with the wrong type or form, or None."""
+    checks = (
+        ("seq", type(entry.get("seq")) is int and entry["seq"] >= 0),
+        ("prev", isinstance(entry.get("prev"), str) and bool(SHA.match(entry["prev"]))),
+        (
+            "record",
+            isinstance(entry.get("record"), str) and bool(RECORD_PATH.match(entry["record"])),
+        ),
+        (
+            "record_sha256",
+            isinstance(entry.get("record_sha256"), str) and bool(SHA.match(entry["record_sha256"])),
+        ),
+        ("case", isinstance(entry.get("case"), str) and bool(CASE_RE.fullmatch(entry["case"]))),
+        ("scope", entry.get("scope") in ("case", "task")),
+        ("task", entry.get("task") is None or isinstance(entry.get("task"), str)),
+        ("outcome", entry.get("outcome") in ("PASS", "FAIL", "BLOCKED")),
+        ("accepted", type(entry.get("accepted")) is bool),
+        ("appended_at", isinstance(entry.get("appended_at"), str)),
+    )
+    for name, ok in checks:
+        if not ok:
+            return f"field {name} has the wrong type or form ({entry.get(name)!r:.80})"
+    return None
 
 
 # ------------------------------------------------------------------ minimal JSON Schema subset
@@ -439,7 +522,12 @@ def read_ledger(data: bytes) -> tuple[list[dict], str | None]:
     if not data.endswith(b"\n"):
         return [], "ledger final record is truncated (no terminating newline)"
     records = []
-    for number, line in enumerate(data.decode("utf-8").splitlines(), 1):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        line = data.count(b"\n", 0, error.start) + 1
+        return [], f"ledger line {line}: not UTF-8 (byte {error.start})"
+    for number, line in enumerate(text.splitlines(), 1):
         try:
             value = strict_json(line)
         except ValueError as error:
@@ -624,6 +712,34 @@ def resolve_oracle(store, case_id: str, suite: bool):
     return module_oracle(store, case_id)
 
 
+def oracle_identity(store, case_id: str, suite: bool) -> str | None:
+    """What the oracle of a case is, for the checker basis: built in, or the digest of its module."""
+    if suite:
+        return "builtin:fixture"
+    if case_id in BUILTIN_ORACLES:
+        return f"builtin:{case_id}"
+    rel = f"{ORACLES_REL}/{case_id.replace('-', '_')}.py"
+    if store.memory or not store.is_file(rel):
+        return None
+    return store.sha(rel)
+
+
+def schema_digest() -> str:
+    return sha256_bytes(SCHEMA_PATH.read_bytes())
+
+
+def checker_basis(store, registry: dict, case_id: str, suite: bool) -> str:
+    """The digest of everything a verdict on a record of case_id depends on besides the record."""
+    return canonical_digest(
+        {
+            "checker": checker_revision(),
+            "schema": schema_digest(),
+            "oracle": oracle_identity(store, case_id, suite),
+            "registry": case_registry_digest(registry, case_id),
+        }
+    )
+
+
 # ------------------------------------------------------------------ verdict
 
 
@@ -633,20 +749,34 @@ class Verdict:
     accepted: bool = False
     claimed: str | None = None
     recomputed: str | None = None
-    errors: list[str] = field(default_factory=list)  # reasons for rejection
+    errors: list[str] = field(
+        default_factory=list
+    )  # damage: the record or its evidence is not intact
+    stale: list[str] = field(
+        default_factory=list
+    )  # intact, but no longer conforms to the current basis
     shortfalls: list[str] = field(default_factory=list)  # reasons the evidence is not a PASS
     assertions: list[dict] = field(default_factory=list)  # the checker's own recomputation
     record: dict | None = None
+    basis: str | None = None
+
+    @property
+    def intact(self) -> bool:
+        """No damage was found; the record may still be stale."""
+        return not self.errors
 
     def as_dict(self) -> dict:
         return {
             "record": self.path,
             "accepted": self.accepted,
+            "intact": self.intact,
             "claimed": self.claimed,
             "recomputed": self.recomputed,
             "errors": self.errors,
+            "stale": self.stale,
             "shortfalls": self.shortfalls,
             "recomputed_assertions": self.assertions,
+            "basis": self.basis,
         }
 
 
@@ -690,10 +820,16 @@ def check_record(
         return verdict
     verdict.record = record
     verdict.claimed = record.get("outcome")
+    current_version = schema.document.get("properties", {}).get("schema_version", {}).get("const")
+    version = record.get("schema_version")
+    if type(version) is int and type(current_version) is int and 1 <= version < current_version:
+        return legacy_check(record, verdict, store, record_rel, staged, current_version, now)
     schema_errors = schema.errors(record)
     if schema_errors:
         errors += ["schema: " + e for e in schema_errors]
         return verdict
+    # conformance to the current registry, schema, checker and oracle; classified at the end
+    conform: list[str] = []
 
     case_id, scope, task = record["case"], record["scope"], record["task"]
     attempt_prefix = f"{EVIDENCE_REL}/{record['record_id']}"
@@ -732,8 +868,13 @@ def check_record(
     meta = registry.get("meta", {})
     case = registry.get(f"case.{case_id}")
     if case is None:
-        errors.append(f"case {case_id} is not registered")
+        (errors if staged or suite else verdict.stale).append(f"case {case_id} is not registered")
         return verdict
+    basis = verdict.basis = checker_basis(store, registry, case_id, suite)
+    if staged and record["registry_sha256"] != case_registry_digest(registry, case_id):
+        errors.append(
+            f"registry_sha256 {record['registry_sha256']} is not the current registry digest of {case_id}"
+        )
 
     # -------------------------------------------------------------- external anchor: the attempt index
     if not staged:
@@ -764,15 +905,15 @@ def check_record(
                 )
 
     if record["registry_version"] != meta.get("registry_version"):
-        errors.append(
+        conform.append(
             f"registry_version {record['registry_version']} != registered {meta.get('registry_version')}"
         )
     if record["schema_version"] != meta.get("schema_version"):
-        errors.append(
+        conform.append(
             f"schema_version {record['schema_version']} != registered {meta.get('schema_version')}"
         )
     if record["tier"] != case.get("tier"):
-        errors.append(f"tier {record['tier']} != registered tier {case.get('tier')}")
+        conform.append(f"tier {record['tier']} != registered tier {case.get('tier')}")
     keys = inventory(case)
     full = [f"{case_id}.{k}" for k in keys]
     if not keys:
@@ -785,12 +926,15 @@ def check_record(
         if task is not None:
             errors.append("a case-scope record must have task null")
         if sorted(record["clauses"]) != sorted(case.get("reqs", [])):
-            errors.append(
+            conform.append(
                 f"clauses {record['clauses']} != registered case clauses {case.get('reqs')}"
             )
     else:
-        if task is None or task not in case.get("tasks", []):
-            errors.append(
+        if task is None:
+            errors.append("a task-scope record must name its task")
+            expected_ids = []
+        elif task not in case.get("tasks", []):
+            conform.append(
                 f"task-scope record names task {task!r}, not a registered task of {case_id}"
             )
             expected_ids = []
@@ -800,9 +944,9 @@ def check_record(
         else:
             expected_ids = [f"{case_id}.{k}" for k in subsets[task] if k in keys]
         if not set(record["clauses"]) <= set(case.get("reqs", [])):
-            errors.append(f"clauses {record['clauses']} are not clauses of {case_id}")
+            conform.append(f"clauses {record['clauses']} are not clauses of {case_id}")
     if record["assertion_ids"] != expected_ids:
-        errors.append(
+        conform.append(
             f"assertion_ids {record['assertion_ids']} != registered inventory for this scope {expected_ids}"
         )
 
@@ -820,8 +964,10 @@ def check_record(
 
     # -------------------------------------------------------------- logs and observed assertions
     recomputed_observed: list[dict] = []
-    blocked_lines: list[str] = []
+    blocked_by_task: dict[str, list[str]] = {}
+    hard: list[str] = []
     for index, inv in enumerate(record["invocations"]):
+        inv_blocked = blocked_by_task.setdefault(inv["task"], [])
         for kind in ("stdout", "stderr"):
             rel, digest = inv[f"{kind}_log"], inv[f"{kind}_sha256"]
             problem = safe_relative(rel, attempt_prefix)
@@ -850,11 +996,16 @@ def check_record(
                         )
                     blocked = BLOCKED_LINE.match(line)
                     if blocked:
-                        blocked_lines.append(blocked.group(1))
+                        inv_blocked.append(blocked.group(1))
         if inv["timed_out"]:
-            short.append(f"invocation {index} (task {inv['task']}) timed out")
-        if inv["exit_code"] != 0:
-            short.append(f"invocation {index} (task {inv['task']}) exited {inv['exit_code']}")
+            hard.append(f"invocation {index} (task {inv['task']}) timed out")
+        elif inv["exit_code"] != 0 and not inv_blocked:
+            hard.append(f"invocation {index} (task {inv['task']}) exited {inv['exit_code']}")
+        elif inv["exit_code"] != 0:
+            short.append(
+                f"invocation {index} (task {inv['task']}) exited {inv['exit_code']} (blocked)"
+            )
+    short += hard
     if record["invocations"]:
         first = record["invocations"][0]
         if record["log"] != first["stdout_log"] or record["log_sha256"] != first["stdout_sha256"]:
@@ -868,7 +1019,7 @@ def check_record(
         tasks_run = [inv["task"] for inv in record["invocations"]]
         wanted = [task] if scope == "task" else list(case.get("tasks", []))
         if sorted(tasks_run) != sorted(wanted):
-            errors.append(f"invocations ran tasks {tasks_run}, scope requires {wanted}")
+            conform.append(f"invocations ran tasks {tasks_run}, scope requires {wanted}")
     if [(o["id"], o["outcome"]) for o in record["observed"]] != [
         (o["id"], o["outcome"]) for o in recomputed_observed
     ]:
@@ -893,11 +1044,15 @@ def check_record(
     if unexpected:
         short.append(f"assertions outside the registered inventory for this scope: {unexpected}")
     gaps = [i for i in expected_ids if i not in observed_ids]
-    if record["coverage_gaps"] != gaps:
-        errors.append(f"coverage_gaps {record['coverage_gaps']} != recomputed {gaps}")
-    if record["unexpected_assertions"] != unexpected:
+    # the record's own gap lists are recomputed against its own assertion ids (integrity)
+    own = record["assertion_ids"]
+    own_gaps = [i for i in own if i not in observed_ids]
+    own_unexpected = sorted({i for i in observed_ids if i not in own})
+    if record["coverage_gaps"] != own_gaps:
+        errors.append(f"coverage_gaps {record['coverage_gaps']} != recomputed {own_gaps}")
+    if record["unexpected_assertions"] != own_unexpected:
         errors.append(
-            f"unexpected_assertions {record['unexpected_assertions']} != recomputed {unexpected}"
+            f"unexpected_assertions {record['unexpected_assertions']} != recomputed {own_unexpected}"
         )
 
     # -------------------------------------------------------------- artifacts: ledgers and final state
@@ -1076,28 +1231,7 @@ def check_record(
         if not isinstance(matrix, dict) or not matrix:
             short.append("campaign case has no registered arm matrix")
         else:
-            for hypothesis, spec in sorted(matrix.items()):
-                seeds_by_arm = {}
-                for arm in spec.get("arms", []):
-                    cells: dict[str, set] = {}
-                    for inst in record["instances"]:
-                        if (
-                            inst["hypothesis"] == hypothesis
-                            and inst["arm"] == arm
-                            and inst["task"] is not None
-                        ):
-                            cells.setdefault(inst["task"], set()).add(inst["seed"])
-                    complete = len(cells) == spec.get("tasks") and all(
-                        len(s) == spec.get("seeds") for s in cells.values()
-                    )
-                    if not complete:
-                        short.append(
-                            f"incomplete arm matrix: {hypothesis} arm {arm} has {len(cells)} of "
-                            f"{spec.get('tasks')} tasks with {spec.get('seeds')} seeds each"
-                        )
-                    seeds_by_arm[arm] = {t: frozenset(s) for t, s in cells.items()}
-                if len({frozenset(v.items()) for v in seeds_by_arm.values()}) > 1:
-                    short.append(f"{hypothesis}: arms do not use the same tasks and seeds")
+            short += campaign_matrix_problems(store, record, parsed_ledgers, matrix)
         if prereg is None:
             short.append(
                 "no pre-registration digest is registered; a hypothesis result requires pre-registered metrics"
@@ -1157,14 +1291,32 @@ def check_record(
     if [(a["id"], a["outcome"]) for a in record["recomputed"]] != [
         (a["id"], a["outcome"]) for a in verdict.assertions
     ]:
-        errors.append(
+        conform.append(
             "recomputed assertions in the record differ from the checker's own recomputation: "
             f"record={[(a['id'], a['outcome']) for a in record['recomputed']]} "
             f"checker={[(a['id'], a['outcome']) for a in verdict.assertions]}"
         )
 
-    # -------------------------------------------------------------- outcome
-    if blocked_lines:
+    # -------------------------------------------------------------- outcome: FAIL first, then BLOCKED
+    failed = [
+        o["id"] for o in recomputed_observed if o["outcome"] != "PASS" and o["id"] in expected_ids
+    ]
+    # a recomputed FAIL of an assertion missing because a driver was blocked carries no verdict
+    failed += [
+        a["id"] for a in verdict.assertions if a["outcome"] == "FAIL" and a["id"] not in gaps
+    ]
+    blocked_lines: list[str] = []
+    for inv_task, lines in blocked_by_task.items():
+        own_subset = (
+            {f"{case_id}.{k}" for k in subsets.get(inv_task, [])}
+            if scope == "case"
+            else set(expected_ids)
+        )
+        if lines and own_subset & set(gaps):
+            blocked_lines += lines
+    if failed or hard:
+        recomputed = "FAIL"
+    elif blocked_lines:
         recomputed = "BLOCKED"
     elif short:
         recomputed = "FAIL"
@@ -1173,8 +1325,15 @@ def check_record(
     verdict.recomputed = recomputed
     claimed = record["outcome"]
     if claimed == "BLOCKED":
-        if not blocked_lines:
-            errors.append("claims BLOCKED but no driver reported a missing resource")
+        if recomputed == "FAIL":
+            conform.append(
+                "claims BLOCKED but the attempt failed: "
+                + "; ".join([f"assertion {i} FAIL" for i in failed] + hard or short)
+            )
+        elif not blocked_lines:
+            conform.append(
+                "claims BLOCKED but no driver reported a missing resource for a missing assertion"
+            )
         elif record["blocked_reason"] not in blocked_lines:
             errors.append(
                 f"blocked_reason {record['blocked_reason']!r} is not what the driver reported {blocked_lines}"
@@ -1182,16 +1341,173 @@ def check_record(
     elif record["blocked_reason"] is not None:
         errors.append("blocked_reason must be null unless the outcome is BLOCKED")
     if claimed == "PASS" and recomputed != "PASS":
-        errors.append(
+        conform.append(
             "claims PASS but the evidence does not support it: "
             + "; ".join(short or ["driver reported BLOCKED"])
         )
     if claimed == "FAIL" and recomputed == "PASS" and not record["diagnostics"]:
-        errors.append("claims FAIL with no diagnostic although every check passes")
+        conform.append("claims FAIL with no diagnostic although every check passes")
     if claimed == "FAIL" and recomputed == "BLOCKED":
-        errors.append("claims FAIL but the driver reported BLOCKED")
-    verdict.accepted = not errors
+        conform.append("claims FAIL but the recomputed outcome is BLOCKED")
+
+    # -------------------------------------------------------------- damage or stale
+    pinned = record["checker"]["basis"]
+    if staged or suite or pinned == basis:
+        errors += conform
+    elif conform:
+        verdict.stale.append(
+            f"the checker basis changed since the record was written ({pinned} -> {basis}); "
+            "the record no longer conforms to the current registry, schema, checker or oracle"
+        )
+        verdict.stale += conform
+    verdict.accepted = not errors and not verdict.stale
     return verdict
+
+
+def legacy_check(record, verdict, store, record_rel, staged, current_version, now) -> Verdict:
+    """A record written under an older evidence schema: its integrity is checked as far as it can be
+    without that schema (index entry, record digest, attempt directory); it is stale, never accepted."""
+    version = record.get("schema_version")
+    if staged:
+        verdict.errors.append(
+            f"schema_version {version!r} is not the current evidence schema version {current_version}"
+        )
+        return verdict
+    try:
+        registry = parse_kvx_text(store.read(REGISTRY_REL).decode(), REGISTRY_REL)
+    except (OSError, ValueError, UnicodeDecodeError) as error:
+        verdict.errors.append(f"registry unreadable: {error}")
+        return verdict
+    entries, index_errors = load_index(store, registry.get("meta", {}), now)
+    verdict.errors += ["attempt index: " + e for e in index_errors]
+    entry = next((e for e in entries if e["record"] == record_rel), None)
+    if entry is None:
+        verdict.errors.append(f"record {record_rel} is not in the append-only attempt index")
+    elif store.sha(record_rel) != entry["record_sha256"]:
+        verdict.errors.append(f"record {record_rel} does not match the attempt index")
+    else:
+        for key in ("case", "scope", "task", "outcome"):
+            if entry[key] != record.get(key):
+                verdict.errors.append(f"indexed {key} {entry[key]!r} != record {key}")
+    record_id = record.get("record_id")
+    if isinstance(record_id, str) and CASE_RE.fullmatch(record_id.split("/")[0]):
+        prefix = f"{EVIDENCE_REL}/{record_id}"
+        if store.files_under(prefix) and attempt_digest(store, prefix) != record.get(
+            "attempt_sha256"
+        ):
+            verdict.errors.append(
+                f"attempt directory {prefix}/ does not match attempt_sha256 (modified)"
+            )
+    verdict.stale.append(
+        f"written under evidence schema version {version!r}; the current version is "
+        f"{current_version}, so the record must be re-qualified"
+    )
+    verdict.accepted = False
+    return verdict
+
+
+def suite_tasks(store) -> tuple[set[str] | None, str | None]:
+    """The task ids of benchmark/suite.kvx, or (None, why)."""
+    if not store.is_file(SUITE_REL):
+        return None, f"{SUITE_REL} is missing, so no task label can be verified"
+    try:
+        suite = parse_kvx_text(store.read(SUITE_REL).decode(), SUITE_REL)
+    except (OSError, ValueError, UnicodeDecodeError) as error:
+        return None, f"{SUITE_REL} is unreadable: {error}"
+    tasks = {k[5:] for k in suite if k.startswith("task.")}
+    for name, section in suite.items():
+        if name.startswith("bin.") and isinstance(section.get("tasks"), list):
+            tasks |= {t for t in section["tasks"] if isinstance(t, str)}
+    return tasks, None
+
+
+def campaign_matrix_problems(store, record: dict, ledgers: dict, matrix: dict) -> list[str]:
+    """Shortfalls of a campaign record against the registered matrix. Hypothesis and arm come from each
+    ledger header, the task label is bound to the suite and to the header's initial-state digest, and
+    every registered (hypothesis, arm) must hold every task with every seed."""
+    problems: list[str] = []
+    known, why = suite_tasks(store)
+    if why:
+        problems.append(f"campaign task identity cannot be verified: {why}")
+        known = set()
+    registered = {
+        (hyp, normal_arm(arm)): arm
+        for hyp, spec in matrix.items()
+        if isinstance(spec, dict)
+        for arm in spec.get("arms", [])
+    }
+    cells: dict[tuple[str, str], dict[str, set]] = {key: {} for key in registered}
+    initial: dict[tuple[str, str], set] = {}
+    for inst in record["instances"]:
+        label = f"instance {inst['id']}"
+        ledger = ledgers.get(inst["id"])
+        if not ledger:
+            problems.append(f"{label}: no usable ledger, so it fills no matrix cell")
+            continue
+        header = ledger[0]
+        hyp, arm = header_arm(header.get("arm"))
+        if hyp is None:
+            problems.append(
+                f"{label}: ledger header arm {header.get('arm')!r} names no hypothesis (H<n>/<arm>)"
+            )
+            continue
+        if inst["hypothesis"] is not None and inst["hypothesis"] != hyp:
+            problems.append(
+                f"{label}: hypothesis {inst['hypothesis']} != {hyp} from the ledger header"
+            )
+            continue
+        if (hyp, arm) not in registered:
+            problems.append(f"{label}: arm {header.get('arm')!r} is not in the registered matrix")
+            continue
+        task = inst["task"]
+        valid = isinstance(task, str) and (
+            bool(PAIR_TASK.match(task)) if hyp == "H4" else task in known
+        )
+        if not valid:
+            problems.append(f"{label}: task {task!r} is not a {SUITE_REL} task of {hyp}")
+            continue
+        digest = header.get("initial_state")
+        if (
+            not (isinstance(digest, str) and SHA.match(digest))
+            or inst["initial_state_digest"] != digest
+        ):
+            problems.append(
+                f"{label}: task {task} is not bound to recorded data: initial_state_digest "
+                f"{inst['initial_state_digest']} != ledger header initial_state {digest}"
+            )
+            continue
+        initial.setdefault((hyp, task), set()).add(digest)
+        cells[(hyp, arm)].setdefault(task, set()).add(header.get("seed"))
+    for (hyp, task), digests in sorted(initial.items()):
+        if len(digests) > 1:
+            problems.append(
+                f"{hyp} task {task} starts from {len(digests)} different initial states"
+            )
+    by_digest: dict[tuple[str, str], set] = {}
+    for (hyp, task), digests in initial.items():
+        for digest in digests:
+            by_digest.setdefault((hyp, digest), set()).add(task)
+    for (hyp, _digest), tasks in sorted(by_digest.items()):
+        if len(tasks) > 1:
+            problems.append(
+                f"{hyp} tasks {sorted(tasks)} share one initial state; task labels are not provable"
+            )
+    for hyp, spec in sorted(matrix.items()):
+        seeds_by_arm = {}
+        for arm in spec.get("arms", []):
+            got = cells[(hyp, normal_arm(arm))]
+            complete = len(got) == spec.get("tasks") and all(
+                len(s) == spec.get("seeds") for s in got.values()
+            )
+            if not complete:
+                problems.append(
+                    f"incomplete arm matrix: {hyp} arm {arm} has {len(got)} of "
+                    f"{spec.get('tasks')} tasks with {spec.get('seeds')} seeds each"
+                )
+            seeds_by_arm[arm] = {t: frozenset(s) for t, s in got.items()}
+        if len({frozenset(v.items()) for v in seeds_by_arm.values()}) > 1:
+            problems.append(f"{hyp}: arms do not use the same tasks and seeds")
+    return problems
 
 
 def check_file(path, root=DEFAULT_ROOT, **kwargs) -> Verdict:
@@ -1213,10 +1529,13 @@ def check_rel(store, rel: str, **kwargs) -> Verdict:
 
 
 def derive_status(case_id: str, root=DEFAULT_ROOT, *, store=None, suite: bool = False) -> dict:
-    """Case status from accepted case-scope records only, in attempt-index order; task-scope evidence
-    never qualifies a case. Damage to the evidence store (a broken index, an indexed record that is
-    missing, an indexed record accepted when written that is refused now) is reported in
-    integrity_errors and leaves the status underived (null)."""
+    """Case status from intact case-scope records accepted when written, in attempt-index order;
+    task-scope evidence never qualifies a case. Damage to the evidence store (a broken index, an
+    indexed record that is missing, an indexed record accepted when written that is now damaged) is
+    reported in integrity_errors and leaves the status underived (null). A record that is intact but
+    no longer conforms to the current registry, schema, checker or oracle is listed in stale_records;
+    when the deciding record is stale, evidence names it, evidence_stale is true and the status is
+    underived (null) until the case is qualified again."""
     store = store if store is not None else FsStore(root)
     integrity: list[str] = []
     try:
@@ -1228,11 +1547,13 @@ def derive_status(case_id: str, root=DEFAULT_ROOT, *, store=None, suite: bool = 
             "evidence": None,
             "component_records": [],
             "rejected_records": [],
+            "stale_records": [],
+            "evidence_stale": False,
             "integrity_errors": [f"registry unreadable: {error}"],
         }
     entries, index_errors = load_index(store, registry.get("meta", {}))
     integrity += ["attempt index: " + e for e in index_errors]
-    accepted_case, accepted_task, rejected = [], [], []
+    accepted_case, accepted_task, rejected, stale = [], [], [], []
     indexed = set()
     for entry in entries:
         if entry["case"] != case_id:
@@ -1242,23 +1563,26 @@ def derive_status(case_id: str, root=DEFAULT_ROOT, *, store=None, suite: bool = 
             integrity.append(f"indexed record {entry['record']} (seq {entry['seq']}) is missing")
             continue
         verdict = check_rel(store, entry["record"], suite=suite)
-        if not verdict.accepted:
-            rejected.append({"record": entry["record"], "errors": verdict.errors})
+        if verdict.errors or entry["accepted"] is not True:
+            rejected.append({"record": entry["record"], "errors": verdict.errors + verdict.stale})
             if entry["accepted"] is True:
-                # accepted when it was written, refused now: the record or its artifacts were changed, so
+                # accepted when it was written, damaged now: the record or its artifacts were changed, so
                 # the status is not derived from whatever earlier attempt happens to remain intact
                 integrity.append(
                     f"indexed record {entry['record']} (seq {entry['seq']}) was accepted when written "
-                    f"and is refused now: {'; '.join(verdict.errors[:2])}"
+                    f"and is refused now as damaged: {'; '.join(verdict.errors[:2])}"
                 )
-        elif verdict.record["scope"] == "case":
-            accepted_case.append((entry["record"], verdict.record["outcome"]))
+            continue
+        if verdict.stale:
+            stale.append({"record": entry["record"], "reasons": verdict.stale[:4]})
+        if entry["scope"] == "case":
+            accepted_case.append((entry["record"], entry["outcome"]))
         else:
             accepted_task.append(
                 {
                     "record": entry["record"],
-                    "task": verdict.record["task"],
-                    "outcome": verdict.record["outcome"],
+                    "task": entry["task"],
+                    "outcome": entry["outcome"],
                 }
             )
     for rel in store.files_under(f"{EVIDENCE_REL}/{case_id}"):
@@ -1273,8 +1597,12 @@ def derive_status(case_id: str, root=DEFAULT_ROOT, *, store=None, suite: bool = 
                     ],
                 }
             )
+    stale_paths = {s["record"] for s in stale}
     if integrity:
         status, evidence = None, None
+    elif accepted_case and accepted_case[-1][0] in stale_paths:
+        # the deciding record no longer conforms: no status is derived from it or from an earlier one
+        status, evidence = None, accepted_case[-1][0]
     elif accepted_case:
         evidence, status = accepted_case[-1]
     else:
@@ -1285,6 +1613,8 @@ def derive_status(case_id: str, root=DEFAULT_ROOT, *, store=None, suite: bool = 
         "evidence": evidence,
         "component_records": accepted_task,
         "rejected_records": rejected,
+        "stale_records": stale,
+        "evidence_stale": evidence is not None and any(s["record"] == evidence for s in stale),
         "integrity_errors": integrity,
     }
 
@@ -1376,7 +1706,7 @@ def reseal_index(forged: MemStore, record_rel: str, record: dict) -> None:
 
 
 def _rejected_for(verdict: Verdict, needle: str) -> bool:
-    return not verdict.accepted and any(needle in e for e in verdict.errors)
+    return not verdict.accepted and any(needle in e for e in verdict.errors + verdict.stale)
 
 
 def oracle_cwr019(ctx: OracleContext) -> dict:
@@ -1725,7 +2055,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--status needs a CWR-NNN case id")
         result = derive_status(args.status, root)
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 1 if result["integrity_errors"] else 0
+        return 1 if result["integrity_errors"] or result["status"] is None else 0
     if args.staged:
         if args.records != ["-"]:
             parser.error("--staged reads exactly one record from stdin: pass -")
@@ -1744,8 +2074,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(verdict.as_dict(), sort_keys=True))
         elif verdict.accepted:
             print(f"ACCEPT {verdict.path} outcome={verdict.claimed}")
+        elif verdict.intact:
+            print(f"REJECT {verdict.path} (stale, not damaged): " + " | ".join(verdict.stale))
         else:
-            print(f"REJECT {verdict.path}: " + " | ".join(verdict.errors))
+            print(f"REJECT {verdict.path}: " + " | ".join(verdict.errors + verdict.stale))
     return 0 if all(v.accepted for v in verdicts) else 1
 
 

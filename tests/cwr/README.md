@@ -3,7 +3,9 @@
 
 # Qualification: registry, runner, checker and evidence
 
-Status: most cases have not been run through the runner yet. [registry.kvx](registry.kvx) holds the
+Status: only CWR-019 has its independent oracle, so no other case can PASS yet; the gap is the
+recorded deviation `finding.qualification_oracles_missing` in
+[qualification.kvx](../../spec/cwr/qualification.kvx), and [registry.kvx](registry.kvx) holds the
 current status of every case.
 
 A claim about CWR's behaviour counts only when an executed qualification attempt supports it and an
@@ -21,6 +23,8 @@ never trusts the driver's own verdict. The contract is
 | `qualify.py` | The runner. It runs drivers, stages their output, has the checker verify the record, writes it once and appends it to the attempt index. |
 | `check_evidence.py` | The independent checker. It starts no process, opens no network connection and reads only records, the files they name, the index, the registry and the schema. |
 | `closure.py` | Assembles release closure from accepted records and lists every item that blocks a release claim |
+| `runner_support.py` | Revision digests and process-group execution shared by the runner and closure; the checker never imports it |
+| `cases/protocol.py` | The driver side of the protocol: attributes driver checks to registered assertions, prints `ASSERT` and `BLOCKED` lines and writes `attempt.json` |
 | `evidence.schema.json` | The schema every attempt record must match, with every field required and nothing extra |
 | `cases/W_N.py` | One driver per specification task, run as `python3 tests/cwr/cases/W_N.py` from the repository root |
 | `evidence/` | Attempt records, their artifacts and the hash-chained attempt index `evidence/index.jsonl` |
@@ -42,7 +46,12 @@ python3 tests/cwr/qualify.py --case CWR-007              # run every driver of o
 python3 tests/cwr/qualify.py --task 2.2                  # run one driver as a component attempt
 python3 tests/cwr/check_evidence.py --status CWR-019     # derive one case's status from the index
 python3 tests/cwr/closure.py                             # read-only release closure report
+python3 tests/cwr/qualify.py --register-build CWR-007 sha256:<64hex>   # register a Build a PASS may use
+python3 tests/cwr/qualify.py --repair-pin                # re-pin the index after an interrupted append
 ```
+
+A Build hash enters a case's `registered_builds` only through `--register-build`, which refuses a hash
+whose Build directory under `build/` or `xbuild/` is missing or whose `manifest.kvx` names another hash.
 
 `make qualify` runs every case in order and stops at the first that does not pass. `make closure`
 runs the closure report.
@@ -66,9 +75,21 @@ ASSERT <CWR-NNN.aK> PASS|FAIL [diagnostic]
 BLOCKED <missing resource>
 ```
 
+Every driver uses [cases/protocol.py](cases/protocol.py). It wraps each group of checks in
+`observe("CWR-NNN.aK")` and prints one `ASSERT` line for every assertion of the subsets the registry
+assigns to the task. An assertion passes only when at least one check was attributed to it and all of
+them passed; an assertion no check observed is printed FAIL.
+
 A driver that touched Builds or Instances writes `$CWR_EVIDENCE_DIR/attempt.json`, naming the Build
 hashes, world, cassette digest, gateway mode, sandbox, and for each Instance its seed, arm, task,
-ledger and final state. Ledgers and final states are files inside the evidence directory.
+ledger and final state. Ledgers and final states are regular files inside the evidence directory. The
+runner refuses symbolic links and its own file names. Experimental flags are named as the kernel
+stamps them on ledger records, `x-<flag>`.
+
+The outcome is FAIL when any assertion was observed or recomputed FAIL, a driver timed out, or a
+driver exited non-zero without a `BLOCKED` line. It is BLOCKED only when nothing failed and registered
+assertions of the blocked driver are missing. Each driver leads its own process group, which the runner
+terminates when the driver exits, times out or the runner is interrupted.
 
 ## What makes a PASS
 
@@ -81,7 +102,10 @@ ledger and final state. Ledgers and final states are files inside the evidence d
   length are pinned in the registry.
 - Ledgers validate against the kernel ledger schema, and Build hashes, Instance ids, seeds, tail sizes,
   arms and model identity are recomputed from the ledger headers.
-- A campaign PASS also needs the complete arm matrix and a registered pre-registration.
+- A campaign PASS also needs the complete arm matrix and a registered pre-registration. Hypothesis and
+  arm come from each ledger header arm (`H1/drift-3`), compared with the registry matrix in lower case
+  with only letters, digits and `-`. A task label must be a task of `benchmark/suite.kvx` (`u<n>-...`
+  for H4) and must match the ledger header's initial-state digest; two tasks never share one.
 
 A driver's exit code or `ASSERT` line alone never makes a PASS. A task-scope (component) record never
 changes a case's status.
@@ -94,10 +118,22 @@ and cannot be chosen. A record is written exactly once and made read-only, and n
 overwritten or edited. Every record is appended, under an exclusive lock, to `evidence/index.jsonl`,
 where each line carries the sha256 of the previous line.
 
+A record names no host. Copied driver logs carry `<repo>` and `<home>` in place of machine paths. Each
+record pins the revisions of the product (all crates, `Cargo.toml`, `Cargo.lock`, `sdk/`, `vendor/`) and
+of the benchmark harness, computed from the files git tracks at their working-tree content.
+
+The checker separates damage from staleness. Damage is a record or artifact that no longer matches its
+digests, its index entry or the chain. A stale record is intact but no longer conforms to the current
+registry, schema, checker or oracle; each record pins the checker basis it was accepted under, so a
+conformance failure under an unchanged basis is still damage. Stale records are never accepted and block
+closure, and `--status` lists them apart from damage. Records written under evidence schema version 1
+are stale.
+
 ## Closure
 
 `closure.py` refuses a release claim, and lists every blocking item, when a case is missing, not
-PASS, tampered, without assertions or built from a revision that is no longer the current tree; when
+PASS, tampered, without assertions, stale (recorded from a revision that is no longer the current tree,
+judged by an older checker, or reported stale by the checker); when
 a specification clause maps to no PASS case; when a hypothesis report or its pre-registration is
 missing; or when owner acceptance is not recorded. Owner acceptance is the owner's act alone. Nothing
 in this repository records it on the owner's behalf.

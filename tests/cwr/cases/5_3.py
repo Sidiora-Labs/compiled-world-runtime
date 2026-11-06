@@ -26,9 +26,8 @@ runs the reference turns, upgrades and renders contexts, and the campaign ledger
 Every experimental arm is a CWR Build with exactly one pillar ablated; nothing here references,
 invokes or compares against any other agent or harness.
 
-Secrets: --execute needs the gateway variables in the process environment, which
-benchmark/harness/model.py reads at runtime; the operator exports them (for example
-`set -a; . ./.env; set +a`). This file never reads, prints or stores a credential value.
+Secrets: the gateway configuration is read only by benchmark/harness/model.py at runtime. This file
+never reads, prints or stores a value from the environment file.
 """
 
 from __future__ import annotations
@@ -39,12 +38,10 @@ import contextlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -53,8 +50,8 @@ REPO = Path(__file__).resolve().parents[3]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from benchmark.harness.arms import load_arms  # noqa: E402  importable only after the sys.path insert above
-from benchmark.harness.ledgerio import (  # noqa: E402  importable only after the sys.path insert above
+from benchmark.harness.arms import load_arms  # noqa: E402
+from benchmark.harness.ledgerio import (  # noqa: E402
     load_predicate,
     read_kvx,
     read_ledger,
@@ -62,7 +59,7 @@ from benchmark.harness.ledgerio import (  # noqa: E402  importable only after th
     state_view,
     write_kvx,
 )
-from benchmark.harness.prereg import load_prereg, missing_fields  # noqa: E402  importable only after the sys.path insert above
+from benchmark.harness.prereg import load_prereg, missing_fields  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import protocol  # noqa: E402  tests/cwr/cases/protocol.py, the runner protocol of every driver
@@ -198,35 +195,28 @@ def any_results(hypothesis: str) -> bool:
 # Builds (the operator role: only `cwr build` creates a Build)
 
 
-def pair_root(pair: str | None, experimental: bool, side: str = "b") -> Path:
-    """Build root of the control world (build/control/build) or of one side of a pair.
+def pair_root(pair: str | None, experimental: bool) -> Path:
+    """Build root of the control world (build/control/build) or of one pair (build/pairs/UN/build).
 
-    Side A and side B of each upgrade pair have their own roots (build/pairs/UN/a/build and
-    build/pairs/UN/b/build) because the compiler's default previous Build is the newest Build of the
-    same world name under the output root: side A is a first Build, side B names A as --previous.
-    The compiler writes experimental Builds to the xbuild/ directory beside the root.
+    Each upgrade pair has its own root because the compiler's default previous Build is the newest
+    Build of the same world name under the output root (side A of a pair is a first Build), and the
+    compiler writes experimental Builds to the xbuild/ directory beside the root.
     """
-    base = REPO / "build" / "pairs" / pair / side if pair else REPO / "build" / "control"
+    base = REPO / "build" / "pairs" / pair if pair else REPO / "build" / "control"
     return base / ("xbuild" if experimental else "build")
 
 
 def build_roots() -> list[Path]:
     """Every root a registered H3/H4 Build hash resolves in."""
-    # The shared control Build may have been registered first by task 5.2, which compiles into
-    # .cwr/campaign-1/build; it is resolved there as well as under build/ and build/control/build.
-    shared = REPO / ".cwr" / "campaign-1"
-    roots = [REPO / "build", REPO / "xbuild", shared / "build", shared / "xbuild"]
-    roots += [pair_root(None, False), pair_root(None, True)]
+    roots = [REPO / "build", REPO / "xbuild", pair_root(None, False), pair_root(None, True)]
     for pair in PAIRS:
-        roots += [pair_root(pair, False, "a"), pair_root(pair, False), pair_root(pair, True)]
+        roots += [pair_root(pair, False), pair_root(pair, True)]
     return roots
 
 
-def build(
-    source: Path, *flags: str, previous: str | None = None, pair: str | None = None, side: str = "b"
-) -> str:
+def build(source: Path, *flags: str, previous: str | None = None, pair: str | None = None) -> str:
     """Compile a World Source with the real compiler and return its sha256:<hex> hash."""
-    root = pair_root(pair, False, side)
+    root = pair_root(pair, False)
     root.mkdir(parents=True, exist_ok=True)
     args = ["build", str(source), "--out", str(root)]
     if previous:
@@ -354,13 +344,10 @@ def record_pair_cassettes(
 
 
 def register(args: argparse.Namespace) -> int:
-    frozen = {h for h in ("H3", "H4") if any_results(h)}
-    for hypothesis in sorted(frozen):
-        print(
-            f"{hypothesis} keeps its registration: results exist and a registration precedes every run"
-        )
-    if frozen == {"H3", "H4"}:
-        return 2
+    for hypothesis in ("H3", "H4"):
+        if any_results(hypothesis) and not args.force_reregister_without_results:
+            print(f"refused: {hypothesis} results exist; a registration precedes every run")
+            return 2
     meta, arms = load_arms(ARMS_KVX)
     control = meta["control"].get("build")
     if control and build_dir(control) is None:
@@ -463,7 +450,7 @@ def register(args: argparse.Namespace) -> int:
     h4_pairs: dict[str, dict[str, Any]] = {}
     for pair in PAIRS:
         body, task = up[f"pair.{pair}"], up[f"task.{pair}"]
-        a = build(REPO / body["source_a"], pair=pair, side="a")
+        a = build(REPO / body["source_a"], pair=pair)
         b = {
             arm: build(REPO / body["source_b"], *([flag] if flag else []), previous=a, pair=pair)
             for arm, flag in H4_FLAGS.items()
@@ -545,61 +532,19 @@ def register(args: argparse.Namespace) -> int:
         "Every arm is a CWR Build of refworld; there is no external baseline. Build hashes come from the\n"
         "real compiler; digests freeze the metric definitions, arms, suite and analysis at registration."
     )
-    for hypothesis, path, body in (("H3", H3_KVX, h3), ("H4", H4_KVX, h4)):
-        if hypothesis in frozen:
-            continue
-        write_kvx(
-            path,
-            body,
-            header="Copyright Sidiora Labs Inc. CWR® 2026-2027\n"
-            "SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0\n" + note.format(h=hypothesis),
-        )
-        print(f"registered {hypothesis} at {stamp} (status {status}); control {control}")
-    return 0
-
-
-def supersede(args: argparse.Namespace) -> int:
-    """Retain a hypothesis's results unanalysed under results/h<N>/_superseded/<registration>/.
-
-    Used when a registration stops matching the completed pre-registration (decisions.md: a revised
-    campaign is a new recorded profile with the original result retained). The campaign file is
-    copied next to the results; the hypothesis can then be registered again.
-    """
-    hypothesis = args.supersede.upper()
-    path = H3_KVX if hypothesis == "H3" else H4_KVX
-    camp = campaign(path)
-    if not camp:
-        print(f"{hypothesis} is not registered")
-        return 2
-    stamp = camp["meta"]["registered_at"].replace(":", "-").split(".")[0] + "Z"
-    root = RESULTS / hypothesis.lower()
-    target = root / "_superseded" / f"registration-{stamp}"
-    target.mkdir(parents=True, exist_ok=False)
-    moved = []
-    for name in (
-        "_pilot",
-        "_replaced",
-        "analysis.json",
-        *(H3_ARMS if hypothesis == "H3" else H4_ARMS),
-    ):
-        if (root / name).exists():
-            os.replace(root / name, target / name)
-            moved.append(name)
-    shutil.copyfile(path, target / f"{path.name}.registration")
     write_kvx(
-        target / "SUPERSEDED.kvx",
-        {
-            "superseded": {
-                "registration": camp["meta"]["registered_at"],
-                "reason": args.reason,
-                "contents": moved,
-            }
-        },
-        header="Copyright Sidiora Labs Inc. CWR® 2026-2027\n"
-        "SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0\n"
-        "Retained, never analysed: a superseded registration and its runs.",
+        H3_KVX,
+        h3,
+        header="Copyright Sidiora Labs Inc. CWR® 2026-2027\nSPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0\n"
+        + note.format(h="H3"),
     )
-    print(f"moved {', '.join(moved) or 'nothing'} to {rel(target)}")
+    write_kvx(
+        H4_KVX,
+        h4,
+        header="Copyright Sidiora Labs Inc. CWR® 2026-2027\nSPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0\n"
+        + note.format(h="H4"),
+    )
+    print(f"registered H3 and H4 at {stamp} (status {status}); control {control}")
     return 0
 
 
@@ -715,18 +660,20 @@ def execute(args: argparse.Namespace) -> int:
     if not pilot:
         pilot_cells = plan_cells(hypothesis, True)
         unclean = [c for c in pilot_cells if not cell_done(c)]
-        if unclean:
+        if unclean and not args.skip_pilot_gate:
             print(f"refused: pilot gate open; {len(unclean)} pilot cells missing or failed")
             return 2
     if sha256_file(METRICS_PY) != camp["registration"]["metrics_py"]:
         print("refused: metrics.py changed after registration")
         return 3
-    from benchmark.harness.model import GatewayClient, ModelError
+    prereg = load_prereg(PREREG)
+    meta, arms = load_arms(ARMS_KVX)
+    registered = not missing_fields(prereg, arms, meta["control"])
+    from benchmark.harness.model import GatewayClient
 
-    try:
-        client = GatewayClient.from_env()
-    except ModelError as error:
-        print(f"refused: {error}")
+    client = GatewayClient.from_env()
+    if prereg["campaign"].get("model") and client.model != prereg["campaign"]["model"]:
+        print("refused: the configured model identity differs from the registered one")
         return 2
     model = LimitedModel(client, args.jobs)
     cells = [c for c in plan_cells(hypothesis, pilot) if not cell_done(c)]
@@ -739,34 +686,45 @@ def execute(args: argparse.Namespace) -> int:
     lock = threading.Lock()
     tally: dict[str, int] = {}
 
-    deadline = time.monotonic() + args.deadline_min * 60 if args.deadline_min else None
+    suite_info = read_kvx(SUITE)
 
     def one(cell: dict[str, Any]) -> str:
-        if deadline is not None and time.monotonic() > deadline:
-            with lock:
-                tally["skipped_deadline"] = tally.get("skipped_deadline", 0) + 1
-            return "skipped_deadline"
-        # The shared pre-flight of benchmark/harness/run.py: registration digests, completeness,
-        # seed, model identity, the registered Build (A and per-arm B for H4) with its flag, the
-        # cassette set digest and, for H4, the upgrades digest.
-        try:
-            checked = harness.preflight(
-                hypothesis,
-                cell["arm"],
-                cell["task"],
-                cell["seed"],
-                model_identity=client.model,
-                build_roots=build_roots(),
-                cassettes=REPO / camp["execution"]["cassette_set"],
-                build=cell["build"],
+        arm = arms[(hypothesis, cell["arm"])]
+        upgrade = None
+        if cell["upgrade"]:
+            upgrade = harness.UpgradePlan(
+                after_turn=cell["upgrade"][0], build_b=cell["upgrade"][1], pair=cell["pair"]
             )
-        except harness.PreflightRefused as error:
-            outcome = f"refused ({error})"
-            with lock:
-                tally["refused"] = tally.get("refused", 0) + 1
-                print(f"{hypothesis}/{cell['arm']} {cell['task']} seed {cell['seed']}: {outcome}")
-            return outcome
-        spec = checked.episode(results_root=cell["root"])
+        spec = harness.EpisodeSpec(
+            hypothesis=hypothesis,
+            arm=arm,
+            task=cell["task"],
+            seed=cell["seed"],
+            build=cell["build"],
+            predicate_path=cell["predicate"],
+            initial_state=cell["task_dir"] / "initial.kvx",
+            turn_limit=harness._turn_limit(prereg["campaign"], cell["bin"]),
+            bin=cell["bin"],
+            max_tokens_per_turn=prereg["campaign"].get("max_tokens_per_turn", 16000),
+            token_budget=prereg["campaign"].get("token_budget_per_instance"),
+            model_params=prereg["campaign"].get("sampling") or {},
+            upgrade=upgrade,
+            results_root=cell["root"],
+            registered=registered,
+            cassette_digest=camp["execution"].get("cassette_digest"),
+            suite_digest=prereg["campaign"].get("suite_digest"),
+            cassette=cassette_for(camp, cell["task"], cell["seed"]),
+            instruction=(cell["task_dir"] / "task.md").read_text("utf-8"),
+            reuse_rule=harness._reuse_rule(suite_info.get(f"task.{cell['task']}", {})),
+            upgrade_pair=(
+                {
+                    "changed_primitives": camp[f"pair.{cell['pair']}"]["changed_primitives"],
+                    "misuse_code": camp[f"pair.{cell['pair']}"]["misuse_code"],
+                }
+                if cell["upgrade"]
+                else None
+            ),
+        )
         try:
             attempt = harness.run_episode(spec, kernel(), model)
             outcome = attempt["exit_status"]
@@ -790,28 +748,14 @@ def execute(args: argparse.Namespace) -> int:
 # Analysis and reports
 
 
-# The ledgers each hypothesis's analysis reads: H3's registered directions include the long-versus-short
-# deltas of H1 and H2 (benchmark/preregistration.kvx [hypothesis.H3]), so its view holds h1 and h2 too.
-ANALYSIS_VIEW = {"H3": ("h1", "h2", "h3"), "H4": ("h4",)}
-# analyse.py replays every successful Instance through the kernel to recompute turns to success.
-ANALYSE_JOBS = 16
-
-
-def run_analyse(hypothesis: str, out: Path) -> tuple[int, str]:
-    """benchmark/analyse.py over a view of benchmark/results holding only this hypothesis's inputs."""
+def run_analyse(out: Path, results: Path = RESULTS) -> tuple[int, str]:
     prereg = load_prereg(PREREG)
     meta, arms = load_arms(ARMS_KVX)
     draft = bool(missing_fields(prereg, arms, meta["control"]))
-    with tempfile.TemporaryDirectory(dir=scratch_root()) as view:
-        for name in ANALYSIS_VIEW[hypothesis]:
-            if (RESULTS / name).is_dir():
-                (Path(view) / name).symlink_to(RESULTS / name, target_is_directory=True)
-        cmd = [sys.executable, "-I", str(ANALYSE), "--results", view, "--out", str(out)]
-        cmd += ["--jobs", str(ANALYSE_JOBS), "--cwr", str(cwr_binary())]
-        cmd += [arg for root in build_roots() if root.is_dir() for arg in ("--builds", str(root))]
-        if draft:
-            cmd.append("--draft-ok")
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=REPO)
+    cmd = [sys.executable, "-I", str(ANALYSE), "--results", str(results), "--out", str(out)]
+    if draft:
+        cmd.append("--draft-ok")
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=REPO)
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 
@@ -858,25 +802,6 @@ def pilot_counts(hypothesis: str) -> dict[str, Any]:
         status = read_kvx(attempt).get("attempt", {}).get("exit_status", "unknown")
         tally[status] = tally.get(status, 0) + 1
     return tally
-
-
-def run_profile(hypothesis: str) -> dict[str, dict[str, Any]]:
-    """Per arm: attempt exit statuses (harness-recorded) and the share of adapter call records that
-    failed UNAVAILABLE (from the ledgers; in replay mode a request the cassette set does not hold is
-    UNAVAILABLE, so this is the cassette-miss share)."""
-    out: dict[str, dict[str, Any]] = {}
-    for cell in result_cells(RESULTS / hypothesis.lower()):
-        arm = cell.parts[-3]
-        body = out.setdefault(arm, {"exits": {}, "adapter_calls": 0, "adapter_unavailable": 0})
-        status = read_kvx(cell / "attempt.kvx").get("attempt", {}).get("exit_status", "unknown")
-        body["exits"][status] = body["exits"].get(status, 0) + 1
-        if (cell / "ledger.jsonl").exists():
-            for record in read_ledger(cell / "ledger.jsonl"):
-                if record.get("kind") == "adapter":
-                    body["adapter_calls"] += 1
-                    if (record.get("outcome") or {}).get("code") == "UNAVAILABLE":
-                        body["adapter_unavailable"] += 1
-    return dict(sorted(out.items()))
 
 
 def render_report(hypothesis: str, report: dict[str, Any] | None) -> str:
@@ -1020,27 +945,6 @@ def render_report(hypothesis: str, report: dict[str, Any] | None) -> str:
                 "- none in this hypothesis"
             ]
             out.append("")
-    profile = run_profile(hypothesis)
-    if profile:
-        out += [
-            "## Run profile",
-            "",
-            "Exit statuses are harness-recorded (attempt records). The UNAVAILABLE share counts adapter "
-            "call records in the ledgers that failed UNAVAILABLE; in replay mode a request the cassette "
-            "set does not hold byte for byte is UNAVAILABLE, so a task whose adapter requests differ from "
-            "the recorded reference requests cannot succeed and runs to its turn limit.",
-            "",
-        ]
-        rows = []
-        for arm, body in profile.items():
-            exits = ", ".join(f"{k} {v}" for k, v in sorted(body["exits"].items()))
-            share = (
-                fmt(body["adapter_unavailable"] / body["adapter_calls"])
-                if body["adapter_calls"]
-                else "n/a"
-            )
-            rows.append([f"`{hypothesis}/{arm}`", exits, str(body["adapter_calls"]), share])
-        out += [table(rows, ["Arm", "Exit statuses", "Adapter calls", "UNAVAILABLE share"]), ""]
     out += ["## Deviations from pre-registration", ""]
     devs = list((camp.get("deviations") or {}).get("items", [])) if camp else []
     if counts.get("registered") and not complete:
@@ -1077,7 +981,7 @@ def analyse_and_report(args: argparse.Namespace) -> int:
         out = RESULTS / hypothesis.lower() / "analysis.json"
         report = None
         if result_cells(RESULTS / hypothesis.lower()):
-            code, text = run_analyse(hypothesis, out)
+            code, text = run_analyse(out)
             print(f"{hypothesis}: analyse.py exit {code}: {text[-300:]}")
             worst = max(worst, code)
             if code in (0, 5) and out.exists():
@@ -1568,7 +1472,7 @@ def check_12_5(camp3: dict[str, Any], camp4: dict[str, Any]) -> tuple[bool, str]
                 if "mean" not in s or "ci" not in s:
                     problems.append(f"{hyp}/{arm}/{g}: no mean and interval for {primary}")
         fresh = scratch_root() / f"fresh-{hyp.lower()}.json"
-        code, text = run_analyse(hyp, fresh)
+        code, text = run_analyse(fresh)
         if code not in (0, 5) or not fresh.exists():
             problems.append(f"{hyp}: fresh analyse.py run exited {code}: {text[-200:]}")
             continue
@@ -1659,23 +1563,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--rerecord", action="store_true", help="re-record existing H4 pair cassettes"
     )
+    parser.add_argument(
+        "--force-reregister-without-results", action="store_true", help=argparse.SUPPRESS
+    )
     parser.add_argument("--execute", choices=["h3", "h4"])
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--pilot", action="store_true")
     mode.add_argument("--full", action="store_true")
+    parser.add_argument("--skip-pilot-gate", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--max-cells", type=int, default=0)
-    parser.add_argument(
-        "--deadline-min",
-        type=float,
-        default=0,
-        help="stop starting new cells after this many minutes; running cells finish (0: none)",
-    )
     parser.add_argument("--analyse", action="store_true")
-    parser.add_argument("--supersede", choices=["h3", "h4"])
-    parser.add_argument(
-        "--reason", default="the registration no longer matches the completed pre-registration"
-    )
     args = parser.parse_args(argv)
     if args.register:
         return register(args)
@@ -1683,8 +1581,6 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.pilot or args.full):
             parser.error("--execute needs --pilot or --full")
         return execute(args)
-    if args.supersede:
-        return supersede(args)
     if args.analyse:
         return analyse_and_report(args)
     return verify(args)

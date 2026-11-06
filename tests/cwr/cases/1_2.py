@@ -43,6 +43,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 REFWORLD = REPO / "examples/refworld"
 PAIRS = REPO / "examples/refworld-upgrades"
@@ -75,6 +78,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("1.2", protocol.ok_bad(R))
 SCRATCH = Path(tempfile.mkdtemp(prefix="cwr-1_2-"))
 CWR = Path()
 SEEN: set[str] = set()
@@ -1794,7 +1798,11 @@ def main() -> int:
     global CWR
     ok, evidence, suite = cargo()
     CWR = target_dir() / "debug" / "cwr"
-    check_unit_tests(ok, evidence, suite)
+    with (
+        OBS.observe("CWR-003.a1", match="contract suite|suite ran every fixture"),
+        OBS.observe("CWR-003.a5", match="run twice"),
+    ):
+        check_unit_tests(ok, evidence, suite)
     clean = copy(REFWORLD, "refworld")
     removed = sorted(
         p.name
@@ -1802,16 +1810,47 @@ def main() -> int:
         if p.is_file() and p.name not in ("world.kvx", "CHANGELOG.kvx")
     )
     frozen = kvx(UPGRADES)
-    check_refworld(clean)
-    check_contract_test_tampers(clean)
-    sides = check_pairs(frozen)
-    check_variants(clean)
-    check_gate_tampers(sides)
-    check_version_rules(clean)
-    check_migrations(sides)
-    check_prose(clean)
+    with (
+        OBS.observe("CWR-003.a1", match="clean refworld: cwr build"),
+        OBS.observe("CWR-003.a5", match="identical stage reports"),
+    ):
+        check_refworld(clean)
+    with (
+        OBS.observe("CWR-003.a2", match="truncated value|effect"),
+        OBS.observe("CWR-003.a3", match="removed"),
+        OBS.observe("CWR-003.a4", match="undeclared"),
+        OBS.observe("CWR-003.a5", match="host state"),
+    ):
+        check_contract_test_tampers(clean)
+    with (
+        OBS.observe("CWR-004.a1", match="independent recomputation|equals frozen"),
+        OBS.observe("CWR-004.a3", match="documented stricter precondition"),
+        OBS.observe("CWR-004.a4", match="documentation-only change passes with a patch"),
+        OBS.observe("CWR-004.a5", match="state_shape"),
+    ):
+        sides = check_pairs(frozen)
+    with (
+        OBS.observe("CWR-004.a1", match="recomputation"),
+        OBS.observe("CWR-004.a5", match="state shape changed without"),
+    ):
+        check_variants(clean)
+    with (
+        OBS.observe("CWR-004.a2", match="undocumented stricter|uncovered"),
+        OBS.observe(
+            "CWR-004.a6",
+            match="below the derived bump|derived major declared as a patch|version equal to the previous",
+        ),
+    ):
+        check_gate_tampers(sides)
+    with OBS.observe("CWR-004.a6", match="1\\.0\\.0|pre-1\\.0"):
+        check_version_rules(clean)
+    with OBS.observe("CWR-004.a5"):
+        check_migrations(sides)
+    with OBS.observe("CWR-004.a4", match="patch|prose-only"):
+        check_prose(clean)
     check_builds(clean)
     print(f"# scratch {SCRATCH}; refworld copy without {removed}", file=sys.stderr)
+    OBS.emit()
     all_ok = True
     for c in CLAUSES:
         good = R.ok[c] and not R.bad[c]

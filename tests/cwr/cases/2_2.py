@@ -48,6 +48,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 sys.dont_write_bytecode = (
     True  # importing the Build's codec must never write __pycache__ into a Build
 )
@@ -102,6 +105,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("2.2", protocol.ok_bad(R))
 
 
 def run(cmd, **kw) -> subprocess.CompletedProcess:
@@ -1476,18 +1480,38 @@ def main() -> int:
         for b in (ctl, tight, budget, defect):
             if b.name != build_hash(b):
                 raise SystemExit(f"independent Build hash mismatch for {b}")
-        check_closure(world, ctl)
-        check_limits(world, tight, budget)
-        check_preconditions(world, ctl)
+        with (
+            OBS.observe("CWR-007.a1", match="closure probes|only the Build SDK|closure refusals"),
+            OBS.observe("CWR-007.a2", match="closure probes|unreachable even through|enumerates"),
+            OBS.observe("CWR-007.a3", match="closure probes|network"),
+            OBS.observe("CWR-007.a4", match="closure probes|filesystem|host paths"),
+            OBS.observe("CWR-007.a5", match="closure probes|clock"),
+        ):
+            check_closure(world, ctl)
+        with OBS.observe("CWR-007.a6"):
+            check_limits(world, tight, budget)
+        with OBS.observe("CWR-008.a2"):
+            check_preconditions(world, ctl)
         check_visibility(world, ctl)
-        check_atomic_and_script(world, ctl)
-        check_defects(world, defect)
-        check_determinism(world, ctl)
-        check_rules_frozen(world, ctl)
+        with (
+            OBS.observe("CWR-008.a1", match="leave state unchanged"),
+            OBS.observe("CWR-008.a2", match="precondition failure raised the typed"),
+            OBS.observe(
+                "CWR-008.a3", match="partial|uncaught failure after mutations|next turn sees"
+            ),
+        ):
+            check_atomic_and_script(world, ctl)
+        with OBS.observe("CWR-008.a5", match="INVARIANT_V|undeclared"):
+            check_defects(world, defect)
+        with OBS.observe("CWR-008.a4", match="repetitions|equal se"):
+            check_determinism(world, ctl)
+        with OBS.observe("CWR-007.a7"):
+            check_rules_frozen(world, ctl)
         check_audit(world, {"sha256:" + defect.name})
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
         shutil.rmtree(home_root, ignore_errors=True)
+    OBS.emit()
     failed = 0
     for c in CLAUSES:
         if R.bad[c]:

@@ -34,6 +34,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 CLAUSES = ["5.3", "10.1", "10.2", "10.3", "10.4", "10.5"]
 TIMEOUT = 900
@@ -65,6 +68,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("3.2", protocol.ok_bad(R))
 
 
 def run(cmd: list, **kw) -> subprocess.CompletedProcess:
@@ -741,11 +745,20 @@ def main() -> int:
         k = Cwr(exe, work)
         src = copy_source(REFWORLD, work / "src")
         b = scenario_builds(k, src)
-        check_10_1(k, b, src)
-        check_10_2(k, b, src)
-        check_10_4(k, b)
-        check_10_5(k, b, src)
-        check_notices(k)
+        with OBS.observe("CWR-013.a2", match="refuse|without the flag|without --allow"):
+            check_10_1(k, b, src)
+        with (
+            OBS.observe("CWR-013.a3", match="kind drift at turn 8|drift-1 turns"),
+            OBS.observe("CWR-013.a4", match="manual the model receives is byte-identical"),
+        ):
+            check_10_2(k, b, src)
+        with OBS.observe("CWR-013.a6", match="second call"):
+            check_10_4(k, b)
+        with OBS.observe("CWR-013.a1"):
+            check_10_5(k, b, src)
+        with OBS.observe("CWR-013.a5", match="rendering|version-only|silent"):
+            check_notices(k)
+    OBS.emit()
     return R.report()
 
 

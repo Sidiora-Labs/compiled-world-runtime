@@ -36,6 +36,9 @@ import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol
+
 REPO = Path(__file__).resolve().parents[3]
 PACK_REL = Path("spec/cwr")
 PACK = REPO / PACK_REL
@@ -639,6 +642,12 @@ def main() -> int:
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
+    observer = protocol.Observer("0.1", protocol.pairs(results.checks))
+    observer.claim("CWR-020.a1", match=r"real pack validates")
+    observer.claim("CWR-020.a1", clause="13.5")
+    observer.claim("CWR-020.a2", match=r"tamper 'case CWR-\d{3} status")
+    observer.claim("CWR-020.a3", match=r"tamper 'task \S+ status")
+    observer.emit()
     all_ok = True
     for clause, checks in results.checks.items():
         passed = sum(ok for ok, _ in checks)

@@ -2,17 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "cwr/evidence.schema.json",
   "title": "CWR qualification attempt record",
-  "description": "One immutable attempt record written by tests/cwr/qualify.py to tests/cwr/evidence/<case>/<timestamp>-<n>.json and validated by tests/cwr/check_evidence.py (spec/cwr/verification.md section 2). Every property is required; a value that does not apply is null or an empty list, never omitted. Paths are relative to the repository root. observed holds the driver's ASSERT lines; recomputed holds the independent oracle's outcome for every registered assertion of the scope (UNVERIFIED when the case has no oracle), and only recomputed outcomes can make a PASS. attempt_sha256 digests every file of the attempt directory. A record is evidence only while it is an entry of the hash-chained index tests/cwr/evidence/index.jsonl whose head is pinned in tests/cwr/registry.kvx.",
-  "version": 1,
+  "description": "One immutable attempt record written by tests/cwr/qualify.py to tests/cwr/evidence/<case>/<timestamp>-<n>.json and validated by tests/cwr/check_evidence.py (spec/cwr/verification.md section 2). Every property is required; a value that does not apply is null or an empty list, never omitted. Paths are relative to the repository root. observed holds the driver's ASSERT lines; recomputed holds the independent oracle's outcome for every registered assertion of the scope (UNVERIFIED when the case has no oracle), and only recomputed outcomes can make a PASS. attempt_sha256 digests every file of the attempt directory. A record is evidence only while it is an entry of the hash-chained index tests/cwr/evidence/index.jsonl whose head is pinned in tests/cwr/registry.kvx. registry_sha256 digests the [meta] section without the index pin and the case section without status and evidence; checker.basis digests the checker revision, this schema, the case oracle and that registry digest, so a later change to any of them makes the record stale rather than damaged. experimental_flags hold the flag name the kernel stamps on ledger records (x-<flag>). host names no machine; driver logs carry <repo> and <home> in place of machine paths. Version 2 replaced host.hostname with nothing and added schema_sha256, product_revision, harness_revision and checker.basis.",
+  "version": 2,
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version", "record_id", "case", "scope", "task", "tier", "assertion_ids", "clauses",
-    "spec_revision", "registry_version", "registry_sha256",
+    "spec_revision", "registry_version", "registry_sha256", "schema_sha256",
     "build_hash", "builds", "experimental_flags", "world",
     "instance_id", "seed", "tail_size", "arm", "instances",
     "cassette_digest", "gateway_mode", "model", "preregistration_digest",
-    "compiler_revision", "kernel_revision", "sdk_revision", "host",
+    "compiler_revision", "kernel_revision", "sdk_revision", "product_revision", "harness_revision", "host",
     "started_at", "ended_at", "duration_ms", "timestamp",
     "command", "exit_code", "invocations", "log", "log_sha256",
     "ledger_digest", "ledgers", "final_states", "attempt_sha256",
@@ -20,7 +20,7 @@
     "outcome", "checker"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "record_id": {"type": "string", "pattern": "^CWR-[0-9]{3}/[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$"},
     "case": {"type": "string", "pattern": "^CWR-[0-9]{3}$"},
     "scope": {"enum": ["task", "case"]},
@@ -31,9 +31,10 @@
     "spec_revision": {"$ref": "#/$defs/sha256"},
     "registry_version": {"type": "integer", "minimum": 1},
     "registry_sha256": {"$ref": "#/$defs/sha256"},
+    "schema_sha256": {"$ref": "#/$defs/sha256"},
     "build_hash": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
     "builds": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
-    "experimental_flags": {"type": "array", "items": {"type": "string", "pattern": "^--x-[a-z-]+$"}},
+    "experimental_flags": {"type": "array", "items": {"type": "string", "pattern": "^x-[a-z][a-z-]*$"}},
     "world": {
       "anyOf": [
         {"type": "null"},
@@ -59,11 +60,13 @@
     "compiler_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
     "kernel_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
     "sdk_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "product_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "harness_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
     "host": {
       "type": "object", "additionalProperties": false,
-      "required": ["hostname", "os", "machine", "python", "sandbox"],
+      "required": ["os", "machine", "python", "sandbox"],
       "properties": {
-        "hostname": {"type": "string"}, "os": {"type": "string"}, "machine": {"type": "string"},
+        "os": {"type": "string"}, "machine": {"type": "string"},
         "python": {"type": "string"}, "sandbox": {"type": ["string", "null"]}
       }
     },
@@ -89,10 +92,11 @@
     "outcome": {"enum": ["PASS", "FAIL", "BLOCKED"]},
     "checker": {
       "type": "object", "additionalProperties": false,
-      "required": ["program", "revision", "accepted", "errors"],
+      "required": ["program", "revision", "basis", "accepted", "errors"],
       "properties": {
         "program": {"const": "tests/cwr/check_evidence.py"},
         "revision": {"$ref": "#/$defs/sha256"},
+        "basis": {"$ref": "#/$defs/sha256"},
         "accepted": {"type": "boolean"},
         "errors": {"type": "array", "items": {"type": "string"}}
       }

@@ -413,8 +413,9 @@ impl Surface {
             }
         }
         let flag = match mkey("experimental") {
-            Some(Value::Bool(true)) => mkey("experimental_flag")
-                .and_then(|v| v.as_str().map(str::to_string)),
+            Some(Value::Bool(true)) => {
+                mkey("experimental_flag").and_then(|v| v.as_str().map(str::to_string))
+            }
             _ => None,
         };
         let prose = build_prose(dir, flag.as_deref());
@@ -509,7 +510,10 @@ fn probe_prose() -> BTreeMap<String, String> {
 pub fn source_prose(prose: &BTreeMap<String, String>) -> Option<BTreeMap<String, String>> {
     let empty = json!({"world": {"name": "", "version": "", "modules": []}});
     let render = crate::generate::manual::render;
-    cut_regions(&render(&empty, "", prose), &render(&empty, "", &probe_prose()))
+    cut_regions(
+        &render(&empty, "", prose),
+        &render(&empty, "", &probe_prose()),
+    )
 }
 
 /// The prose regions of a Build's `manual.md`, cut out with the Build's own `contracts.json`.
@@ -1625,6 +1629,35 @@ mod tests {
     fn canonical_output_is_sorted() {
         let v = json!({"b": [1, {"z": 1, "a": []}], "a": {}});
         assert_eq!(canonical_pretty(&v), "{\n  \"a\": {},\n  \"b\": [\n    1,\n    {\n      \"a\": [],\n      \"z\": 1\n    }\n  ]\n}\n");
+    }
+
+    #[test]
+    fn prose_regions_are_the_same_from_a_source_and_from_a_rendered_manual() {
+        let mut prose = BTreeMap::new();
+        prose.insert("intro.md".to_string(), "# Intro\n\nHello.\n".to_string());
+        prose.insert("conventions.md".to_string(), String::new());
+        prose.insert("examples.md".to_string(), "Example.\n\n".to_string());
+        prose.insert("types.md".to_string(), "## T\n\nx".to_string());
+        prose.insert("zz.md".to_string(), "Extra.".to_string());
+        let s = source_prose(&prose).expect("regions");
+        assert_eq!(s["manual/intro.md"], "### Intro\n\nHello.");
+        assert_eq!(s["manual/conventions.md"], "");
+        assert_eq!(s["manual/examples.md"], "Example.\n\n### zz\n\nExtra.");
+        assert_eq!(s["manual/types.md"], "#### T\n\nx");
+        let c = json!({"world": {"name": "w", "version": "1.2.3", "modules": ["fs"]},
+            "limits": {"cpu_ms": 1, "primitive_calls": 3}, "clock": {"tick_per_turn": 1}});
+        let render = crate::generate::manual::render;
+        let (m, p) = (render(&c, "ab", &prose), render(&c, "ab", &probe_prose()));
+        assert_eq!(cut_regions(&m, &p).as_ref(), Some(&s));
+        let w = crate::experimental::one_primitive::with_sentence;
+        assert_eq!(
+            cut_regions(&w(&m).unwrap(), &w(&p).unwrap()).as_ref(),
+            Some(&s)
+        );
+        prose.insert("conventions.md".to_string(), "More.".to_string());
+        let changed = source_prose(&prose).expect("regions");
+        assert_eq!(changed["manual/conventions.md"], "More.");
+        assert_eq!(cut_regions("hand-written manual\n", &p), None);
     }
 
     #[test]

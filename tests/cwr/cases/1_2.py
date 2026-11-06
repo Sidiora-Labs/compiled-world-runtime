@@ -5,8 +5,9 @@
 
 Cases CWR-003 and CWR-004; clauses 1.6, 3.6, 4.2, 4.3, 4.4 and 5.5 of spec/cwr/spec.kvx.
 
-Builds the `cwr` binary with cargo, runs the `cwr-compiler` unit tests (including the refworld
-contract suite, run twice in the real ephemeral Instance), then drives `cwr build --json` and
+Builds the `cwr` binary with cargo, runs the unit tests of this task's `cwr-compiler` modules
+(contract_tests, diff, changelog_gate, version, ephemeral; including the refworld contract suite,
+run twice in the real ephemeral Instance), then drives `cwr build --json` and
 `cwr diff` as subprocesses over:
 
 * a clean copy of examples/refworld (README.md removed, the only file outside the World Source
@@ -20,7 +21,8 @@ contract suite, run twice in the real ephemeral Instance), then drives `cwr buil
   section and line concerned.
 
 The ContractDiff is recomputed independently here (KVX read with a small reader of its own,
-lib/ state records read with Python's ast module, the kind and bump table of world-source.md
+lib/ state records read with Python's ast module, manual/ prose regions rendered the way
+model-surface.md section 2 places them, the kind and bump table of world-source.md
 section 11, the pre-1.0 rule P15 of decisions.md) and compared with `cwr diff` output, and with
 the frozen expectations in benchmark/upgrades.kvx.
 
@@ -45,7 +47,6 @@ REPO = Path(__file__).resolve().parents[3]
 REFWORLD = REPO / "examples/refworld"
 PAIRS = REPO / "examples/refworld-upgrades"
 UPGRADES = REPO / "benchmark/upgrades.kvx"
-MINBUILD = REPO / "crates/cwr-kernel/tests/fixtures/minbuild"
 CLAUSES = ["1.6", "3.6", "4.2", "4.3", "4.4", "5.5"]
 STAGES = [
     "parse",
@@ -58,6 +59,8 @@ STAGES = [
     "package",
 ]
 TIMEOUT = 900
+TASK_MODULES = ["contract_tests::", "diff::", "changelog_gate::", "version::", "ephemeral::"]
+PROSE_REGIONS = ["intro.md", "conventions.md", "examples.md", "types.md"]
 ORDER = ["none", "patch", "minor", "major"]
 
 
@@ -75,6 +78,7 @@ R = Results()
 SCRATCH = Path(tempfile.mkdtemp(prefix="cwr-1_2-"))
 CWR = Path()
 SEEN: set[str] = set()
+PROBE = [""]
 _n = [0]
 
 
@@ -94,14 +98,27 @@ def cargo() -> tuple[bool, str, str]:
     if b.returncode != 0:
         print(b.stderr[-4000:], file=sys.stderr)
         raise SystemExit("cargo build failed")
+    # Only this task's modules: other tasks' unit tests in the crate are their drivers' business.
     t = run(
-        ["cargo", "test", "-p", "cwr-compiler", "--", "--nocapture", "--test-threads=1"],
+        [
+            "cargo",
+            "test",
+            "-p",
+            "cwr-compiler",
+            "--lib",
+            "--",
+            "--nocapture",
+            "--test-threads=1",
+            *TASK_MODULES,
+        ],
         cwd=REPO,
         env=env,
     )
     out = t.stdout + t.stderr
     passed = sum(map(int, re.findall(r"test result: ok\. (\d+) passed", out)))
     suite = re.search(r"REFWORLD_SUITE (.*)", out)
+    probe = re.search(r"NONDETERMINISM_PROBE .*", out)
+    PROBE[0] = probe.group(0) if probe else ""
     return (
         t.returncode == 0,
         f"{passed} cwr-compiler unit tests pass" if t.returncode == 0 else out[-3000:],
@@ -119,8 +136,8 @@ def out_dir() -> Path:
     return d
 
 
-def build(src: Path, *extra: str) -> tuple[int, dict]:
-    p = run([str(CWR), "build", str(src), "--json", "--out", str(out_dir()), *extra])
+def build(src: Path, *extra: str, out: Path | None = None) -> tuple[int, dict]:
+    p = run([str(CWR), "build", str(src), "--json", "--out", str(out or out_dir()), *extra])
     try:
         rep = json.loads(p.stdout)
     except json.JSONDecodeError:
@@ -324,6 +341,38 @@ class Side:
                     if sec.startswith(prefix):
                         self.contracts[sec[len(prefix) :]] = block
         self.state = {p.stem: shape_ast(p.read_text()) for p in sorted((root / "lib").glob("*.py"))}
+        self.prose = prose_regions(
+            {p.name: p.read_text() for p in sorted((root / "manual").glob("*.md"))}
+        )
+
+
+def demoted_block(text: str) -> str:
+    """A prose file as the manual renders it: trailing whitespace trimmed, every Markdown heading
+    outside code fences two levels deeper, each line ended by a newline."""
+    body = text.rstrip()
+    out, fence = [], False
+    for line in body.split("\n") if body else []:
+        t = line.rstrip()
+        if t.startswith("```"):
+            fence = not fence
+        if not fence and t.startswith("#") and t.lstrip("#").startswith(" "):
+            t = "##" + t
+        out.append(t + "\n")
+    return "".join(out)
+
+
+def prose_regions(files: dict[str, str]) -> dict[str, str]:
+    """manual/ prose by manual region (model-surface.md section 2): intro.md in section 1,
+    conventions.md and examples.md in section 2 with every other prose file after examples.md under
+    a '### <name>' heading, types.md in section 5. A region is its rendered text without the
+    newlines that close it."""
+    regions = {f"manual/{f}": demoted_block(files.get(f, "")) + "\n" for f in PROSE_REGIONS}
+    for name in sorted(files):
+        if name not in PROSE_REGIONS:
+            regions["manual/examples.md"] += (
+                f"### {name.removesuffix('.md')}\n\n" + demoted_block(files[name]) + "\n"
+            )
+    return {k: v.rstrip("\n") for k, v in regions.items()}
 
 
 def subseq(short: list, long: list) -> bool:
@@ -332,7 +381,7 @@ def subseq(short: list, long: list) -> bool:
 
 
 def oracle_diff(a: Side, b: Side) -> dict:
-    entries, docs = [], []
+    entries, docs, prose = [], [], []
 
     def e(kind, target, field, before=None, after=None, bump="major", has=True):
         d = {"kind": kind, "target": target, "field": field, "bump": bump}
@@ -379,6 +428,12 @@ def oracle_diff(a: Side, b: Side) -> dict:
         for f in ("idempotency", "timeout_ms", "endpoint"):
             if o.get(f) != n.get(f):
                 entries.append(e("adapter_changed", name, f, o.get(f), n.get(f)))
+        if "failures" in o or "failures" in n:
+            # world-source.md section 11: an absent key compares as its default.
+            for f, default in (("undeclared_status", "UNAVAILABLE"), ("retry_after_ratio", 1)):
+                x, y = o.get(f, default), n.get(f, default)
+                if x != y:
+                    entries.append(e("adapter_changed", name, f, x, y))
         if set(o.get("failures") or []) != set(n.get("failures") or []):
             entries.append(
                 e("failure_changed", name, "failures", o.get("failures"), n.get("failures"))
@@ -396,9 +451,12 @@ def oracle_diff(a: Side, b: Side) -> dict:
     for m in sorted(set(a.state) | set(b.state)):
         if a.state.get(m) != b.state.get(m):
             entries.append(e("state_shape", m, "state", has=False))
+    for r in sorted(set(a.prose) | set(b.prose)):
+        if a.prose.get(r) != b.prose.get(r):
+            prose.append(e("doc_only", r, "prose", a.prose.get(r), b.prose.get(r), "patch"))
     entries.sort(key=lambda d: (d["target"], d["field"], d["kind"] or "params"))
     docs.sort(key=lambda d: (d["target"], d["field"]))
-    derived = max((d["bump"] for d in entries + docs), key=ORDER.index, default="none")
+    derived = max((d["bump"] for d in entries + docs + prose), key=ORDER.index, default="none")
     o_v, n_v = [tuple(map(int, v.split("."))) for v in (a.version, b.version)]
     if n_v <= o_v:
         declared = "none"
@@ -414,6 +472,7 @@ def oracle_diff(a: Side, b: Side) -> dict:
     return {
         "entries": entries,
         "doc_entries": docs,
+        "prose_entries": prose,
         "derived_bump": derived,
         "declared_bump": declared,
         "pre_1_0_rule_applied": pre,
@@ -427,7 +486,9 @@ def compare(got: dict, want: dict) -> list[str]:
     """Compares cwr diff output with an expected diff; before/after are compared wherever the
     expectation carries them (state_shape renderings are implementation-defined)."""
     problems = []
-    for lst in ("entries", "doc_entries"):
+    for lst in ("entries", "doc_entries", "prose_entries"):
+        if lst not in want:
+            continue
         g = {(x["kind"], x["target"], x["field"]): x for x in got.get(lst, [])}
         w = {(x["kind"], x["target"], x["field"]): x for x in want.get(lst, [])}
         if set(g) != set(w):
@@ -707,15 +768,35 @@ def check_contract_test_tampers(clean: Path) -> None:
         f'    with open({str(counter)!r}, "a+") as handle:\n        handle.seek(0)\n        seen = len(handle.read())\n        handle.write("x")\n'
         '    if seen >= 3:\n        raise KeyError("host-dependent outcome")\n',
     )
-    expect_fail(
-        "fs.write outcome depends on host state across the two runs",
+    # Through the CLI, host state is out of reach of lib/: `open` is refused at lint (CWR-L001),
+    # before contract tests run.
+    rc, rep = build(t)
+    open_line = line_of(t / "lib/fs.py", "    with open(")
+    hit = [
+        d
+        for d in diags(rep, "lint")
+        if d["code"] == "CWR-L001" and d["file"] == "lib/fs.py" and d["line"] == open_line
+    ]
+    R.check(
         "1.6",
-        t,
-        "fixtures/fs/write.kvx",
-        "case.ok_create",
-        "fs.write",
-        "contract tests passed once and differ on the second run",
-        "nondeterministic",
+        rc == 3 and rep.get("stopped_at") == "lint" and bool(hit),
+        f"fs.write reading host state (a counter file) through the CLI: exit {rc}, stopped at {rep.get('stopped_at')}, "
+        + (f"CWR-L001 at lib/fs.py:{open_line}" if hit else f"MISSING ({brief(rep)})"),
+    )
+    # The same lib/ given to the contract-test stage directly (the unit test skips lint): the
+    # second run differs and the stage fails at the fixture case.
+    m = dict(re.findall(r"(\w+)=(\S+)", PROBE[0].split(" message=")[0])) if PROBE[0] else {}
+    want_line = line_of(REFWORLD / "fixtures/fs/write.kvx", "[case.ok_create]")
+    R.check(
+        "1.6",
+        m.get("kind") == "nondeterministic"
+        and m.get("file") == "fixtures/fs/write.kvx"
+        and m.get("line") == str(want_line)
+        and m.get("section") == "case.ok_create"
+        and m.get("primitive") == "fs.write"
+        and "passed once and differ on the second run" in PROBE[0],
+        "fs.write outcome depends on host state across the two runs (contract_tests unit test, lint skipped): "
+        + (PROBE[0][len("NONDETERMINISM_PROBE ") :][:260] if PROBE[0] else "NOT RUN"),
     )
 
 
@@ -895,6 +976,38 @@ def check_variants(clean: Path) -> None:
         ),
     )
 
+    search = "[adapter.search.query]\n"
+    variant(
+        "adapter_undeclared_status",
+        lambda v: edit(
+            v / "adapters/search.kvx", search, search + 'undeclared_status = "INVALID"\n'
+        ),
+    )
+    variant(
+        "adapter_retry_ratio",
+        lambda v: edit(v / "adapters/search.kvx", search, search + "retry_after_ratio = 3\n"),
+    )
+    variant(
+        "prose_conventions",
+        lambda v: (v / "manual/conventions.md").write_text(
+            (v / "manual/conventions.md").read_text()
+            + "\nA turn script may define helper functions.\n"
+        ),
+    )
+    variant(
+        "prose_examples_heading",
+        lambda v: (v / "manual/examples.md").write_text(
+            (v / "manual/examples.md").read_text()
+            + "\n# One more example\n\nCall fs.exists first.\n"
+        ),
+    )
+    variant(
+        "prose_types",
+        lambda v: (v / "manual/types.md").write_text(
+            (v / "manual/types.md").read_text() + "\nRecords are plain dictionaries.\n"
+        ),
+    )
+
     def add_primitive(v):
         edit(
             v / "contracts/fs.kvx",
@@ -961,25 +1074,63 @@ def check_variants(clean: Path) -> None:
         "state_shape": ("state_shape", "major"),
         "doc_only": ("doc_only", "patch"),
         "param_order": ("params", "major"),
+        "adapter_undeclared_status": ("adapter_changed", "major"),
+        "adapter_retry_ratio": ("adapter_changed", "major"),
+        "prose_conventions": ("doc_only", "patch"),
+        "prose_types": ("doc_only", "patch"),
+        "prose_examples_heading": ("doc_only", "patch"),
+    }
+    want_target = {
+        "adapter_undeclared_status": ("search.query", "undeclared_status"),
+        "adapter_retry_ratio": ("search.query", "retry_after_ratio"),
+        "prose_conventions": ("manual/conventions.md", "prose"),
+        "prose_types": ("manual/types.md", "prose"),
+        "prose_examples_heading": ("manual/examples.md", "prose"),
     }
     seen = SEEN
     for name, v in variants:
         rc, got, raw = cwr_diff(clean, v)
         exp = oracle_diff(Side(clean), Side(v))
         problems = compare(got or {}, exp) if got else [f"exit {rc}: {raw[:200]}"]
-        kinds = {
-            (x["kind"] or "params")
-            for x in (got or {}).get("entries", []) + (got or {}).get("doc_entries", [])
-        }
+        every = (
+            (got or {}).get("entries", [])
+            + (got or {}).get("doc_entries", [])
+            + (got or {}).get("prose_entries", [])
+        )
+        kinds = {(x["kind"] or "params") for x in every}
         k, bump = want[name]
         ok = rc == 0 and not problems and k in kinds and (got or {}).get("derived_bump") == bump
+        if name in want_target:
+            ok = ok and [(x["target"], x["field"]) for x in every] == [want_target[name]]
         seen |= kinds
         R.check(
             "4.3",
             ok,
-            f"variant {name}: cwr diff equals recomputation, kind {k}, derived {(got or {}).get('derived_bump')}"
+            f"variant {name}: cwr diff equals recomputation, kind {k}"
+            + (f" on {'/'.join(want_target[name])}" if name in want_target else "")
+            + f", derived {(got or {}).get('derived_bump')}"
             + (f" MISMATCH {problems[:2]}" if problems else ""),
         )
+    # An adapter key written with its default value compares equal to the absent key.
+    v = copy(clean, "var_adapter_defaults")
+    edit(
+        v / "adapters/search.kvx",
+        search,
+        search + 'undeclared_status = "UNAVAILABLE"\nretry_after_ratio = 1\n',
+    )
+    rc, got, raw = cwr_diff(clean, v)
+    exp = oracle_diff(Side(clean), Side(v))
+    problems = compare(got or {}, exp) if got else [f"exit {rc}: {raw[:200]}"]
+    R.check(
+        "4.3",
+        rc == 0
+        and not problems
+        and not (got["entries"] or got["doc_entries"] or got["prose_entries"])
+        and got["derived_bump"] == "none",
+        "variant adapter_defaults: undeclared_status UNAVAILABLE and retry_after_ratio 1 written out "
+        "give no entry (absent compares as its default)"
+        + (f" MISMATCH {problems[:2]}" if problems else ""),
+    )
     all_kinds = {
         "primitive_added",
         "primitive_removed",
@@ -1385,23 +1536,235 @@ def check_migrations(sides: dict[str, tuple[Path, Path]]) -> None:
     )
 
 
+def built_dir(rep: dict) -> Path | None:
+    d = (rep.get("build") or {}).get("dir")
+    return Path(d) if d else None
+
+
+def gate_hits(rep: dict, kind: str, file: str, line: int, text: str) -> list[dict]:
+    return [
+        d
+        for d in diags(rep, "changelog_gate")
+        if d["kind"] == kind and d["file"] == file and d["line"] == line and text in d["message"]
+    ]
+
+
+def check_prose(clean: Path) -> None:
+    """manual/ prose: a prose-only change is a doc_only patch (world-source.md section 11), it is
+    seen identically from a source and from a Build, and the gate requires it to be declared."""
+    out = out_dir()
+    rc, rep = build(clean, out=out)
+    base = built_dir(rep)
+    R.check(
+        "4.3",
+        rc == 0 and base is not None and base.is_dir(),
+        f"clean refworld built into a Build directory for the prose checks: exit {rc}, {base and base.name[:16]}",
+    )
+    if base is None:
+        return
+    prose = copy(clean, "prose_changed")
+    conv = prose / "manual/conventions.md"
+    conv.write_text(conv.read_text() + "\nPrefer one script that checks, acts and verifies.\n")
+    exp = oracle_diff(Side(clean), Side(prose))
+
+    # Undeclared: same version, default previous (the Build above, same name and version) and an
+    # explicit previous Build. Equal contracts.json does not make a prose change a rebuild.
+    rc, rep = build(prose, out=out)
+    wl = line_of(prose / "world.kvx", 'version = "')
+    hit = gate_hits(rep, "version_not_greater", "world.kvx", wl, "derived minimum bump patch")
+    R.check(
+        "5.5",
+        rc == 6 and bool(hit),
+        f"prose-only change at the same version 0.2.0 into the --out holding the 0.2.0 Build: exit {rc}, "
+        + (
+            f"version_not_greater at world.kvx:{wl}: {hit[0]['message'][:80]}"
+            if hit
+            else f"MISSING ({brief(rep)})"
+        ),
+    )
+
+    # Declared as doc_only with each accepted target: passes; the packaged diff carries the entry.
+    for target in ("manual", "manual/conventions.md", "fs"):
+        v = copy(prose, f"prose_ok_{target.replace('/', '_')}")
+        add_release(
+            v,
+            "0.2.1",
+            "The conventions prose recommends one checking script.",
+            [("conventions_prose", "doc_only", target, "", "one checking script", "")],
+        )
+        rc, rep = build(v, "--previous", str(base))
+        packaged = None
+        bd = built_dir(rep)
+        if bd and (bd / "contract_diff.json").is_file():
+            packaged = json.loads((bd / "contract_diff.json").read_text())
+        exp_v = oracle_diff(Side(clean), Side(v))
+        problems = compare(packaged or {}, exp_v) if packaged else ["no contract_diff.json"]
+        R.check(
+            "4.4",
+            rc == 0 and passes_gate(rep) and not problems,
+            f"prose-only release 0.2.1 declared as doc_only target {target!r} against the 0.2.0 Build: exit {rc}, "
+            f"packaged contract_diff.json equals the recomputation ({len(exp_v['prose_entries'])} prose entry, derived "
+            f"{exp_v['derived_bump']}, declared {exp_v['declared_bump']})"
+            + (f" MISMATCH {problems[:2]}" if problems else ""),
+        )
+        if target == "manual" and bd:
+            # The same prose difference seen from two Builds equals the one seen from two sources.
+            rc_b, got_b, _ = cwr_diff(base, bd)
+            rc_s, got_s, _ = cwr_diff(clean, v)
+            same = (
+                rc_b == rc_s == 0
+                and got_b
+                and got_s
+                and all(
+                    got_b[k] == got_s[k]
+                    for k in (
+                        "entries",
+                        "doc_entries",
+                        "prose_entries",
+                        "derived_bump",
+                        "declared_bump",
+                    )
+                )
+                and got_b["prose_entries"] == (packaged or {}).get("prose_entries")
+            )
+            R.check(
+                "4.3",
+                bool(same) and not compare(got_b or {}, exp_v),
+                f"cwr diff <Build 0.2.0> <Build 0.2.1> equals cwr diff over the two sources and the packaged diff: "
+                f"prose entries {[e['target'] for e in (got_b or {}).get('prose_entries', [])]}",
+            )
+            rc_n, got_n, _ = cwr_diff(base, bd)
+            R.check(
+                "4.3",
+                rc_n == 0 and got_n == got_b and got_b["previous"].startswith("sha256:"),
+                "the Build-to-Build prose diff is deterministic across runs",
+            )
+
+    # A release with no change: the prose entry is uncovered, at the release line.
+    v = copy(prose, "prose_undeclared")
+    add_release(v, "0.2.1", "Nothing declared.", [])
+    rc, rep = build(v, "--previous", str(base))
+    rl = line_of(v / "CHANGELOG.kvx", "[release.0.2.1]")
+    hit = gate_hits(rep, "uncovered_entry", "CHANGELOG.kvx", rl, "manual/conventions.md")
+    R.check(
+        "4.4",
+        rc == 6 and bool(hit),
+        f"prose-only release 0.2.1 that declares no change: exit {rc}, "
+        + (
+            f"uncovered_entry at CHANGELOG.kvx:{rl} [release.0.2.1]: {hit[0]['message'][:90]}"
+            if hit
+            else f"MISSING ({brief(rep)})"
+        ),
+    )
+    # A doc_only change on a target that is neither manual nor a name of the world: unmatched.
+    v = copy(prose, "prose_bogus_target")
+    add_release(v, "0.2.1", "Bogus.", [("conventions_prose", "doc_only", "nosuch", "", "x", "")])
+    rc, rep = build(v, "--previous", str(base))
+    kl = line_of(v / "CHANGELOG.kvx", "[change.conventions_prose]") + 1
+    hit = gate_hits(rep, "unmatched_change", "CHANGELOG.kvx", kl, "doc_only nosuch")
+    R.check(
+        "4.4",
+        rc == 6 and bool(hit),
+        f"prose change declared on target 'nosuch': exit {rc}, "
+        + (f"unmatched_change at CHANGELOG.kvx:{kl} kind" if hit else f"MISSING ({brief(rep)})"),
+    )
+    # A prose change in a release with a rule change is covered by that change (as in U1, U3-U5).
+    v = copy(prose, "prose_with_rule")
+    edit(v / "world.kvx", "cpu_ms = 5000", "cpu_ms = 6000")
+    add_release(
+        v,
+        "0.2.1",
+        "More CPU per turn.",
+        [("cpu_looser", "limit_changed", "limits.cpu_ms", "5000", "6000", "")],
+    )
+    rc, rep = build(v, "--previous", str(base))
+    R.check(
+        "4.4",
+        rc == 0 and passes_gate(rep),
+        f"prose change alongside a declared limit_changed (0.2.0 -> 0.2.1, derived minor accepted by P15): exit {rc} {brief(rep)}",
+    )
+    # A doc entry is covered by a doc_only change on its target or module, a change on exactly its
+    # target, or its module's state_shape change; a rule change on the module does not cover it.
+    # (0.2.0 -> 0.3.0: effect_changed is major, satisfied by a minor increment under P15.)
+    v = copy(clean, "doc_module_rule_change")
+    edit(
+        v / "contracts/kv.kvx",
+        'effects = ["not kv.has(ns, key)"]',
+        'effects = ["not kv.has(ns, key) and len(key) >= 0"]',
+    )
+    edit(
+        v / "contracts/kv.kvx",
+        'doc = "Value stored under key in namespace ns."',
+        'doc = "The value stored under key in namespace ns."',
+    )
+    add_release(
+        v,
+        "0.3.0",
+        "kv.delete states its effect with the key length.",
+        [("kv_delete_effect", "effect_changed", "kv", "not kv.has", "not kv.has and len", "")],
+    )
+    rc, rep = build(v, "--previous", str(base))
+    rl = line_of(v / "CHANGELOG.kvx", "[release.0.3.0]")
+    hit = gate_hits(rep, "uncovered_entry", "CHANGELOG.kvx", rl, "doc_only kv.get (doc)")
+    others = [d for d in diags(rep, "changelog_gate") if d not in hit]
+    R.check(
+        "4.4",
+        rc == 6 and len(hit) == 1 and not others,
+        f"kv.get doc reworded while the release declares only effect_changed on module kv: exit {rc}, "
+        + (
+            f"only the doc entry is uncovered, at CHANGELOG.kvx:{rl} (the module change covers the kv effect)"
+            if hit and not others
+            else f"MISSING ({brief(rep)})"
+        ),
+    )
+    with_doc = copy(v, "doc_module_rule_change_declared")
+    edit(
+        with_doc / "CHANGELOG.kvx",
+        'changes = ["kv_delete_effect"]',
+        'changes = ["kv_delete_effect", "kv_doc"]',
+    )
+    (with_doc / "CHANGELOG.kvx").write_text(
+        (with_doc / "CHANGELOG.kvx").read_text()
+        + '\n[change.kv_doc]\nkind = "doc_only"\ntarget = "kv"\nbefore = "x"\nafter = "y"\nmigration = ""\n'
+    )
+    rc, rep = build(with_doc, "--previous", str(base))
+    R.check(
+        "4.4",
+        rc == 0 and passes_gate(rep),
+        f"the same with a doc_only change on module kv added: exit {rc} {brief(rep)}",
+    )
+    R.check(
+        "4.3",
+        exp["derived_bump"] == "patch"
+        and [e["target"] for e in exp["prose_entries"]] == ["manual/conventions.md"],
+        "recomputation: a conventions.md edit alone derives a patch bump with one prose entry",
+    )
+
+
 def check_builds(clean: Path) -> None:
     """Previous Builds: a verified Build directory is read; a missing or unverifiable one stops the diff stage."""
-    mb = SCRATCH / "minbuild"
-    shutil.copytree(MINBUILD, mb)
+    rc0, rep0 = build(clean)
+    own = built_dir(rep0)
+    if own is None:
+        R.check("4.3", False, f"clean refworld did not build: exit {rc0} {brief(rep0)}")
+        return
+    mb = SCRATCH / "ownbuild"
+    shutil.copytree(own, mb)
     rc, got, raw = cwr_diff(mb, mb)
     R.check(
         "4.3",
         rc == 0
         and got
-        and got["entries"] == []
+        and got["entries"] == got["doc_entries"] == got["prose_entries"] == []
         and got["previous"].startswith("sha256:")
         and got["derived_bump"] == "none",
-        f"cwr diff over a hash-verified Build directory (kernel minbuild fixture): exit {rc}, previous {got and got['previous'][:20]}..., derived none",
+        f"cwr diff over a hash-verified Build directory (refworld built by this driver): exit {rc}, previous {got and got['previous'][:20]}..., derived none",
     )
-    bad = SCRATCH / "minbuild_tampered"
-    shutil.copytree(MINBUILD, bad)
-    (bad / "manual.md").write_text((bad / "manual.md").read_text() + "x")
+    bad = SCRATCH / "ownbuild_tampered"
+    shutil.copytree(own, bad)
+    manual = bad / "manual.md"
+    manual.chmod(0o644)
+    manual.write_text(manual.read_text() + "x")
     rc, got, raw = cwr_diff(bad, mb)
     R.check(
         "4.3",
@@ -1446,6 +1809,7 @@ def main() -> int:
     check_gate_tampers(sides)
     check_version_rules(clean)
     check_migrations(sides)
+    check_prose(clean)
     check_builds(clean)
     print(f"# scratch {SCRATCH}; refworld copy without {removed}", file=sys.stderr)
     all_ok = True
@@ -1457,7 +1821,13 @@ def main() -> int:
         else:
             print(f"CLAUSE {c} FAIL " + " | ".join(R.bad[c] or ["no checks ran"]))
     if all_ok:
-        shutil.rmtree(SCRATCH, ignore_errors=True)
+        # Builds are made read-only by the compiler; make them writable to remove them.
+        def writable(fn, path, _exc):
+            os.chmod(os.path.dirname(path), 0o755)
+            os.chmod(path, 0o755)
+            fn(path)
+
+        shutil.rmtree(SCRATCH, onexc=writable)
     return 0 if all_ok else 1
 
 

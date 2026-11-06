@@ -8,7 +8,7 @@
 //! ```
 //!
 //! Prints `contract_diff.json` for the change from `a` to `b` on stdout: every rule entry, every
-//! doc entry, the derived minimum bump, the declared bump between the two versions and whether
+//! doc entry, every `manual/` prose entry (`prose_entries`), the derived minimum bump, the declared bump between the two versions and whether
 //! the pre-1.0 rule (decision P15) was applied. Each argument is a Build directory, a Build hash
 //! (`sha256:<hex>` or `<hex>`, looked up under `--out`, default `build/`, and `xbuild/`), or a
 //! World Source directory, which is compiled through lint first. A Build is used only after its

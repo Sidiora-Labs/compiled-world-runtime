@@ -787,4 +787,74 @@ mod tests {
         let json = r.to_json().unwrap();
         assert!(json.contains("\"format\": \"cwr.tests\""));
     }
+
+    /// The second-run comparison (compiler.md section 4, compile-time half of clause 1.6) on a
+    /// lib/ whose outcome depends on host state shared by the two runs: a counter file. Lint
+    /// refuses `open` in lib/ (CWR-L001), so the stage is reached here directly after parse and
+    /// resolve. Prints the diagnostic the task driver reports as evidence.
+    #[test]
+    fn nondeterministic_lib_is_caught_by_the_second_run() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let src = repo.join("examples/refworld");
+        if !src.is_dir()
+            || std::process::Command::new(crate::ephemeral::python())
+                .arg("-V")
+                .output()
+                .is_err()
+        {
+            eprintln!("skipped: no refworld or no python3");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("cwr-1_2-nondet-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        copy_tree(&src, &dir);
+        let counter = dir.join("counter.txt");
+        let lib = dir.join("lib/fs.py");
+        let head = "def write(state: Any, path: str, content: bytes) -> None:\n";
+        let text = std::fs::read_to_string(&lib).unwrap();
+        assert!(text.contains(head), "lib/fs.py has no write()");
+        let probe = format!(
+            "{head}    with open({:?}, \"a+\") as handle:\n        handle.seek(0)\n        seen = len(handle.read())\n        handle.write(\"x\")\n    if seen >= 3:\n        raise KeyError(\"host-dependent outcome\")\n",
+            counter.display().to_string()
+        );
+        std::fs::write(&lib, text.replacen(head, &probe, 1)).unwrap();
+        let options = crate::Options {
+            through: Stage::Resolve,
+            ..Default::default()
+        };
+        let mut cx = Context::new(&dir, &options);
+        for st in [Stage::Parse, Stage::Resolve] {
+            assert!(
+                matches!(crate::run_stage(st, &mut cx), StageRun::Passed),
+                "{st} failed"
+            );
+        }
+        let (report, diags) = run(
+            cx.parsed.as_ref().unwrap(),
+            cx.symbols.as_ref().unwrap(),
+            &dir,
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let r = report.unwrap();
+        assert!(!r.passed && !r.deterministic);
+        let hit: Vec<&Diagnostic> = diags
+            .iter()
+            .filter(|d| d.kind == "nondeterministic")
+            .collect();
+        assert!(!hit.is_empty(), "{diags:?}");
+        let d = hit[0];
+        assert!(d
+            .message
+            .contains("passed once and differ on the second run"));
+        println!(
+            "NONDETERMINISM_PROBE kind={} file={} line={} section={} primitive={} diagnostics={} message={}",
+            d.kind,
+            d.file,
+            d.line,
+            d.section.as_deref().unwrap_or(""),
+            d.primitive.as_deref().unwrap_or(""),
+            diags.len(),
+            d.message
+        );
+    }
 }

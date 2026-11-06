@@ -1479,7 +1479,15 @@ def check_sdk_files(build: Path, contracts: dict) -> None:
         if len(defs) != len(set(defs)) or len(text.split('"""')) % 2 != 1:
             bad.append(f"{mod}.py: duplicated function or unbalanced docstrings")
         # world.seed is omitted when the seed is not visible (kernel.md section 6).
-        want = [x for x in shorts if not (mod == "world" and x == "seed" and not contracts.get("rng", {}).get("seed_visible", True))]
+        want = [
+            x
+            for x in shorts
+            if not (
+                mod == "world"
+                and x == "seed"
+                and not contracts.get("rng", {}).get("seed_visible", True)
+            )
+        ]
         if [d.rstrip("_") for d in defs] != want:
             bad.append(f"{mod}.py: functions {defs} != contracts {want}")
     errs = (sdk / "cwr/errors.py").read_text(encoding="utf-8")
@@ -1491,7 +1499,8 @@ def check_sdk_files(build: Path, contracts: dict) -> None:
         header_ok and files and not bad,
         f"each of the {len(files)} generated SDK files starts with the template source header and carries it exactly once; "
         f"each module has one docstring, one import block, one __all__ and one function per contract primitive in contract "
-        f"order; errors.py has one class per envelope code plus WorldError" + (f"; BAD {bad[:6]}" if bad else ""),
+        f"order; errors.py has one class per envelope code plus WorldError"
+        + (f"; BAD {bad[:6]}" if bad else ""),
     )
     R.check(
         "4.6",
@@ -1515,7 +1524,15 @@ def probe(name, f):
 
 def start_stub(name: str) -> tuple[subprocess.Popen, int]:
     p = subprocess.Popen(
-        [sys.executable, "-B", str(REPO / f"benchmark/stubs/{name}_server.py"), "--port", "0", "--seed", "7"],
+        [
+            sys.executable,
+            "-B",
+            str(REPO / f"benchmark/stubs/{name}_server.py"),
+            "--port",
+            "0",
+            "--seed",
+            "7",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
@@ -1528,7 +1545,9 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
     """Clause 2.5 end to end: the kernel labels every per-call result of a real sandboxed turn with the Build's
     content_guaranteed declaration, for ok and error outcomes alike; adapters reach local stub servers only."""
     labels = {p["name"]: True for p in contracts["primitives"]}
-    labels.update({a["name"]: bool(a.get("content_guaranteed", True)) for a in contracts["adapters"]})
+    labels.update(
+        {a["name"]: bool(a.get("content_guaranteed", True)) for a in contracts["adapters"]}
+    )
     home = SCRATCH / "kernel-labels"
     c = run([CWR, "instance", "create", "--home", home, "--build", build])
     if c.returncode != 0:
@@ -1537,17 +1556,27 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
     iid = c.stdout.strip().splitlines()[-1]
 
     def lit(t: str, i: int):
-        return {"str": f"x{i}", "Path": f"/a{i}.txt", "int": i + 1, "bool": True, "bytes": b"\x00\xff"}.get(
-            t, [] if t.startswith("list[") else {} if t.startswith("dict[") else None
-        )
+        return {
+            "str": f"x{i}",
+            "Path": f"/a{i}.txt",
+            "int": i + 1,
+            "bool": True,
+            "bytes": b"\x00\xff",
+        }.get(t, [] if t.startswith("list[") else {} if t.startswith("dict[") else None)
 
     lines = []
     for p in contracts["primitives"]:
         mod, short = p["name"].split(".", 1)
-        py = short + "_" if short in ("del", "from", "class", "import", "global", "lambda") else short
+        py = (
+            short + "_"
+            if short in ("del", "from", "class", "import", "global", "lambda")
+            else short
+        )
         args = ", ".join(f"{k}={lit(t, i)!r}" for i, (k, t) in enumerate(p["params"]))
         lines.append(f"if hasattr({mod}, {py!r}): probe({p['name']!r}, lambda: {mod}.{py}({args}))")
-    mods = sorted({p["name"].split(".", 1)[0] for p in contracts["primitives"] + contracts["adapters"]})
+    mods = sorted(
+        {p["name"].split(".", 1)[0] for p in contracts["primitives"] + contracts["adapters"]}
+    )
     prelude = KERNEL_PRELUDE.replace("{imports}", ", ".join(mods))
     # One adapter call per turn: a call to a stub can take seconds on a loaded host, and a turn has a wall budget.
     # publish.status and publish.delete use the post id the publish.post turn returned.
@@ -1566,16 +1595,37 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
     bad = []
     pid = "p-missing"
     try:
-        for n, body in enumerate(turns):
-            f = SCRATCH / f"label-turn-{n}.py"
+        # Turns meant to show an adapter's ok outcome (post, status, delete, search) are run again, up to three
+        # times, when the adapter answers with a transient failure (a contract timeout on a loaded host); every
+        # attempt's calls still count towards the label check.
+        want_ok = {
+            n
+            for n, b in enumerate(turns)
+            if b.startswith('probe("') and 'q=""' not in b and "p-unknown" not in b
+        }
+        queue = [(n, body, 0) for n, body in enumerate(turns)]
+        while queue:
+            n, body, tries = queue.pop(0)
+            f = SCRATCH / f"label-turn-{n}-{tries}.py"
             f.write_text(prelude + body.replace("{pid!r}", repr(pid)) + "\nreturn out\n")
             # A turn the kernel ends for its wall-time budget (a host-load artefact on a shared machine) is run
             # again, up to three times; its partial trace is not counted.
             for _attempt in range(3):
                 t = run(
-                    [CWR, "instance", "turn", iid, "--home", home, "--script", f,
-                     "--stub", f"search=http://127.0.0.1:{stubs[0][1]}",
-                     "--stub", f"publish=http://127.0.0.1:{stubs[1][1]}"]
+                    [
+                        CWR,
+                        "instance",
+                        "turn",
+                        iid,
+                        "--home",
+                        home,
+                        "--script",
+                        f,
+                        "--stub",
+                        f"search=http://127.0.0.1:{stubs[0][1]}",
+                        "--stub",
+                        f"publish=http://127.0.0.1:{stubs[1][1]}",
+                    ]
                 )
                 try:
                     env = json.loads(t.stdout.strip().splitlines()[-1])
@@ -1588,14 +1638,35 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
                 bad.append(f"turn {n} printed no envelope (exit {t.returncode}): {t.stderr[-200:]}")
                 continue
             got = env.get("returned") or []
-            if t.returncode != 0 or env.get("status") != "ok" or len(got) != len(env.get("trace") or []) or not got:
-                bad.append(f"turn {n}: exit {t.returncode} status {env.get('status')} error {env.get('error')}")
+            if (
+                t.returncode != 0
+                or env.get("status") != "ok"
+                or len(got) != len(env.get("trace") or [])
+                or not got
+            ):
+                bad.append(
+                    f"turn {n}: exit {t.returncode} status {env.get('status')} error {env.get('error')}"
+                )
+                continue
             for row in got:
                 # PostReceipt names the post id `id` (examples/refworld/manual/types.md).
-                if row[0] == "publish.post" and isinstance(row[3], dict) and isinstance(row[3].get("id"), str):
+                if (
+                    row[0] == "publish.post"
+                    and isinstance(row[3], dict)
+                    and isinstance(row[3].get("id"), str)
+                ):
                     pid = row[3]["id"]
             returned += [r[:3] for r in got]
             trace += env.get("trace") or []
+            transient = {"TIMEOUT", "UNAVAILABLE", "RATE_LIMITED"}
+            if (
+                n in want_ok
+                and tries < 2
+                and got
+                and got[-1][1] == "error"
+                and got[-1][2] in transient
+            ):
+                queue.insert(0, (n, body, tries + 1))
     finally:
         for proc, _ in stubs:
             proc.kill()
@@ -1611,7 +1682,10 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
     adapters_ok = {n for (n, st, _c) in returned if st == "ok" and labels.get(n) is False}
     want_adapters = {n for n, v in labels.items() if v is False}
     if adapters_ok != want_adapters:
-        bad.append(f"adapters with an ok outcome {sorted(adapters_ok)} != {sorted(want_adapters)}")
+        outcomes = [r for r in returned if labels.get(r[0]) is False]
+        bad.append(
+            f"adapters with an ok outcome {sorted(adapters_ok)} != {sorted(want_adapters)}: {outcomes}"
+        )
     if seen != {(True, "ok"), (True, "error"), (False, "ok"), (False, "error")}:
         bad.append(f"label/status combinations seen {sorted(seen)}")
     R.check(

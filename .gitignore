@@ -40,3 +40,20 @@ __pycache__/
 tmp/
 *.swp
 .DS_Store
+
+# Campaign run artefacts that are not published. Published under benchmark/results
+# are ledger.jsonl, final_state.kvx, attempt.kvx, the submitted messages that the
+# analysis replays, and analyses; staging, replaced, pilot and superseded runs are
+# working files of the harness.
+/benchmark/results/_staging/
+/benchmark/results/_replaced/
+/benchmark/results/*/_pilot/
+/benchmark/results/*/_superseded/
+/benchmark/results/**/*.log
+/benchmark/results/**/gateway.json
+
+# Qualification runner work directories; evidence records live next to them.
+/tests/cwr/evidence/.work/
+
+# Python packaging output.
+/sdk/python/build/

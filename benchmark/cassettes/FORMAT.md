@@ -3,7 +3,7 @@
 
 # Cassette format (`cwr.cassette`, schema version 1)
 
-Status: no cassette set has been recorded and frozen yet.
+Status: two refworld sets are recorded and frozen (task 4.1): `refworld-adapters/` (scripted scenarios over every adapter primitive and declared failure) and `suite/` (every reference solution of the task suite, seeds 1 to 10). Their digests are frozen in `refworld.kvx`, and the suite digest also in `../suite.kvx`. `../stubs/record_refworld.py` writes them. Each `seed-<n>.jsonl` has a `seed-<n>.expect.json` next to it, holding the turn scripts, result envelopes and ledger that record mode produced and that replay mode must reproduce. Expect files are not cassettes and are outside the set digest.
 
 A cassette records the adapter traffic of one Instance so that the run can be replayed with no
 network access and the same outcomes. The adapter gateway in the World Kernel reads and writes this

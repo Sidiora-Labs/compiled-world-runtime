@@ -519,7 +519,7 @@ def check_stubs_static(contracts: dict, work: Path, rr) -> None:
     status_codes = {k: v for m in live.values() for k, v in m.STATUS_CODES.items()}
     pair = rr.StubPair(9, work)
     try:
-        health = {n: rr.json.loads(http(u + "/_stub/health")[1]) for n, u in pair.urls.items()}
+        health = {n: json.loads(http(u + "/_stub/health")[1]) for n, u in pair.urls.items()}
         eps = {e["adapter"]: e for h in health.values() for e in h["endpoints"]}
         agree = all(
             name in eps
@@ -770,11 +770,29 @@ def check_frozen(frozen_digests: dict) -> list[Path]:
         f"digest",
     )
     incomplete = sets.get("suite", {}).get("runs_incomplete", [])
+    # A turn ended by a host-time limit (cpu_ms, wall_ms) records host load, not the world.
+    host_limited = []
+    for name in ADAPTER_SETS:
+        for e in sorted((CASSETTES / name).rglob("*.expect.json")):
+            for t in json.loads(e.read_text())["turns"]:
+                if (t["envelope"].get("error") or {}).get("limit") in ("cpu_ms", "wall_ms"):
+                    host_limited.append(e.relative_to(CASSETTES).as_posix())
+                    break
+    R.check(
+        "7.5",
+        not host_limited,
+        f"no frozen run contains a turn ended by a host-time limit; offending {host_limited[:5]}",
+    )
+    rr_solutions = sets.get("suite", {}).get("solutions_digest")
+    now_solutions = solutions_digest()
+    stale = rr_solutions != now_solutions
     R.check(
         "7.5",
         not sets.get("refworld-adapters", {}).get("runs_incomplete"),
         f"every adapters scenario recorded to completion; suite runs whose reference solution "
-        f"stopped early (task 4.2 material, replayed as recorded): {len(incomplete)}",
+        f"stopped early (task 4.2 material, replayed as recorded): {len(incomplete)}; suite set "
+        f"recorded from benchmark/solutions {rr_solutions}, current {now_solutions}"
+        + (" (solutions edited since recording: re-record before CWR-015)" if stale else ""),
     )
     # Keyed by adapter, canonical request hash and sequence (FORMAT.md), recomputed here.
     bad = []
@@ -815,6 +833,18 @@ def check_frozen(frozen_digests: dict) -> list[Path]:
     return paths
 
 
+def solutions_digest() -> str:
+    """The digest record_refworld.py stores for benchmark/solutions (FORMAT.md section 5 form)."""
+    root = REPO / "benchmark/solutions"
+    paths = sorted(root.rglob("*.py"), key=lambda p: p.relative_to(root).as_posix())
+    lines = "".join(
+        f"{p.relative_to(root).as_posix()}\t{hashlib.sha256(p.read_bytes()).hexdigest()}\n"
+        for p in paths
+        if "__pycache__" not in p.parts
+    )
+    return "sha256:" + hashlib.sha256(lines.encode("utf-8")).hexdigest()
+
+
 def replay_frozen(rr_path: Path, cwr: Path, build: Path, out: Path) -> None:
     decoy = Decoy()
     try:
@@ -837,7 +867,7 @@ def replay_frozen(rr_path: Path, cwr: Path, build: Path, out: Path) -> None:
                 "--offline-url",
                 decoy.url,
                 "--jobs",
-                str(min(16, os.cpu_count() or 4)),
+                "6",
             ],
             capture_output=True,
             text=True,

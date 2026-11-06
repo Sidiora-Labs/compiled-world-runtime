@@ -23,7 +23,7 @@ suite_digest = "sha256:390026249d91d96f6ffa4ee833a153c5c3e43a88daa8a3a2f8f16c89a
 suite_digest_scope = "every file of every benchmark/tasks/tNNN-slug directory; paths relative to benchmark/tasks; layout of spec/cwr/compiler.md section 7"
 solutions_digest = "sha256:61fc774db8c42ac90beff80a9df9bc90ceabf16ec148c85c716876fd4f86fd88"
 predicates_common_digest = "sha256:6f1d7a6a42ecdd26732024feb2ed927d3ef496791b4aace0973aadab12a31599"
-cassette_digest = null
+cassette_digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
 cassette_digest_note = "frozen by task 4.1 after recording the reference solutions against the stub servers; null until then"
 
 [bin.short]

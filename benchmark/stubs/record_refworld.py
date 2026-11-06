@@ -56,6 +56,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -137,34 +138,49 @@ def build_hash(build: Path) -> str:
     return "sha256:" + build.name
 
 
+# The stub is started through runpy with its path in the environment, so that the process command
+# line names no stub file: a host-wide `pkill -f <name>_server.py` aimed at some other run cannot
+# end a recording. A stub that dies anyway is restarted by StubPair.restart.
+LAUNCH = (
+    "import os, runpy, sys; p = os.environ['CWR_RECORD_SERVER']; sys.argv = [p] + sys.argv[1:]; "
+    "runpy.run_path(p, run_name='__main__')"
+)
+
+
 class StubPair:
     """search and publish stub servers started with one seed."""
 
     def __init__(self, seed: int, cwd: Path) -> None:
         self.seed = seed
+        self.cwd = cwd
+        self.lock = threading.Lock()
         self.procs: dict[str, subprocess.Popen] = {}
         self.urls: dict[str, str] = {}
+        self.start()
+
+    def start(self) -> None:
         for name in ("search", "publish"):
+            env = {"CWR_RECORD_SERVER": str(STUBS / f"{name}_server.py")}
             proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-I",
-                    str(STUBS / f"{name}_server.py"),
-                    "--port",
-                    "0",
-                    "--seed",
-                    str(seed),
-                ],
+                [sys.executable, "-I", "-c", LAUNCH, "--port", "0", "--seed", str(self.seed)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
-                cwd=cwd,
+                cwd=self.cwd,
+                env=env,
             )
             ready = json.loads(proc.stdout.readline() or "{}")
             if ready.get("event") != "ready":
                 raise SystemExit(f"record_refworld: stub {name} did not start: {ready}")
             self.procs[name] = proc
             self.urls[name] = f"http://127.0.0.1:{ready['port']}"
+
+    def restart(self) -> None:
+        """Start both stubs again (new ports, empty state) unless both are still running."""
+        with self.lock:
+            if not self.alive():
+                self.stop()
+                self.start()
 
     def admin(self, name: str, method: str, path: str, body: Any = None) -> dict:
         data = None if body is None else canonical(body).encode()
@@ -321,28 +337,40 @@ SEARCH_FAULTS = [
     {"adapter": "search.query", "index": 4, "fault": "TIMEOUT"},
     {"adapter": "search.query", "index": 5, "fault": "RATE_LIMITED", "retry_after": 25},
 ]
+# Each turn makes at most four adapter calls, so that host load cannot push a turn past wall_ms:
+# every adapter call costs host time in the gateway. Fault indices count service requests per
+# (Instance, adapter) and do not depend on how the calls are split into turns.
 SEARCH_TURNS = [
     PRELUDE
     + """call("pre_invalid", search.query, q="", limit=5)
 call("pre_limit", search.query, q="tennis", limit=51)
 call("ok", search.query, q="tennis", limit=3)
 call("unavailable", search.query, q="tennis", limit=3)
-call("reset", search.query, q="golf", limit=3)
-call("malformed", search.query, q="golf", limit=3)
-call("timeout", search.query, q="golf", limit=3)
-call("scheduled_rate_limited", search.query, q="golf", limit=3)
-call("service_invalid", search.query, q="tennis", limit=-1)
-call("ok_limit_0", search.query, q="golf", limit=0)
 return r
 """,
     PRELUDE
-    + """for i in range(12):
+    + """call("reset", search.query, q="golf", limit=3)
+call("malformed", search.query, q="golf", limit=3)
+call("timeout", search.query, q="golf", limit=3)
+call("scheduled_rate_limited", search.query, q="golf", limit=3)
+return r
+""",
+    PRELUDE
+    + """call("service_invalid", search.query, q="tennis", limit=-1)
+call("ok_limit_0", search.query, q="golf", limit=0)
+return r
+""",
+    *[
+        PRELUDE
+        + f"""for i in range({first}, {first + 4}):
     o = call("window_" + str(i), search.query, q="topic " + str(i), limit=1)
     if o.get("code") == "RATE_LIMITED":
         r["rate_limited_at"] = world.now() - 1
         break
 return r
-""",
+"""
+        for first in (0, 4, 8)
+    ],
     *WAIT_TURNS,
     PRELUDE
     + """call("retry_after_window", search.query, q="topic after the window", limit=1)
@@ -363,11 +391,17 @@ POST_TURNS = [
 call("ok", publish.post, key="k1", title="Title", body="first")
 call("identical_replay", publish.post, key="k1", title="Title", body="first")
 call("duplicate_key", publish.post, key="k1", title="Title", body="second")
-call("unavailable", publish.post, key="k2", title="Title", body="b")
+return r
+""",
+    PRELUDE
+    + """call("unavailable", publish.post, key="k2", title="Title", body="b")
 call("unavailable_repeat", publish.post, key="k2", title="Title", body="b")
 call("reset", publish.post, key="k3", title="Title", body="b")
 call("malformed", publish.post, key="k4", title="Title", body="b")
-call("timeout", publish.post, key="k5", title="Title", body="b")
+return r
+""",
+    PRELUDE
+    + """call("timeout", publish.post, key="k5", title="Title", body="b")
 call("timeout_repeat", publish.post, key="k5", title="Title", body="b")
 call("scheduled_rate_limited", publish.post, key="k6", title="Title", body="b")
 return r
@@ -396,20 +430,46 @@ STATUS_FAULTS = [
     {"adapter": "publish.delete", "index": 3, "fault": "RESET"},
     {"adapter": "publish.delete", "index": 4, "fault": "TIMEOUT"},
 ]
+# Post ids are taken again in later turns by an identical replay of the original post, which the
+# gateway's key store answers without contacting the service (so the stub's request indices for
+# the scheduled faults are unaffected).
+POST_IDS = """def post_id(key):
+    return publish.post(key=key, title=key.upper(), body=key)["id"]
+"""
 STATUS_TURNS = [
     PRELUDE
     + """a = call("post_a", publish.post, key="a", title="A", body="a")["ok"]["id"]
-b = call("post_b", publish.post, key="b", title="B", body="b")["ok"]["id"]
+call("post_b", publish.post, key="b", title="B", body="b")
 call("status_ok", publish.status, post_id=a)
 call("status_not_found", publish.status, post_id="post_0000000000000000")
+return r
+""",
+    PRELUDE
+    + POST_IDS
+    + """a = post_id("a")
 call("status_unavailable", publish.status, post_id=a)
 call("status_reset", publish.status, post_id=a)
 call("status_timeout", publish.status, post_id=a)
+return r
+""",
+    PRELUDE
+    + POST_IDS
+    + """b = post_id("b")
 call("delete_ok", publish.delete, post_id=b)
 call("delete_not_found", publish.delete, post_id=b)
+return r
+""",
+    PRELUDE
+    + POST_IDS
+    + """a = post_id("a")
 call("delete_unavailable", publish.delete, post_id=a)
 call("delete_reset", publish.delete, post_id=a)
 call("delete_timeout", publish.delete, post_id=a)
+return r
+""",
+    PRELUDE
+    + POST_IDS
+    + """a = post_id("a")
 call("status_after_timeout", publish.status, post_id=a)
 call("delete_after_timeout", publish.delete, post_id=a)
 return r
@@ -602,11 +662,15 @@ def record_retrying(*args: Any) -> dict:
     """record_one, re-run from a fresh Instance when the host (not the world) spoiled the run: a
     stub that was unreachable or a host-time limit. Never more than RECORD_ATTEMPTS runs."""
     result: dict = {}
+    stubs, faults = args[-1], args[7]
     for attempt in range(RECORD_ATTEMPTS):
+        if not stubs.alive():
+            stubs.restart()
+            stubs.schedule(faults)
         result = record_one(*args, attempt=attempt)
         transient = result["kernel_error"] and (
             result["kernel_error"].startswith(HOST_LIMIT_ERROR)
-            or result["kernel_error"].startswith("stub unreachable")
+            or result["kernel_error"].startswith(("stub unreachable", "a stub server exited"))
         )
         if not transient:
             break
@@ -633,7 +697,6 @@ def record(args) -> int:
                     for name, seed, faults, turns in ADAPTER_SCENARIOS:
                         pair = pairs.get(seed) or pairs.setdefault(seed, StubPair(seed, work))
                         pair.schedule(faults)
-                        seen = {k: len(v) for k, v in pair.log().items()}
                         results.append(
                             record_retrying(
                                 cwr,
@@ -649,11 +712,13 @@ def record(args) -> int:
                                 pair,
                             )
                         )
+                        if not pair.alive():
+                            pair.restart()
                         pair.schedule([])
                         if args.stub_logs:
                             iid = results[-1]["instance"]
                             logs = {
-                                k: [e for e in v[seen[k] :] if e["instance"] == iid]
+                                k: [e for e in v if e["instance"] == iid]
                                 for k, v in pair.log().items()
                             }
                             Path(args.stub_logs).mkdir(parents=True, exist_ok=True)

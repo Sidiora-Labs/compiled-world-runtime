@@ -1,0 +1,2 @@
+{"format":"cwr.cassette","label":"t058-site-build/seed-7","request_hash":"sha256-cwr-canonical-json-v1","schema_version":1}
+{"adapter":"publish.post","params":{"body":"about\nblog\ncareers\ncontact\ndocs\nfaq\nhome\npress\npricing\nteam\n","key":"site-1","title":"Site rebuilt"},"request_hash":"sha256:bb801278adea96e2d453aef83ff7c794be33a7594b26de29ed653c750323c267","response":{"body":"{\"result\":{\"accepted_at\":34,\"key\":\"site-1\",\"post_id\":\"post_d732bbcf1c3808d9\"}}","headers":{"content-type":"application/json"},"kind":"http","status":200},"seq":0,"world_time":34}

@@ -3,21 +3,21 @@
 
 # Task suite
 
-Status: the primitive counts, turns and reuse positions in `suite.kvx` are measured from the
-ledgers of replay-mode runs of the reference solutions on the World Kernel by
-`tests/cwr/cases/4_2.py` (case CWR-015) and imported from `_authoring/kernel_counts.json`.
-The reference model in `_authoring/refsim.py` is only an authoring pre-check.
-
 The suite is 60 tasks on the reference world, in three bins by length. Each task gives the model one
 instruction, starts from a fixed state and is judged by a pure success predicate over the final
 state and the ledger. The instruction is identical across arms and never names the rule the task is
 meant to make the model discover. The suite implements
 [reference-world.md](../../spec/cwr/reference-world.md) sections 5 to 8.
 
+The primitive counts, turns and reuse positions in `suite.kvx` are measured on the World Kernel. The
+driver `tests/cwr/cases/4_2.py` runs every reference solution in replay mode and counts from the
+ledgers, and the results are imported from `_authoring/kernel_counts.json`. The Python reference
+model in `_authoring/refsim.py` serves only as a fast pre-check.
+
 ## Layout
 
 | Path | Content |
-|---|---|
+| --- | --- |
 | `tNNN-slug/task.md` | The instruction given to the model, verbatim |
 | `tNNN-slug/initial.kvx` | The starting Instance state: sections `[fs]` (`files`, `locks`), `[kv]` (`namespaces`) and `[jobs]` (`jobs`) |
 | `tNNN-slug/success.py` | `success(state, ledger) -> bool`. It imports only `benchmark/predicates/common.py`, as `import common as c`. |
@@ -35,7 +35,9 @@ excludes `_authoring/`.
 ## Change the suite
 
 Edit the definitions in `_authoring/tasks_*.py` and regenerate. Generated files, including
-`suite.kvx`, are never edited by hand.
+`suite.kvx`, are never edited by hand. The generator writes the repository header into every
+generated `.py` and `.kvx` file itself, so a header pass must never rewrite them; `task.md`, `bin`
+and `rules` carry no header because they are read verbatim.
 
 ```sh
 python3 benchmark/tasks/_authoring/build_suite.py          # regenerate and check
@@ -45,8 +47,8 @@ python3 benchmark/tasks/_authoring/build_suite.py --check  # fail if anything on
 After a change that can move a count, measure on the kernel and import the counts:
 
 ```sh
-python3 tests/cwr/cases/4_2.py --write-counts /tmp/counts.json
-python3 benchmark/tasks/_authoring/build_suite.py --kernel-counts /tmp/counts.json
+python3 tests/cwr/cases/4_2.py --write-counts counts.json
+python3 benchmark/tasks/_authoring/build_suite.py --kernel-counts counts.json
 python3 tests/cwr/cases/4_2.py
 ```
 
@@ -66,7 +68,7 @@ an existing `cassette_digest` in `suite.kvx`.
 ## Suite shape
 
 | Bin | Tasks | Reference primitives | Rule-reuse tasks |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | short | t001 to t020 | 2 to 4 | 0 |
 | medium | t021 to t040 | 8 to 21 | 0 |
 | long | t041 to t060 | 30 to 67 | 14 (t041 to t054) |
@@ -100,7 +102,7 @@ A rule identifier has the form `<module>.<primitive>[<selector>][:<CODE>]` and i
 `common.parse_rule`.
 
 | Selector | Meaning |
-|---|---|
+| --- | --- |
 | `[N]:CODE` | Declared precondition N (one-based, in catalogue order) failing with CODE. Only these rules can be targeted by a `--x-drift` Build. |
 | `[rate]:RATE_LIMITED` | The stub-side rate limit |
 | `[key]:DUPLICATE_KEY` | Idempotency-key reuse at the adapter gateway |
@@ -115,7 +117,7 @@ The rule-reuse metric needs both the primitive and the code, and both are in the
 Predicates read the state view documented at the top of `common.py`:
 
 | Section | Content |
-|---|---|
+| --- | --- |
 | `fs` | Files and locks |
 | `kv` | Namespaces |
 | `jobs` | Jobs, with `status` as of the final world time and `result` once done |

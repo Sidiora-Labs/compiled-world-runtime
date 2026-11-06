@@ -1,0 +1,15 @@
+{
+  "class": "two_failure_codes",
+  "clause": "3.2",
+  "description": "A precondition declaring two failure codes instead of exactly one.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 30,
+      "col": 18,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+search.query[rate]:RATE_LIMITED
+search.query[shape]
+fs.move[3]:CONFLICT

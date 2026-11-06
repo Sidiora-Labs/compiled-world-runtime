@@ -1,0 +1,4 @@
+jobs.result[2]:CONFLICT
+search.query[shape]
+fs.lock[2]:CONFLICT
+publish.post[key]:DUPLICATE_KEY

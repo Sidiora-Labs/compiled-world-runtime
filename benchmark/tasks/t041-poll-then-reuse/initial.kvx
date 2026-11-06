@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t041-poll-then-reuse. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t041-poll-then-reuse"
+
+[fs]
+files = {"/notes/n01.txt": "note 01: follow up on item 1\n", "/notes/n02.txt": "note 02: follow up on item 2\n", "/notes/n03.txt": "note 03: follow up on item 3\n", "/notes/n04.txt": "note 04: follow up on item 4\n", "/notes/n05.txt": "note 05: follow up on item 5\n", "/notes/n06.txt": "note 06: follow up on item 6\n", "/notes/n07.txt": "note 07: follow up on item 7\n", "/notes/n08.txt": "note 08: follow up on item 8\n", "/notes/n09.txt": "note 09: follow up on item 9\n", "/notes/n10.txt": "note 10: follow up on item 10\n", "/notes/n11.txt": "note 11: follow up on item 11\n", "/notes/n12.txt": "note 12: follow up on item 12\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

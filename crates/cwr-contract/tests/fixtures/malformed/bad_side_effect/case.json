@@ -1,0 +1,15 @@
+{
+  "class": "bad_side_effect",
+  "clause": "3.2",
+  "description": "A side_effect outside {read_only, mutating, external}.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/kv.kvx",
+      "line": 19,
+      "col": 15,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

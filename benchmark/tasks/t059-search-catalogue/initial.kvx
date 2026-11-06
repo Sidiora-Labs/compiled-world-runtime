@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t059-search-catalogue. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t059-search-catalogue"
+
+[fs]
+files = {"/topics.txt": "alpine lakes\nbasalt\ncello\ndune ecology\nestuaries\nfjords\ngeysers\nharbour seals\nice cores\njet streams\nkarst\nlava tubes\nmonsoons\nnebulae\noxbow lakes\npeat bogs\nquasars\nreefs\nsalt flats\ntundra\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

@@ -1,0 +1,21 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+line-length = 100
+target-version = "py312"
+extend-exclude = ["vendor", "target", "benchmark/results", "tests/cwr/evidence", "artifacts"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
+
+[lint.per-file-ignores]
+"benchmark/tasks/**" = ["N999"]
+"benchmark/solutions/**" = ["N999"]
+# Upgrade-pair turn scripts are bodies the kernel wraps in a function, so a top-level return is valid.
+"examples/refworld-upgrades/*/solutions/*.py" = ["F706"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

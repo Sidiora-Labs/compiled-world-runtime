@@ -1,0 +1,22 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Illustrative adapter contract for the search module: the tennis-versus-golf case. The call shape,
+# the result shape and the failure codes are rules; which documents come back is content.
+
+[meta]
+format = "cwr.adapter"
+schema_version = 1
+example = true
+module = "search"
+
+[adapter.search.query]
+side_effect = "external"
+params = {"q": "str", "limit": "int"}
+returns = "list[SearchHit]"
+preconditions = [["len(q) > 0", "INVALID"], ["limit <= 50", "LIMIT"]]
+idempotency = "none"
+timeout_ms = 3000
+failures = ["INVALID", "LIMIT", "RATE_LIMITED", "UNAVAILABLE", "TIMEOUT"]
+content_guaranteed = false
+endpoint = "stub://search/v1/query"
+doc = "Search the external index. Returns at most limit hits with the SearchHit shape; the hits themselves are not guaranteed and may differ between calls."

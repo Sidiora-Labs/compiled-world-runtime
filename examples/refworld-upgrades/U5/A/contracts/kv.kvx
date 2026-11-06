@@ -1,0 +1,61 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Rule contracts for the kv module, flat variant: one key/value map with a 1 KiB value limit and a
+# 64 KiB quota over the whole store. This is side A of upgrade pair U5 (examples/refworld-upgrades);
+# side B is the namespaced kv of examples/refworld. Catalogue shape: spec/cwr/reference-world.md
+# section 2.2 without the ns parameter.
+# Python reserves the word del, so the lib function and the SDK attribute for kv.del are spelled
+# del_ (the trailing-underscore rule for Python keywords); the primitive name is kv.del.
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "kv"
+
+[primitive.kv.has]
+side_effect = "read_only"
+params = {"key": "str"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when key is stored. Never fails."
+
+[primitive.kv.get]
+side_effect = "read_only"
+params = {"key": "str"}
+returns = "bytes"
+preconditions = [["kv.has(key)", "NOT_FOUND"]]
+effects = []
+doc = "Value stored under key."
+
+[primitive.kv.keys]
+side_effect = "read_only"
+params = {}
+returns = "list[str]"
+preconditions = []
+effects = []
+doc = "Every stored key, sorted bytewise; empty when nothing is stored. Never fails."
+
+[primitive.kv.used]
+side_effect = "read_only"
+params = {}
+returns = "int"
+preconditions = []
+effects = []
+doc = "Total byte length of every stored value; 0 when nothing is stored. Never fails."
+
+[primitive.kv.set]
+side_effect = "mutating"
+params = {"key": "str", "value": "bytes"}
+returns = "None"
+preconditions = [["len(value) <= 1024", "INVALID"], ["kv.used() + len(value) <= 65536", "LIMIT"]]
+effects = ["kv.has(key)", "kv.get(key) == value"]
+doc = "Store value under key, replacing any previous value. Refused when the value exceeds 1024 bytes, or when the store's current usage plus the value would exceed 65536 bytes."
+
+[primitive.kv.del]
+side_effect = "mutating"
+params = {"key": "str"}
+returns = "None"
+preconditions = [["kv.has(key)", "NOT_FOUND"]]
+effects = ["not kv.has(key)"]
+doc = "Remove key. Refused when the key is not stored."

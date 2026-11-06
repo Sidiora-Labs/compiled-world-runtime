@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t046-burst-twice. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t046-burst-twice"
+title = "Two publishing bursts around backups"
+bin = "long"
+rules = ["publish.post[rate]:RATE_LIMITED", "publish.post[key]:DUPLICATE_KEY"]
+rule_reuse = true
+reused_rule = "publish.post[rate]:RATE_LIMITED"
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t046-burst-twice.py"

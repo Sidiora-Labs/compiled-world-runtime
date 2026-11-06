@@ -1,0 +1,22 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Valid World Source fixture for the cwr-contract crate (task 0.3, case CWR-001).
+# Every limit is explicit; there are no defaults.
+
+[meta]
+format = "cwr.world-source"
+schema_version = 1
+
+[world]
+name = "fixtureworld"
+version = "0.2.0"
+language = "python"
+runtime = "3.12"
+modules = ["fs", "kv", "search"]
+
+[clock]
+tick_per_primitive = 1
+tick_per_turn = 10
+
+[rng]
+seed_visible = true

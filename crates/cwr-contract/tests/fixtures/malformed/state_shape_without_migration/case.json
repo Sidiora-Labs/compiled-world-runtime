@@ -1,0 +1,15 @@
+{
+  "class": "state_shape_without_migration",
+  "clause": "3.6",
+  "description": "A state_shape change with an empty migration (CWR-M001).",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 28,
+      "col": 13,
+      "kind": "migration",
+      "code": "CWR-M001"
+    }
+  ]
+}

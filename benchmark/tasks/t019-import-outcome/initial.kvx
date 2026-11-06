@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t019-import-outcome. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t019-import-outcome"
+
+[fs]
+files = {}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {"job-import": {"fail_at": 3, "kind": "import", "n": 20, "submitted_at": -5}}

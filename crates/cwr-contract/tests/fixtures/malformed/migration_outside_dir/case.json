@@ -1,0 +1,15 @@
+{
+  "class": "migration_outside_dir",
+  "clause": "3.6",
+  "description": "A migration path outside migrations/.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 28,
+      "col": 13,
+      "kind": "migration",
+      "code": "CWR-M001"
+    }
+  ]
+}

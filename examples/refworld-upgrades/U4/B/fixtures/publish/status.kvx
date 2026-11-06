@@ -1,0 +1,63 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for adapter publish.status, in cassette form. Each [case.<name>] runs the gateway in
+# replay mode: prior lists cassette entries consumed earlier in the same ephemeral Instance, response is
+# the recorded stub response for the call under test, or null when no request is sent (a precondition
+# failed, or a key adapter replays its stored outcome). Responses are {"status", "body"} plus
+# optional "delay_ms" (host time; past timeout_ms the gateway reports TIMEOUT). request_hash is the
+# canonical request hash of benchmark/cassettes/FORMAT.md section 3, sha256 over {"adapter", "params"}
+# as sorted-key compact JSON. expect, precondition: as for primitives.
+# Value codec: {"$repeat": [s, n]} is s repeated n times.
+# Every response below was captured from benchmark/stubs/publish_server.py (seed 1, default rules plus
+# the named schedule fault, allow_undeclared false), except a case named synthetic_*, whose status the
+# stubs never send; it pins the gateway's undeclared_status fallback.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "publish"
+primitive = "publish.status"
+
+[case.not_found]
+world_time = 0
+state = {}
+prior = []
+params = {"post_id":"post_0000000000000000"}
+expect = "NOT_FOUND"
+precondition = null
+request_hash = "sha256:f897ed3e988b021a610951a03996a990ba49866576ed8f58e0f9e2f59a591f67"
+sequence = 1
+response = {"body":{"code":"NOT_FOUND","detail":"no published post with this id"},"status":404}
+
+[case.unavailable]
+world_time = 0
+state = {}
+prior = []
+params = {"post_id":"post_a32ef1a89199caf1"}
+expect = "UNAVAILABLE"
+precondition = null
+request_hash = "sha256:4c0caa949a7019caf13119fbc830416ddf08b81ca770d540cc8f29faa9123e5b"
+sequence = 1
+response = {"body":{"code":"UNAVAILABLE","detail":"stub schedule UNAVAILABLE"},"status":503}
+
+[case.timeout]
+world_time = 0
+state = {}
+prior = []
+params = {"post_id":"post_a32ef1a89199caf1"}
+expect = "TIMEOUT"
+precondition = null
+request_hash = "sha256:4c0caa949a7019caf13119fbc830416ddf08b81ca770d540cc8f29faa9123e5b"
+sequence = 1
+response = {"body":{"result":{"accepted_at":0,"key":"k-1","post_id":"post_a32ef1a89199caf1","state":"published"}},"delay_ms":2500,"status":200}
+
+[case.ok]
+world_time = 0
+state = {}
+prior = []
+params = {"post_id":"post_a32ef1a89199caf1"}
+expect = "ok"
+precondition = null
+request_hash = "sha256:4c0caa949a7019caf13119fbc830416ddf08b81ca770d540cc8f29faa9123e5b"
+sequence = 1
+response = {"body":{"result":{"accepted_at":0,"key":"k-1","post_id":"post_a32ef1a89199caf1","state":"published"}},"status":200}

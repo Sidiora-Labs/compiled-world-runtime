@@ -1,0 +1,15 @@
+{
+  "class": "duplicate_primitive",
+  "clause": "3.2",
+  "description": "The same primitive declared in contracts/ and adapters/ (CWR-C002).",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/fs.kvx",
+      "line": 8,
+      "col": 1,
+      "kind": "duplicate_primitive",
+      "code": "CWR-C002"
+    }
+  ]
+}

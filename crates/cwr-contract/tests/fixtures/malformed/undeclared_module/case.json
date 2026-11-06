@@ -1,0 +1,15 @@
+{
+  "class": "undeclared_module",
+  "clause": "3.2",
+  "description": "A contract file for a module absent from world.modules (CWR-C003).",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/jobs.kvx",
+      "line": 6,
+      "col": 10,
+      "kind": "undeclared_module",
+      "code": "CWR-C003"
+    }
+  ]
+}

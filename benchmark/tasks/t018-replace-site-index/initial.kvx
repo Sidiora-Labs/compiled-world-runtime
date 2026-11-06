@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t018-replace-site-index. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t018-replace-site-index"
+
+[fs]
+files = {"/drafts/index.html": "<html><body>New front page</body></html>\n", "/site/index.html": "<html><body>Old page</body></html>\n"}
+locks = ["/site/index.html"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

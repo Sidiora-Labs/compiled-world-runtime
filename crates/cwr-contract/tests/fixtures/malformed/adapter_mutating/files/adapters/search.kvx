@@ -1,0 +1,20 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# search adapter fixture.
+
+[meta]
+format = "cwr.adapter"
+schema_version = 1
+module = "search"
+
+[adapter.search.query]
+side_effect = "mutating"
+params = {"q": "str", "limit": "int"}
+returns = "list[SearchHit]"
+preconditions = [["len(q) > 0", "INVALID"], ["limit <= 50", "LIMIT"]]
+idempotency = "none"
+timeout_ms = 3000
+failures = ["INVALID", "LIMIT", "RATE_LIMITED", "UNAVAILABLE", "TIMEOUT"]
+content_guaranteed = false
+endpoint = "stub://search/v1/query"
+doc = "Search the external index; hits are content, not guaranteed."

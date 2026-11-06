@@ -1,0 +1,15 @@
+{
+  "class": "mutating_without_effects",
+  "clause": "3.2",
+  "description": "A mutating primitive declares no effect.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 47,
+      "col": 11,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

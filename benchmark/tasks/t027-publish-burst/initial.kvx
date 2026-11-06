@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t027-publish-burst. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t027-publish-burst"
+
+[fs]
+files = {"/posts/a1.txt": "Announcement 1\nDetails for item 1.\n", "/posts/a2.txt": "Announcement 2\nDetails for item 2.\n", "/posts/a3.txt": "Announcement 3\nDetails for item 3.\n", "/posts/a4.txt": "Announcement 4\nDetails for item 4.\n", "/posts/a5.txt": "Announcement 5\nDetails for item 5.\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

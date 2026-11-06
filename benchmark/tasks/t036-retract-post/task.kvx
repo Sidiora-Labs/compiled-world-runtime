@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t036-retract-post. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t036-retract-post"
+title = "Publish and retract"
+bin = "medium"
+rules = ["publish.post[key]:DUPLICATE_KEY", "publish.post[1]:INVALID", "kv.del[1]:NOT_FOUND"]
+rule_reuse = false
+reused_rule = null
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t036-retract-post.py"

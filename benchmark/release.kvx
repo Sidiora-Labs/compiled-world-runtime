@@ -1,0 +1,235 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# CWR release pins (requirement 14.3, task 6.1). Procedure: RELEASE.md.
+# Every value below that names a revision, digest, hash or checksum is written by
+# `cwr release pin --write` and verified by `cwr release check`, which recompute each one from the
+# tree. A pin that is null, malformed or different from its recomputation produces the named
+# diagnostic in its section and blocks the release claim. Hash values use "sha256:<64 lowercase hex>".
+# A revision is the sha256 tree digest of the component directory (no version-control history
+# exists), in the layout of benchmark/predicates/common.py tree_digest.
+# meta.release, meta.status, meta.date and every path are set by the release owner, not by pin.
+# Comments sit on their own lines: every value is a single JSON literal.
+
+[meta]
+format = "cwr.release"
+schema_version = 2
+status = "pinned; no release claim until closure and owner acceptance (task 6.2)"
+release = "0.1.0"
+date = "2026-11-06"
+spec_sha256 = null
+owner = "release"
+tasks = ["6.1", "6.2"]
+
+[pin.contract]
+crate = "cwr-contract"
+path = "crates/cwr-contract"
+revision = null
+diagnostic = "CWR-R016"
+
+[pin.compiler]
+crate = "cwr-compiler"
+path = "crates/cwr-compiler"
+revision = null
+diagnostic = "CWR-R001"
+
+[pin.kernel]
+crate = "cwr-kernel"
+path = "crates/cwr-kernel"
+revision = null
+diagnostic = "CWR-R002"
+
+[pin.sdk]
+package = "cwr-sdk"
+path = "sdk/python"
+revision = null
+diagnostic = "CWR-R003"
+
+[pin.cli]
+crate = "cwr-cli"
+path = "crates/cwr-cli"
+revision = null
+diagnostic = "CWR-R004"
+
+# Every crate dependency is pinned by Cargo.lock; packaging builds with cargo --locked.
+[dependencies]
+cargo_lock = null
+diagnostic = "CWR-R017"
+
+# The control Build every arm is measured against: built into an empty Build root. It must equal
+# the control_build registered by every campaign file listed in "campaigns" that exists.
+[build.refworld_control]
+source = "examples/refworld"
+flag = null
+campaigns = ["benchmark/campaigns/h1.kvx", "benchmark/campaigns/h2.kvx", "benchmark/campaigns/h3.kvx", "benchmark/campaigns/h4.kvx"]
+hash = null
+diagnostic = "CWR-R005"
+
+# Experimental Builds compiled from the control source, one per task and drift arm registered in
+# the H1 campaign file; the drift file of each is regenerated from its registered schedule and the
+# Build must equal the hash registered there. "hashes" maps "<task>/<arm>" to the Build hash.
+[build.x_drift]
+source = "examples/refworld"
+flag = "--x-drift"
+arms = ["drift-1", "drift-3"]
+schedules = "benchmark/campaigns/h1.kvx"
+hashes = null
+diagnostic = "CWR-R006"
+
+[build.x_one_primitive]
+source = "examples/refworld"
+flag = "--x-one-primitive"
+arms = ["one-primitive"]
+registered_in = "benchmark/campaigns/h2.kvx"
+hash = null
+diagnostic = "CWR-R007"
+
+# Notice ablations: side B of each upgrade pair built with the flag and --previous <side A hash>.
+[build.x_version_only]
+source = "examples/refworld-upgrades"
+flag = "--x-version-only"
+arms = ["version-only"]
+hashes = null
+diagnostic = "CWR-R008"
+
+[build.x_silent_change]
+source = "examples/refworld-upgrades"
+flag = "--x-silent-change"
+arms = ["silent"]
+hashes = null
+diagnostic = "CWR-R009"
+
+# Both sides of each upgrade pair: A into an empty Build root, then B with --previous <A hash>.
+[build.upgrade_pairs]
+source = "examples/refworld-upgrades"
+expectations = "benchmark/upgrades.kvx"
+pairs = ["U1", "U2", "U3", "U4", "U5", "U6"]
+hashes = null
+diagnostic = "CWR-R010"
+
+# The cassette set digest (benchmark/cassettes/FORMAT.md section 5); must equal the value frozen in
+# benchmark/suite.kvx.
+[cassettes]
+path = "benchmark/cassettes"
+frozen_in = "benchmark/suite.kvx"
+digest = null
+diagnostic = "CWR-R011"
+
+[suite]
+path = "benchmark/tasks"
+frozen_in = "benchmark/suite.kvx"
+tasks = 60
+digest = null
+diagnostic = "CWR-R012"
+
+# Packaged artifacts (RELEASE.md, "Package"): path relative to the repository root and checksum.
+[artifact.cli]
+path = "artifacts/cwr-0.1.0-x86_64-linux-gnu"
+sha256 = null
+diagnostic = "CWR-R013"
+
+[artifact.sdk]
+path = "artifacts/cwr_sdk-0.1.0-py3-none-any.whl"
+sha256 = null
+diagnostic = "CWR-R014"
+
+# Campaign results: tree digest of each hypothesis result directory.
+[results]
+paths = {"h1": "benchmark/results/h1", "h2": "benchmark/results/h2", "h3": "benchmark/results/h3", "h4": "benchmark/results/h4"}
+digests = null
+diagnostic = "CWR-R018"
+
+# Evidence the release claim depends on. Closure and owner acceptance are produced by task 6.2 and
+# checked by `cwr release check --claim`.
+[evidence]
+registry = "tests/cwr/registry.kvx"
+preregistration = "benchmark/preregistration.kvx"
+preregistration_sha256 = null
+reports = ["research/h1-stability.md", "research/h2-direct-action.md", "research/h3-long-context.md", "research/h4-controlled-change.md"]
+closure = null
+owner_acceptance = null
+diagnostic = "CWR-R015"
+
+# The diagnostics `cwr release check` emits (crates/cwr-cli/src/release.rs PINS), one per pin.
+[diagnostic.CWR-R001]
+missing = "pin.compiler.revision"
+message = "compiler revision is not pinned or differs from the tree"
+
+[diagnostic.CWR-R002]
+missing = "pin.kernel.revision"
+message = "kernel revision is not pinned or differs from the tree"
+
+[diagnostic.CWR-R003]
+missing = "pin.sdk.revision"
+message = "SDK revision is not pinned or differs from the tree"
+
+[diagnostic.CWR-R004]
+missing = "pin.cli.revision"
+message = "CLI revision is not pinned or differs from the tree"
+
+[diagnostic.CWR-R005]
+missing = "build.refworld_control.hash"
+message = "refworld control Build hash is missing or fails verification"
+
+[diagnostic.CWR-R006]
+missing = "build.x_drift.hashes"
+message = "a drift Build hash is missing or fails verification"
+
+[diagnostic.CWR-R007]
+missing = "build.x_one_primitive.hash"
+message = "one-primitive Build hash is missing or fails verification"
+
+[diagnostic.CWR-R008]
+missing = "build.x_version_only.hashes"
+message = "a version-only Build hash is missing or fails verification"
+
+[diagnostic.CWR-R009]
+missing = "build.x_silent_change.hashes"
+message = "a silent-change Build hash is missing or fails verification"
+
+[diagnostic.CWR-R010]
+missing = "build.upgrade_pairs.hashes"
+message = "an upgrade pair Build hash is missing or fails verification"
+
+[diagnostic.CWR-R011]
+missing = "cassettes.digest"
+message = "cassette set digest is missing or differs from benchmark/suite.kvx"
+
+[diagnostic.CWR-R012]
+missing = "suite.digest"
+message = "task suite digest is missing or differs from benchmark/suite.kvx"
+
+[diagnostic.CWR-R013]
+missing = "artifact.cli.sha256"
+message = "packaged cwr CLI is missing or its checksum does not match"
+
+[diagnostic.CWR-R014]
+missing = "artifact.sdk.sha256"
+message = "packaged Python SDK is missing or its checksum does not match"
+
+[diagnostic.CWR-R015]
+missing = "evidence.closure"
+message = "closure or owner acceptance is missing or names blocking items; no release claim may be made"
+
+[diagnostic.CWR-R016]
+missing = "pin.contract.revision"
+message = "contract crate revision is not pinned or differs from the tree"
+
+[diagnostic.CWR-R017]
+missing = "dependencies.cargo_lock"
+message = "Cargo.lock digest is not pinned or differs from the tree"
+
+[diagnostic.CWR-R018]
+missing = "results.digests"
+message = "a campaign result digest is missing or differs from benchmark/results"
+
+[diagnostic.CWR-R019]
+missing = "meta.release"
+message = "release version is missing or disagrees with the cwr-cli and SDK versions"
+
+[diagnostic.CWR-R020]
+missing = "meta.spec_sha256"
+message = "specification digest is not pinned or differs from spec/cwr/spec.kvx"
+
+[diagnostic.CWR-R021]
+missing = "evidence.preregistration_sha256"
+message = "pre-registration digest is not pinned or differs from the registered file"

@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t020-unlock-shared. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t020-unlock-shared"
+
+[fs]
+files = {"/shared/a.txt": "shared file a\n", "/shared/b.txt": "shared file b\n", "/shared/c.txt": "shared file c\n", "/shared/d.txt": "shared file d\n", "/shared/e.txt": "shared file e\n"}
+locks = ["/shared/a.txt", "/shared/c.txt", "/shared/e.txt"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

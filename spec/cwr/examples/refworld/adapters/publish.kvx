@@ -1,0 +1,46 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Illustrative adapter contracts for the publish module. Interface is guaranteed, content is not:
+# content_guaranteed is false by rule and the declared failures are the only codes the gateway may emit.
+
+[meta]
+format = "cwr.adapter"
+schema_version = 1
+example = true
+module = "publish"
+
+[adapter.publish.post]
+side_effect = "external"
+params = {"key": "str", "title": "str", "body": "str"}
+returns = "PostReceipt"
+preconditions = [["len(title) <= 200", "INVALID"]]
+idempotency = "key"
+timeout_ms = 5000
+failures = ["INVALID", "DUPLICATE_KEY", "RATE_LIMITED", "UNAVAILABLE", "TIMEOUT"]
+content_guaranteed = false
+endpoint = "stub://publish/v1/post"
+doc = "Publish a post under an idempotency key. An identical replay returns the original receipt; a reused key with different content is DUPLICATE_KEY. Rate limits carry retry_after in ticks."
+
+[adapter.publish.status]
+side_effect = "external"
+params = {"post_id": "str"}
+returns = "PostStatus"
+preconditions = []
+idempotency = "natural"
+timeout_ms = 2000
+failures = ["NOT_FOUND", "UNAVAILABLE", "TIMEOUT"]
+content_guaranteed = false
+endpoint = "stub://publish/v1/status"
+doc = "Status of a published post. The shape is guaranteed; the status value is whatever the service reports. Use it to reconcile after a TIMEOUT on publish.post."
+
+[adapter.publish.delete]
+side_effect = "external"
+params = {"post_id": "str"}
+returns = "None"
+preconditions = []
+idempotency = "natural"
+timeout_ms = 2000
+failures = ["NOT_FOUND", "UNAVAILABLE", "TIMEOUT"]
+content_guaranteed = false
+endpoint = "stub://publish/v1/delete"
+doc = "Withdraw a published post. The service decides what withdrawal means for its stored content; a post it does not know is NOT_FOUND."

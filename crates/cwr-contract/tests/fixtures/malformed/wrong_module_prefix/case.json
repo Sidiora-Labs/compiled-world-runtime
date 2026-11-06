@@ -1,0 +1,15 @@
+{
+  "class": "wrong_module_prefix",
+  "clause": "3.2",
+  "description": "A contract file declares a primitive of another module.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 18,
+      "col": 1,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

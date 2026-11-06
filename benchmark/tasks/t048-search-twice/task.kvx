@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t048-search-twice. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t048-search-twice"
+title = "Two search batches around a filing run"
+bin = "long"
+rules = ["search.query[rate]:RATE_LIMITED", "search.query[shape]", "fs.move[3]:CONFLICT"]
+rule_reuse = true
+reused_rule = "search.query[rate]:RATE_LIMITED"
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t048-search-twice.py"

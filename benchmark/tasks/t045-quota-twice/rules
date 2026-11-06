@@ -1,0 +1,3 @@
+kv.set[2]:LIMIT
+kv.del[1]:NOT_FOUND
+fs.write[1]:LOCKED

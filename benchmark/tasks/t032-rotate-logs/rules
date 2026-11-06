@@ -1,0 +1,3 @@
+fs.move[3]:CONFLICT
+fs.move[2]:LOCKED
+fs.lock[2]:CONFLICT

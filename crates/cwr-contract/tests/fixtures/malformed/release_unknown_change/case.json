@@ -1,0 +1,15 @@
+{
+  "class": "release_unknown_change",
+  "clause": "3.6",
+  "description": "A release lists a change id with no change section.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 34,
+      "col": 23,
+      "kind": "changelog",
+      "code": null
+    }
+  ]
+}

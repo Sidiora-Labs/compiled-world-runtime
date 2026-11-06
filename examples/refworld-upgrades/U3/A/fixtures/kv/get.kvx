@@ -1,0 +1,29 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for kv.get. Each [case.<name>] is one ephemeral-Instance run:
+# world_time and state are the initial conditions (state is keyed by module; modules not named start
+# from their lib INITIAL_STATE), params is the call, expect is "ok" or the envelope code, precondition
+# is the one-based index of the failing precondition or null, returned (optional) is the exact value an
+# internal primitive must return. Value codec: a JSON string in a position typed bytes is its UTF-8
+# encoding; {"$repeat": [s, n]} is the string s repeated n times; nothing else is special.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "kv"
+primitive = "kv.get"
+
+[case.pre_1_not_found]
+world_time = 0
+state = {"kv": {"namespaces": {"receipts": {"golf-1": "p_0001"}, "notes": {"a": "1", "b": "22"}}}}
+params = {"ns": "notes", "key": "golf-1"}
+expect = "NOT_FOUND"
+precondition = 1
+
+[case.ok]
+world_time = 0
+state = {"kv": {"namespaces": {"receipts": {"golf-1": "p_0001"}, "notes": {"a": "1", "b": "22"}}}}
+params = {"ns": "receipts", "key": "golf-1"}
+expect = "ok"
+precondition = null
+returned = "p_0001"

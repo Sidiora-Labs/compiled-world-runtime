@@ -1,0 +1,30 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+[sync]
+ auto = true            
+
+[paths]
+ spec    = "spec"       
+ context = ".hyperfide/context"    
+ skills  = ".agents/skills"  
+ codemap = "CODEMAP.md" 
+
+[index]
+workers = auto       
+walk = auto          
+
+[projection]
+base    = "main"     
+stale   = "24h"      
+exclude = []         
+index   = false      
+steer   = true       
+auto    = true       
+min_interval = "15s"
+
+[fleet]
+discover = true      
+
+[hooks]
+shell_advice = true  

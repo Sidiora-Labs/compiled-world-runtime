@@ -1,0 +1,15 @@
+{
+  "class": "trailing_comment",
+  "clause": "3.1",
+  "description": "Text after the JSON value on a key line.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 18,
+      "col": 15,
+      "kind": "json",
+      "code": null
+    }
+  ]
+}

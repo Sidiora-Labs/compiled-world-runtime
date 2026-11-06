@@ -1,0 +1,182 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# CWR experimental arms (spec/cwr/experiments.md sections 2 and 3, requirement 12.1 and 12.2).
+# Every arm is a CWR Build of refworld: either the control Build or the control source compiled with
+# exactly one experimental flag that ablates one pillar. There is no external baseline: no arm, adapter,
+# prompt or setting here references, invokes or compares against anything that is not a CWR Build.
+# Build hashes are null until task 5.2/5.3 compile the Builds and freeze them; benchmark/analyse.py and
+# benchmark/harness/run.py refuse an arm whose required hash is still null.
+#
+# build_binding:
+#   control   the control Build hash in [control].build
+#   per_task  one experimental Build per task, compiled from the control source plus the task's drift
+#             spec; hashes are frozen per task in benchmark/campaigns/h1.kvx (task 5.2)
+#   flag      one experimental Build compiled from the control source with the arm's flag; hash in build
+#   pair_b    the B side of each upgrade pair (benchmark/upgrades.kvx, task 4.3); for an experimental
+#             H4 arm the B side is recompiled with the arm's flag and frozen per pair in campaigns/h4.kvx
+# role: control (the arm the hypothesis measures against), ablation (one pillar ablated by a flag) or
+# variant (H3 only: the control Build with a different ledger tail K; no pillar is ablated).
+# experimental_stamp is the flag name the kernel stamps on every ledger record of that Build
+# (kernel.md section 8); analyse.py requires every record of the arm to carry exactly this stamp.
+
+[meta]
+format = "cwr.arms"
+schema_version = 1
+status = "draft"
+world = "refworld"
+no_external_baseline = true
+allowed_flags = ["--x-drift", "--x-silent-change", "--x-version-only", "--x-one-primitive"]
+pillars = ["stability", "direct_action", "controlled_change"]
+
+[control]
+world = "refworld"
+source = "examples/refworld"
+build = null
+doc = "refworld compiled with no experimental flag; the control Build of every hypothesis."
+
+[arm.h1.frozen]
+hypothesis = "H1"
+label = "frozen"
+role = "control"
+flag = null
+pillar_ablated = null
+experimental_stamp = null
+build_binding = "control"
+build = null
+tail = 20
+task_set = "suite:all"
+doc = "Rules fixed for the life of the Build."
+
+[arm.h1.drift-1]
+hypothesis = "H1"
+label = "drift-1"
+role = "ablation"
+flag = "--x-drift"
+pillar_ablated = "stability"
+experimental_stamp = "x-drift"
+build_binding = "per_task"
+build = null
+drift_injections = 1
+drift_turns = ["floor(len/2)"]
+tail = 20
+task_set = "suite:all"
+doc = "One rule from the task's rules file changes at turn floor(len/2) without notice; manual unchanged."
+
+[arm.h1.drift-3]
+hypothesis = "H1"
+label = "drift-3"
+role = "ablation"
+flag = "--x-drift"
+pillar_ablated = "stability"
+experimental_stamp = "x-drift"
+build_binding = "per_task"
+build = null
+drift_injections = 3
+drift_turns = ["floor(len/4)", "floor(len/2)", "floor(3*len/4)"]
+tail = 20
+task_set = "suite:all"
+doc = "Three rules change at the quartile turns without notice; manual unchanged."
+
+[arm.h2.script]
+hypothesis = "H2"
+label = "script"
+role = "control"
+flag = null
+pillar_ablated = null
+experimental_stamp = null
+build_binding = "control"
+build = null
+tail = 20
+task_set = "suite:all"
+doc = "One script per turn with the control limits."
+
+[arm.h2.one-primitive]
+hypothesis = "H2"
+label = "one-primitive"
+role = "ablation"
+flag = "--x-one-primitive"
+pillar_ablated = "direct_action"
+experimental_stamp = "x-one-primitive"
+build_binding = "flag"
+build = null
+tail = 20
+task_set = "suite:all"
+doc = "The second primitive call in a turn returns LIMIT with primitive_calls=1; the manual states the limit."
+
+[arm.h3.k5]
+hypothesis = "H3"
+label = "K=5"
+role = "variant"
+flag = null
+pillar_ablated = null
+experimental_stamp = null
+build_binding = "control"
+build = null
+tail = 5
+task_set = "suite:all"
+doc = "Control Build; Instance created with ledger tail K=5."
+
+[arm.h3.k20]
+hypothesis = "H3"
+label = "K=20"
+role = "control"
+flag = null
+pillar_ablated = null
+experimental_stamp = null
+build_binding = "control"
+build = null
+tail = 20
+task_set = "suite:all"
+doc = "Control Build with the default tail K=20."
+
+[arm.h3.kfull]
+hypothesis = "H3"
+label = "K=full"
+role = "variant"
+flag = null
+pillar_ablated = null
+experimental_stamp = null
+build_binding = "control"
+build = null
+tail = "full"
+task_set = "suite:all"
+doc = "Control Build; the tail renders every ledger record."
+
+[arm.h4.changelog]
+hypothesis = "H4"
+label = "changelog"
+role = "control"
+flag = null
+pillar_ablated = null
+experimental_stamp = null
+build_binding = "pair_b"
+build = null
+tail = 20
+task_set = "upgrades:all"
+doc = "Ordinary cwr instance upgrade from Build A to Build B; the full recompile notice is rendered."
+
+[arm.h4.version-only]
+hypothesis = "H4"
+label = "version-only"
+role = "ablation"
+flag = "--x-version-only"
+pillar_ablated = "controlled_change"
+experimental_stamp = "x-version-only"
+build_binding = "pair_b"
+build = null
+tail = 20
+task_set = "upgrades:all"
+doc = "Build B compiled with --x-version-only; only the version line of the notice is rendered."
+
+[arm.h4.silent]
+hypothesis = "H4"
+label = "silent"
+role = "ablation"
+flag = "--x-silent-change"
+pillar_ablated = "controlled_change"
+experimental_stamp = "x-silent-change"
+build_binding = "pair_b"
+build = null
+tail = 20
+task_set = "upgrades:all"
+doc = "Build B compiled with --x-silent-change; the new manual is shown but no notice."

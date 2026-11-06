@@ -1,0 +1,177 @@
+{
+  "arm": null,
+  "assertion_ids": [
+    "CWR-019.a1",
+    "CWR-019.a2",
+    "CWR-019.a3",
+    "CWR-019.a4",
+    "CWR-019.a5",
+    "CWR-019.a6",
+    "CWR-019.a7",
+    "CWR-019.a8"
+  ],
+  "attempt_sha256": "sha256:8d7d7d0d91643b9082060287750f2f7033fea39381c5f46bb934da43f677cf23",
+  "blocked_reason": null,
+  "build_hash": null,
+  "builds": [],
+  "case": "CWR-019",
+  "cassette_digest": null,
+  "checker": {
+    "accepted": true,
+    "errors": [],
+    "program": "tests/cwr/check_evidence.py",
+    "revision": "sha256:f21d7ddbd8ddcd7f485826435ff24b076e873bdb87a3cb42883ca6bbabb5d12f"
+  },
+  "clauses": [
+    "13.2",
+    "13.3",
+    "13.4"
+  ],
+  "command": "python3 tests/cwr/qualify.py --case CWR-019",
+  "compiler_revision": "sha256:bcff5da1f3dd8f1d4550b639955cc19d5e4162a81931c61404689bfdd0ba4423",
+  "coverage_gaps": [],
+  "diagnostics": [],
+  "duration_ms": 24098,
+  "ended_at": "2026-11-06T10:03:00.312Z",
+  "exit_code": 0,
+  "experimental_flags": [],
+  "final_states": [
+    {
+      "path": "tests/cwr/evidence/CWR-019/20261106T100236Z-1/0.2/cwr019-suite.json",
+      "sha256": "sha256:36c1ab52ba5674ead52d1b6491ce554a570b0ede23083702b09bd561f7d21060"
+    }
+  ],
+  "gateway_mode": null,
+  "host": {
+    "hostname": "m16258.contaboserver.net",
+    "machine": "x86_64",
+    "os": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "sandbox": null
+  },
+  "instance_id": null,
+  "instances": [],
+  "invocations": [
+    {
+      "command": [
+        "python3",
+        "tests/cwr/cases/0_2.py"
+      ],
+      "duration_ms": 24097,
+      "exit_code": 0,
+      "stderr_log": "tests/cwr/evidence/CWR-019/20261106T100236Z-1/0.2/driver.stderr.log",
+      "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_log": "tests/cwr/evidence/CWR-019/20261106T100236Z-1/0.2/driver.stdout.log",
+      "stdout_sha256": "sha256:f12e18d2b668824d01361d7bac2b7ec1e71fd9164f44112287c198a6173e5fcc",
+      "task": "0.2",
+      "timed_out": false
+    }
+  ],
+  "kernel_revision": "sha256:a2c25c80dac54bfc74aab53f99fff51bb8953e86b5884dae45d152d4466fecef",
+  "ledger_digest": null,
+  "ledgers": [],
+  "log": "tests/cwr/evidence/CWR-019/20261106T100236Z-1/0.2/driver.stdout.log",
+  "log_sha256": "sha256:f12e18d2b668824d01361d7bac2b7ec1e71fd9164f44112287c198a6173e5fcc",
+  "model": null,
+  "observed": [
+    {
+      "diagnostic": "11/11 checks",
+      "id": "CWR-019.a1",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "5/5 checks",
+      "id": "CWR-019.a2",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "10/10 checks",
+      "id": "CWR-019.a3",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "5/5 checks",
+      "id": "CWR-019.a4",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "5/5 checks",
+      "id": "CWR-019.a5",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "13/13 checks",
+      "id": "CWR-019.a6",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "24/24 checks",
+      "id": "CWR-019.a7",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "6/6 checks",
+      "id": "CWR-019.a8",
+      "outcome": "PASS"
+    }
+  ],
+  "outcome": "PASS",
+  "preregistration_digest": null,
+  "recomputed": [
+    {
+      "diagnostic": "2/2 traps refused: PASS with every ASSERT line and observation removed, runner records a driver exiting 0 without assertions as FAIL",
+      "id": "CWR-019.a1",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "1/1 traps refused: PASS on an unregistered Build with record and ledger rewritten",
+      "id": "CWR-019.a2",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "5/5 traps refused: ledger outcome edited, digests left as recorded, ledger outcome edited, every digest, the index and its head recomputed, ledger status edited outside the envelope, everything recomputed, ledger record deleted, everything recomputed, ledger outcome edited, record digests recomputed but the index left alone",
+      "id": "CWR-019.a3",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "2/2 traps refused: ledger header seed changed, record and instance seed changed",
+      "id": "CWR-019.a4",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "check_evidence.py imports only the standard library, starts no process, opens no socket; oracles are vetted to the same rule without file access",
+      "id": "CWR-019.a5",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "3/3 traps refused: suite holds an accepted component PASS and no case-scope attempt of its case, derived parent status is UNRUN, component record relabelled as case scope is refused",
+      "id": "CWR-019.a6",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "3/3 traps refused: each of 49 required fields missing is refused, deleting an indexed record is reported, a self-consistent record the runner never appended is refused",
+      "id": "CWR-019.a7",
+      "outcome": "PASS"
+    },
+    {
+      "diagnostic": "1/1 traps refused: the genuine PASS against a registry without the case inventory is refused",
+      "id": "CWR-019.a8",
+      "outcome": "PASS"
+    }
+  ],
+  "record_id": "CWR-019/20261106T100236Z-1",
+  "registry_sha256": "sha256:ae9fa4d1aef9b8b4e37f894d76b0f0a84e3d706d550f6c3dc5427de7d9987e94",
+  "registry_version": 1,
+  "schema_version": 1,
+  "scope": "case",
+  "sdk_revision": null,
+  "seed": null,
+  "spec_revision": "sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9",
+  "started_at": "2026-11-06T10:02:36.214Z",
+  "tail_size": null,
+  "task": null,
+  "tier": "component",
+  "timestamp": "2026-11-06T10:03:00.319Z",
+  "unexpected_assertions": [],
+  "world": null
+}

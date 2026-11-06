@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t042-cleanup-twice. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t042-cleanup-twice"
+title = "Clean reports between two cleanups"
+bin = "long"
+rules = ["fs.delete[2]:LOCKED", "fs.delete[1]:NOT_FOUND", "fs.write[1]:LOCKED"]
+rule_reuse = true
+reused_rule = "fs.delete[2]:LOCKED"
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t042-cleanup-twice.py"

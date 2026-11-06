@@ -1,0 +1,56 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+"""tools/codemap.py: parsers and deterministic rendering."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import codemap
+
+MAKEFILE = """# Targets:
+#   build      compile everything
+#   check-all  run the gate
+X := 1
+.PHONY: build check-all
+build:
+\techo build
+check-all: build
+\techo check
+"""
+
+
+class ParserTests(unittest.TestCase):
+    def test_make_targets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "Makefile").write_text(MAKEFILE)
+            rows = codemap.make_targets(Path(tmp))
+        self.assertIn("| `make build` | - | compile everything |", rows)
+        self.assertIn("| `make check-all` | `build` | run the gate |", rows)
+        self.assertFalse(any("make X" in row or "PHONY" in row for row in rows))
+
+    def test_readme_heading_strips_markdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "README.md").write_text("<!-- c -->\n\n# The `cwr` [tool](x.md) | a\n")
+            self.assertEqual(codemap.readme_heading(Path(tmp)), "The cwr tool \\| a")
+
+    def test_line_count(self):
+        self.assertEqual(codemap.count_lines(b""), 0)
+        self.assertEqual(codemap.count_lines(b"a\nb\n"), 2)
+        self.assertEqual(codemap.count_lines(b"a\nb"), 2)
+
+
+class RenderTests(unittest.TestCase):
+    def test_repository_render_is_deterministic(self):
+        first = codemap.render(codemap.ROOT)
+        self.assertEqual(first, codemap.render(codemap.ROOT))
+        self.assertTrue(first.startswith(codemap.HEADER[0] + "\n" + codemap.HEADER[1] + "\n"))
+        self.assertIn(codemap.BANNER, first)
+        for section in ("## Languages", "## Layout", "## Crates", "## Make targets"):
+            self.assertIn(section, first)
+
+
+if __name__ == "__main__":
+    unittest.main()

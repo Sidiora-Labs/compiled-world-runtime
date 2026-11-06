@@ -1,0 +1,30 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Illustrative CWR World Source for refworld. meta.example = true: this file has not been compiled
+# and establishes no Build hash. Every limit is explicit; the compiler has no defaults.
+
+[meta]
+format = "cwr.world-source"
+schema_version = 1
+example = true
+
+[world]
+name = "refworld"
+version = "0.2.0"
+language = "python"
+runtime = "3.12"
+modules = ["fs", "kv", "jobs", "search", "publish", "world"]
+
+[limits]
+cpu_ms = 5000
+wall_ms = 30000
+memory_mb = 256
+primitive_calls = 500
+adapter_calls = 50
+
+[clock]
+tick_per_primitive = 1
+tick_per_turn = 10
+
+[rng]
+seed_visible = true

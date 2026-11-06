@@ -1,0 +1,2 @@
+fs.read[1]:NOT_FOUND
+fs.write[1]:LOCKED

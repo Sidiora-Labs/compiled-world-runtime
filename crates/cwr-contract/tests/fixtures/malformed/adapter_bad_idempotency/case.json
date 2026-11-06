@@ -1,0 +1,15 @@
+{
+  "class": "adapter_bad_idempotency",
+  "clause": "3.3",
+  "description": "An idempotency value outside {none, natural, key}.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 15,
+      "col": 15,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

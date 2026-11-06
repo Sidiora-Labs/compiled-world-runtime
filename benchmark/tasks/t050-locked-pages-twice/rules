@@ -1,0 +1,3 @@
+fs.write[1]:LOCKED
+fs.lock[2]:CONFLICT
+kv.set[1]:INVALID

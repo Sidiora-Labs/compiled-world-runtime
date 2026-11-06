@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t052-collect-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t052-collect-twice"
+
+[fs]
+files = {"/csv/t01.csv": "id,value\n1,1\n", "/csv/t02.csv": "id,value\n2,4\n", "/csv/t03.csv": "id,value\n3,9\n", "/csv/t04.csv": "id,value\n4,16\n", "/csv/t05.csv": "id,value\n5,25\n", "/csv/t06.csv": "id,value\n6,36\n", "/csv/t07.csv": "id,value\n7,49\n", "/csv/t08.csv": "id,value\n8,64\n", "/csv/t09.csv": "id,value\n9,81\n", "/csv/t10.csv": "id,value\n10,100\n", "/csv/t11.csv": "id,value\n11,121\n", "/csv/t12.csv": "id,value\n12,144\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {"nightly-a": {"kind": "nightly", "n": 28, "submitted_at": -20}, "nightly-b": {"kind": "nightly", "n": 150, "submitted_at": -20}, "nightly-c": {"kind": "nightly", "n": 160, "submitted_at": -20}}

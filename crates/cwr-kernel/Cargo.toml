@@ -1,0 +1,16 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+[package]
+name = "cwr-kernel"
+description = "CWR World Kernel: Instances, sandboxed turns, atomic primitives, adapter gateway, ledger, snapshots, upgrade."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cwr-contract = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+# params_hash in ledger records is `blake3:<hex>` (spec/cwr/kernel.md section 8); pure Rust, no C build.
+blake3 = { version = "1", features = ["pure"] }

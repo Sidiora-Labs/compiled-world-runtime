@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t040-assign-reviewers. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t040-assign-reviewers"
+
+[fs]
+files = {"/reviewers.txt": "ines\nkofi\nmei\nrafael\n", "/tasks/task-1.txt": "task 1\n", "/tasks/task-2.txt": "task 2\n", "/tasks/task-3.txt": "task 3\n", "/tasks/task-4.txt": "task 4\n", "/tasks/task-5.txt": "task 5\n", "/tasks/task-6.txt": "task 6\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

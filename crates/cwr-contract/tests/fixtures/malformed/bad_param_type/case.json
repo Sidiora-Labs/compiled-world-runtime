@@ -1,0 +1,15 @@
+{
+  "class": "bad_param_type",
+  "clause": "3.2",
+  "description": "A parameter type outside the closed type set.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/kv.kvx",
+      "line": 20,
+      "col": 17,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

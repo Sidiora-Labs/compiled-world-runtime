@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t054-cancel-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t054-cancel-twice"
+
+[fs]
+files = {"/minutes/m01.txt": "minutes 1\n", "/minutes/m02.txt": "minutes 2\n", "/minutes/m03.txt": "minutes 3\n", "/minutes/m04.txt": "minutes 4\n", "/minutes/m05.txt": "minutes 5\n", "/minutes/m06.txt": "minutes 6\n", "/minutes/m07.txt": "minutes 7\n", "/minutes/m08.txt": "minutes 8\n", "/minutes/m09.txt": "minutes 9\n", "/minutes/m10.txt": "minutes 10\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {"w1": {"kind": "work", "n": 400, "submitted_at": 0}, "w2": {"kind": "work", "n": 10, "submitted_at": -30}, "w3": {"kind": "work", "n": 500, "submitted_at": -2}, "z1": {"kind": "zone", "n": 5, "submitted_at": -40}, "z2": {"kind": "zone", "n": 700, "submitted_at": -3}, "z3": {"kind": "zone", "n": 800, "submitted_at": -3}, "z4": {"kind": "zone", "n": 8, "submitted_at": -12}}

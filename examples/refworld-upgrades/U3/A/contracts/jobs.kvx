@@ -1,0 +1,60 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Rule contracts for the jobs module. A job submitted at world_time t with duration n is queued
+# while world_time < t + 1, running while world_time < t + n, then done. A job whose fail_at field
+# is set (fixtures only) becomes failed at that tick instead of finishing; a cancelled job is failed.
+# Transitions are a pure function of world_time. Catalogue: spec/cwr/reference-world.md section 2.3.
+# In effects, the name result denotes the primitive's returned value (a convention of this world: the effect grammar has no other name for the returned value).
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "jobs"
+
+[primitive.jobs.known]
+side_effect = "read_only"
+params = {"id": "str"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when a job with this id was ever submitted in this Instance. Never fails."
+
+[primitive.jobs.status]
+side_effect = "read_only"
+params = {"id": "str"}
+returns = "str"
+preconditions = [["jobs.known(id)", "NOT_FOUND"]]
+effects = []
+doc = "One of queued, running, done or failed, computed from world time at the moment of the call."
+
+[primitive.jobs.active]
+side_effect = "read_only"
+params = {}
+returns = "int"
+preconditions = []
+effects = []
+doc = "Number of jobs currently queued or running. Never fails."
+
+[primitive.jobs.submit]
+side_effect = "mutating"
+params = {"kind": "str", "n": "int"}
+returns = "str"
+preconditions = [["n >= 1 and n <= 1000", "INVALID"], ["jobs.active() < 8", "LIMIT"]]
+effects = ["jobs.known(result)", "jobs.status(result) == \"queued\""]
+doc = "Submit a job of the given kind lasting n ticks and return its id. Refused when n is outside 1 to 1000, or when 8 jobs are already active."
+
+[primitive.jobs.result]
+side_effect = "read_only"
+params = {"id": "str"}
+returns = "str"
+preconditions = [["jobs.known(id)", "NOT_FOUND"], ["jobs.status(id) == \"done\"", "NOT_FOUND"]]
+effects = []
+doc = "Result of a finished job. Refused with NOT_FOUND until jobs.status reports done, as for an unknown id; poll the status, do not guess."
+
+[primitive.jobs.cancel]
+side_effect = "mutating"
+params = {"id": "str"}
+returns = "None"
+preconditions = [["jobs.known(id)", "NOT_FOUND"], ["jobs.status(id) == \"queued\" or jobs.status(id) == \"running\"", "CONFLICT"]]
+effects = ["jobs.status(id) == \"failed\""]
+doc = "Cancel a queued or running job; it is failed from then on. Refused with CONFLICT for a job that is already done or failed."

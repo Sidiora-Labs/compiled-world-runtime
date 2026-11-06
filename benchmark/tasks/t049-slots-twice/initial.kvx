@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t049-slots-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t049-slots-twice"
+
+[fs]
+files = {"/csv/c01.csv": "a;b;1\n", "/csv/c02.csv": "a;b;2\n", "/csv/c03.csv": "a;b;3\n", "/csv/c04.csv": "a;b;4\n", "/csv/c05.csv": "a;b;5\n", "/csv/c06.csv": "a;b;6\n", "/csv/c07.csv": "a;b;7\n", "/csv/c08.csv": "a;b;8\n", "/csv/c09.csv": "a;b;9\n", "/csv/c10.csv": "a;b;10\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {"svc-1": {"kind": "service", "n": 900, "submitted_at": -1}, "svc-2": {"kind": "service", "n": 900, "submitted_at": -1}, "svc-3": {"kind": "service", "n": 900, "submitted_at": -1}, "svc-4": {"kind": "service", "n": 900, "submitted_at": -1}, "svc-5": {"kind": "service", "n": 900, "submitted_at": -1}, "svc-6": {"kind": "service", "n": 900, "submitted_at": -1}}

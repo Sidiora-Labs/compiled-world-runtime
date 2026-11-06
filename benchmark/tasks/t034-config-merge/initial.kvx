@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t034-config-merge. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t034-config-merge"
+
+[fs]
+files = {"/config/app.ini": "host=stale\n", "/config/base.ini": "host=db.local\nport=5432\nuser=svc\npool=4\ntimeout=30\ntls=on\n", "/config/override.ini": "host=db.internal\nport=6543\npool=8\nregion=eu-west\n"}
+locks = ["/config/app.ini"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

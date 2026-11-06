@@ -1,0 +1,59 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Rule contracts for the kv module: a namespaced key/value map with a 1 KiB value limit and a
+# 64 KiB quota per namespace. Catalogue: spec/cwr/reference-world.md section 2.2.
+# Python reserves the word del, so the lib function and the SDK attribute for kv.del are spelled
+# del_ (the trailing-underscore rule for Python keywords); the primitive name is kv.del.
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "kv"
+
+[primitive.kv.has]
+side_effect = "read_only"
+params = {"ns": "str", "key": "str"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when key is stored in namespace ns. Never fails."
+
+[primitive.kv.get]
+side_effect = "read_only"
+params = {"ns": "str", "key": "str"}
+returns = "bytes"
+preconditions = [["kv.has(ns, key)", "NOT_FOUND"]]
+effects = []
+doc = "Value stored under key in namespace ns."
+
+[primitive.kv.keys]
+side_effect = "read_only"
+params = {"ns": "str"}
+returns = "list[str]"
+preconditions = []
+effects = []
+doc = "Every key in namespace ns, sorted bytewise; empty for a namespace that holds nothing. Never fails."
+
+[primitive.kv.used]
+side_effect = "read_only"
+params = {"ns": "str"}
+returns = "int"
+preconditions = []
+effects = []
+doc = "Total byte length of the values stored in namespace ns; 0 for an empty namespace. Never fails."
+
+[primitive.kv.set]
+side_effect = "mutating"
+params = {"ns": "str", "key": "str", "value": "bytes"}
+returns = "None"
+preconditions = [["len(value) <= 1024", "INVALID"], ["kv.used(ns) + len(value) <= 65536", "LIMIT"]]
+effects = ["kv.has(ns, key)", "kv.get(ns, key) == value"]
+doc = "Store value under key in namespace ns, replacing any previous value. Refused when the value exceeds 1024 bytes, or when the namespace's current usage plus the value would exceed 65536 bytes."
+
+[primitive.kv.del]
+side_effect = "mutating"
+params = {"ns": "str", "key": "str"}
+returns = "None"
+preconditions = [["kv.has(ns, key)", "NOT_FOUND"]]
+effects = ["not kv.has(ns, key)"]
+doc = "Remove key from namespace ns. Refused when the key is not stored there."

@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t056-kv-v2-migration. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t056-kv-v2-migration"
+
+[fs]
+files = {}
+locks = []
+
+[kv]
+namespaces = {"v1": {"user:01": "ada|ada@example.org", "user:02": "alan|alan@example.org", "user:03": "barbara|barbara@example.org", "user:04": "claude|claude@example.org", "user:05": "dennis|dennis@example.org", "user:06": "donald|donald@example.org", "user:07": "edsger|edsger@example.org", "user:08": "frances|frances@example.org", "user:09": "grace|grace@example.org", "user:10": "john|john@example.org", "user:11": "ken|ken@example.org", "user:12": "leslie|leslie@example.org", "user:13": "margaret|margaret@example.org", "user:14": "niklaus|niklaus@example.org", "user:15": "radia|radia@example.org"}}
+
+[jobs]
+jobs = {}

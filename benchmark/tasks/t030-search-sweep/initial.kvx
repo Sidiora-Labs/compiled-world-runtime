@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t030-search-sweep. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t030-search-sweep"
+
+[fs]
+files = {"/queries.txt": "mountain huts\nrust borrow checker\nfermentation\nkite surfing\nlichens\ntram networks\nceramics glazes\nsolar sails\norigami\nbeekeeping\nglacier retreat\ntypesetting\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

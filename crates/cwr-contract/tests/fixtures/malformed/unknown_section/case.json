@@ -1,0 +1,15 @@
+{
+  "class": "unknown_section",
+  "clause": "3.1",
+  "description": "world.kvx declares a section the grammar does not define.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 31,
+      "col": 1,
+      "kind": "unknown_section",
+      "code": "CWR-C001"
+    }
+  ]
+}

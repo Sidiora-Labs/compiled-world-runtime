@@ -1,0 +1,15 @@
+{
+  "class": "world_missing_limits",
+  "clause": "3.4",
+  "description": "world.kvx omits the whole [limits] section.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 1,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

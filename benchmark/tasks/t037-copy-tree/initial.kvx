@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t037-copy-tree. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t037-copy-tree"
+
+[fs]
+files = {"/dst/f2.txt": "old 2\n", "/dst/f5.txt": "old 5\n", "/src/f1.txt": "source file 1\n", "/src/f2.txt": "source file 2\n", "/src/f3.txt": "source file 3\n", "/src/f4.txt": "source file 4\n", "/src/f5.txt": "source file 5\n", "/src/f6.txt": "source file 6\n", "/src/f7.txt": "source file 7\n", "/src/f8.txt": "source file 8\n"}
+locks = ["/dst/f2.txt", "/dst/f5.txt"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

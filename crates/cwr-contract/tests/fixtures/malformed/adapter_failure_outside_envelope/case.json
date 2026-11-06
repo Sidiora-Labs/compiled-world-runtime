@@ -1,0 +1,15 @@
+{
+  "class": "adapter_failure_outside_envelope",
+  "clause": "2.3",
+  "description": "An adapter failure set names a code outside the envelope.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 17,
+      "col": 33,
+      "kind": "envelope",
+      "code": "CWR-F001"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t048-search-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t048-search-twice"
+
+[fs]
+files = {"/incoming/i01.txt": "incoming 1\n", "/incoming/i02.txt": "incoming 2\n", "/incoming/i03.txt": "incoming 3\n", "/incoming/i04.txt": "incoming 4\n", "/incoming/i05.txt": "incoming 5\n", "/incoming/i06.txt": "incoming 6\n", "/incoming/i07.txt": "incoming 7\n", "/incoming/i08.txt": "incoming 8\n", "/incoming/i09.txt": "incoming 9\n", "/incoming/i10.txt": "incoming 10\n", "/incoming/i11.txt": "incoming 11\n", "/incoming/i12.txt": "incoming 12\n", "/incoming/i13.txt": "incoming 13\n", "/incoming/i14.txt": "incoming 14\n", "/incoming/i15.txt": "incoming 15\n", "/q/early.txt": "river deltas\nmoss\nlighthouses\nchess endgames\nsaffron\ncomets\ncanal locks\nharpsichords\npermafrost\nfalconry\npaper making\nterraces\n", "/q/late.txt": "sundials\nkelp forests\nbridges\nfountain pens\nmagnetars\nwindmills\nobsidian\nlantern festivals\ncave paintings\nglassblowing\ntea ceremony\nauroras\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

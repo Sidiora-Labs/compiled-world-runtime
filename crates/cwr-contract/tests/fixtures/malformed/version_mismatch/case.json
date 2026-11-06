@@ -1,0 +1,15 @@
+{
+  "class": "version_mismatch",
+  "clause": "3.6",
+  "description": "world.version differs from the newest changelog release.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 12,
+      "col": 11,
+      "kind": "changelog",
+      "code": null
+    }
+  ]
+}

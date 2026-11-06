@@ -1,0 +1,15 @@
+{
+  "class": "unknown_change_kind",
+  "clause": "3.1",
+  "description": "A changelog change with a kind outside the eleven kinds.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 17,
+      "col": 8,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

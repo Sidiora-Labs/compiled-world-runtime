@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t047-key-twice. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t047-key-twice"
+title = "Two documents in two versions"
+bin = "long"
+rules = ["publish.post[key]:DUPLICATE_KEY", "publish.post[rate]:RATE_LIMITED"]
+rule_reuse = true
+reused_rule = "publish.post[key]:DUPLICATE_KEY"
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t047-key-twice.py"

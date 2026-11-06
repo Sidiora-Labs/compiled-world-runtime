@@ -1,0 +1,119 @@
+{
+  "adapters": [],
+  "clock": {
+    "tick_per_primitive": 1,
+    "tick_per_turn": 10
+  },
+  "format": "cwr.contracts",
+  "limits": {
+    "adapter_calls": 50,
+    "cpu_ms": 5000,
+    "memory_mb": 256,
+    "primitive_calls": 500,
+    "wall_ms": 30000
+  },
+  "primitives": [
+    {
+      "doc": "Value at key.",
+      "effects": [],
+      "name": "kv.get",
+      "params": {
+        "key": "str"
+      },
+      "preconditions": [],
+      "returns": "str",
+      "side_effect": "read_only"
+    },
+    {
+      "doc": "Store value at key.",
+      "effects": [
+        "kv.get(key) == value"
+      ],
+      "name": "kv.set",
+      "params": {
+        "key": "str",
+        "value": "str"
+      },
+      "preconditions": [],
+      "returns": "None",
+      "side_effect": "mutating"
+    },
+    {
+      "doc": "Current world time in ticks. Never fails.",
+      "effects": [],
+      "name": "world.now",
+      "params": {},
+      "preconditions": [],
+      "returns": "int",
+      "side_effect": "read_only"
+    },
+    {
+      "doc": "Semantic version of the Build. Never fails.",
+      "effects": [],
+      "name": "world.version",
+      "params": {},
+      "preconditions": [],
+      "returns": "str",
+      "side_effect": "read_only"
+    },
+    {
+      "doc": "The Instance seed. Never fails.",
+      "effects": [],
+      "name": "world.seed",
+      "params": {},
+      "preconditions": [],
+      "returns": "int",
+      "side_effect": "read_only"
+    },
+    {
+      "doc": "Configured limits and clock values and remaining budgets. Never fails.",
+      "effects": [],
+      "name": "world.limits",
+      "params": {},
+      "preconditions": [],
+      "returns": "Limits",
+      "side_effect": "read_only"
+    },
+    {
+      "doc": "Next draw from the Instance random stream.",
+      "effects": [
+        "result >= 0",
+        "result < 4294967296"
+      ],
+      "name": "world.random",
+      "params": {},
+      "preconditions": [],
+      "returns": "int",
+      "side_effect": "mutating"
+    },
+    {
+      "doc": "The last n ledger records without host fields.",
+      "effects": [],
+      "name": "world.history",
+      "params": {
+        "n": "int"
+      },
+      "preconditions": [
+        [
+          "n >= 0 and n <= 500",
+          "INVALID"
+        ]
+      ],
+      "returns": "list[LedgerRecord]",
+      "side_effect": "read_only"
+    }
+  ],
+  "rng": {
+    "seed_visible": true
+  },
+  "world": {
+    "language": "python",
+    "modules": [
+      "kv",
+      "world"
+    ],
+    "name": "minworld",
+    "runtime": "3.12",
+    "version": "0.1.0"
+  }
+}

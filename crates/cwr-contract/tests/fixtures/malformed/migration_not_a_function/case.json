@@ -1,0 +1,29 @@
+{
+  "class": "migration_not_a_function",
+  "clause": "3.6",
+  "description": "A migration file that does not define migrate(state).",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 28,
+      "col": 13,
+      "kind": "migration",
+      "code": "CWR-M001"
+    },
+    {
+      "file": "fixtures/kv/migration_0_2_0.kvx",
+      "line": 9,
+      "col": 13,
+      "kind": "fixture",
+      "code": null
+    },
+    {
+      "file": "migrations/0_2_0_kv_namespaces.py",
+      "line": 1,
+      "col": 1,
+      "kind": "migration",
+      "code": "CWR-M001"
+    }
+  ]
+}

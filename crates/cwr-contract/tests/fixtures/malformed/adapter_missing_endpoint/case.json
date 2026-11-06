@@ -1,0 +1,15 @@
+{
+  "class": "adapter_missing_endpoint",
+  "clause": "3.3",
+  "description": "An adapter omits its endpoint.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 10,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

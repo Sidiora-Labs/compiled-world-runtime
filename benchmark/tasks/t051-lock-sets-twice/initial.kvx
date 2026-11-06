@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t051-lock-sets-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t051-lock-sets-twice"
+
+[fs]
+files = {"/finance/f1.xls": "finance 1\n", "/finance/f2.xls": "finance 2\n", "/finance/f3.xls": "finance 3\n", "/finance/f4.xls": "finance 4\n", "/finance/f5.xls": "finance 5\n", "/finance/f6.xls": "finance 6\n", "/legal/l1.pdf": "legal 1\n", "/legal/l2.pdf": "legal 2\n", "/legal/l3.pdf": "legal 3\n", "/legal/l4.pdf": "legal 4\n", "/legal/l5.pdf": "legal 5\n", "/memos/m01.txt": "memo 1\n", "/memos/m02.txt": "memo 2\n", "/memos/m03.txt": "memo 3\n", "/memos/m04.txt": "memo 4\n", "/memos/m05.txt": "memo 5\n", "/memos/m06.txt": "memo 6\n", "/memos/m07.txt": "memo 7\n", "/memos/m08.txt": "memo 8\n", "/memos/m09.txt": "memo 9\n", "/memos/m10.txt": "memo 10\n"}
+locks = ["/finance/f1.xls", "/finance/f3.xls", "/finance/f6.xls", "/legal/l2.pdf", "/legal/l4.pdf"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

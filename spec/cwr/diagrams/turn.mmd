@@ -1,0 +1,30 @@
+%% Copyright Sidiora Labs Inc. CWR® 2026-2027
+%% SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+sequenceDiagram
+    participant M as Model
+    participant K as Kernel
+    participant P as Sandbox process
+    participant G as Adapter gateway
+    participant L as Ledger
+    M->>K: one fenced python block
+    K->>K: protocol check (exactly one block, else INVALID, no tick)
+    K->>P: start fresh process with Build SDK, limits cpu_ms wall_ms memory_mb
+    loop each primitive call
+        P->>K: RPC primitive(params)
+        K->>K: validate params
+        K->>K: preconditions in declared order (first failure: code, primitive, index)
+        alt read_only or mutating
+            K->>K: execute against state
+        else external
+            K->>G: adapter request
+            G-->>K: normalised result or declared failure
+        end
+        K->>K: assert effects (debug), advance world_time by tick_per_primitive
+        K->>L: append record (durable before return)
+        K-->>P: result or typed exception
+    end
+    P-->>K: script end: ok, error or partial with trace
+    K->>K: advance world_time by tick_per_turn
+    K->>L: append turn record
+    K-->>M: context: manual, notice, ledger tail K, result envelope

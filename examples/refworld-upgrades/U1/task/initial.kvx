@@ -1,0 +1,15 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Starting Instance state for the post-upgrade task of pair U1, loaded on Build A (refworld 0.2.0, fs.delete without LOCKED).
+# Layout as benchmark/tasks/*/initial.kvx: one section per module, keys are that module's state fields.
+# File contents and kv values are UTF-8 text.
+
+[meta]
+format = "cwr.task-state"
+schema_version = 1
+pair = "U1"
+side = "A"
+
+[fs]
+files = {"/batch/one/a.txt": "alpha", "/batch/one/b.txt": "beta", "/batch/two/c.txt": "gamma", "/batch/two/d.txt": "delta", "/batch/two/e.txt": "epsilon", "/keep/readme.md": "keep me"}
+locks = ["/batch/one/a.txt", "/batch/two/c.txt", "/batch/two/e.txt"]

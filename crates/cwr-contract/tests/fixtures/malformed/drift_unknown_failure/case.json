@@ -1,0 +1,15 @@
+{
+  "class": "drift_unknown_failure",
+  "clause": "2.3",
+  "description": "A drift schedule injects a code outside the envelope.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "drift/drift-1.kvx",
+      "line": 14,
+      "col": 11,
+      "kind": "envelope",
+      "code": "CWR-F001"
+    }
+  ]
+}

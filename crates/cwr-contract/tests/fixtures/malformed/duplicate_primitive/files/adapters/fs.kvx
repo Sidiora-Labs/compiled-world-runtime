@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+[meta]
+format = "cwr.adapter"
+schema_version = 1
+module = "fs"
+
+[adapter.fs.exists]
+side_effect = "external"
+params = {"path": "Path"}
+returns = "bool"
+preconditions = []
+idempotency = "natural"
+timeout_ms = 1000
+failures = ["UNAVAILABLE"]
+content_guaranteed = false
+endpoint = "stub://fs/v1/exists"
+doc = "A second declaration of fs.exists."

@@ -1,0 +1,20 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+[package]
+name = "cwr-cli"
+description = "The cwr command line: one module per subcommand."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cwr"
+path = "src/main.rs"
+
+[dependencies]
+cwr-contract = { workspace = true }
+cwr-kernel = { path = "../cwr-kernel" }
+cwr-compiler = { path = "../cwr-compiler" }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

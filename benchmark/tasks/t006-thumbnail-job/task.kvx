@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t006-thumbnail-job. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t006-thumbnail-job"
+title = "Run one job"
+bin = "short"
+rules = ["jobs.result[2]:CONFLICT", "jobs.status[clock]"]
+rule_reuse = false
+reused_rule = null
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t006-thumbnail-job.py"

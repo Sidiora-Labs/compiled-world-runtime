@@ -1,0 +1,15 @@
+{
+  "class": "hidden_expression",
+  "clause": "3.2",
+  "description": "A precondition outside the expression language (attribute access).",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 30,
+      "col": 19,
+      "kind": "expression",
+      "code": "CWR-V002"
+    }
+  ]
+}

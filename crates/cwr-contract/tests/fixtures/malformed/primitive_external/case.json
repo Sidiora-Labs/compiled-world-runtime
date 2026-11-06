@@ -1,0 +1,15 @@
+{
+  "class": "primitive_external",
+  "clause": "3.2",
+  "description": "A contracts/ primitive claims side_effect external.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 27,
+      "col": 15,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

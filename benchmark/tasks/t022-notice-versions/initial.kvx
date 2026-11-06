@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t022-notice-versions. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t022-notice-versions"
+
+[fs]
+files = {"/posts/notice-v1.txt": "Maintenance window, revision 1.\n", "/posts/notice-v2.txt": "Maintenance window, revision 2.\n", "/posts/notice-v3.txt": "Maintenance window, revision 3.\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

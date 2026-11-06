@@ -1,0 +1,14 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+[package]
+name = "cwr-contract"
+description = "CWR contract crate: strict KVX reader, typed World Source model, closed failure envelope, precondition grammar."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

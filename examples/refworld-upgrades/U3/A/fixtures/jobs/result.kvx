@@ -1,0 +1,36 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for jobs.result. Each [case.<name>] is one ephemeral-Instance run:
+# world_time and state are the initial conditions (state is keyed by module; modules not named start
+# from their lib INITIAL_STATE), params is the call, expect is "ok" or the envelope code, precondition
+# is the one-based index of the failing precondition or null, returned (optional) is the exact value an
+# internal primitive must return. Value codec: a JSON string in a position typed bytes is its UTF-8
+# encoding; {"$repeat": [s, n]} is the string s repeated n times; nothing else is special.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "jobs"
+primitive = "jobs.result"
+
+[case.pre_1_not_found]
+world_time = 2
+state = {"jobs": {"next_id": 4, "jobs": {"j1": {"kind": "render", "n": 5, "submitted": 0, "fail_at": null, "cancelled_at": null}, "j2": {"kind": "index", "n": 3, "submitted": 0, "fail_at": null, "cancelled_at": null}, "j3": {"kind": "crawl", "n": 50, "submitted": 0, "fail_at": 4, "cancelled_at": null}}}}
+params = {"id": "j9"}
+expect = "NOT_FOUND"
+precondition = 1
+
+[case.pre_2_not_found]
+world_time = 2
+state = {"jobs": {"next_id": 4, "jobs": {"j1": {"kind": "render", "n": 5, "submitted": 0, "fail_at": null, "cancelled_at": null}, "j2": {"kind": "index", "n": 3, "submitted": 0, "fail_at": null, "cancelled_at": null}, "j3": {"kind": "crawl", "n": 50, "submitted": 0, "fail_at": 4, "cancelled_at": null}}}}
+params = {"id": "j1"}
+expect = "NOT_FOUND"
+precondition = 2
+
+[case.ok]
+world_time = 3
+state = {"jobs": {"next_id": 4, "jobs": {"j1": {"kind": "render", "n": 5, "submitted": 0, "fail_at": null, "cancelled_at": null}, "j2": {"kind": "index", "n": 3, "submitted": 0, "fail_at": null, "cancelled_at": null}, "j3": {"kind": "crawl", "n": 50, "submitted": 0, "fail_at": 4, "cancelled_at": null}}}}
+params = {"id": "j2"}
+expect = "ok"
+precondition = null
+returned = "index:j2:3"

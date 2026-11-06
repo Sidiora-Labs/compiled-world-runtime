@@ -1,0 +1,15 @@
+{
+  "class": "missing_returns",
+  "clause": "3.2",
+  "description": "A primitive omits its return type.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/kv.kvx",
+      "line": 18,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

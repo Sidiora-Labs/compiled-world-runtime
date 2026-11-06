@@ -1,0 +1,15 @@
+{
+  "class": "unknown_file",
+  "clause": "3.1",
+  "description": "A file the grammar does not define at the source root.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "notes.txt",
+      "line": 1,
+      "col": 1,
+      "kind": "unknown_file",
+      "code": "CWR-C001"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Changelog fixture: one state_shape change with its migration, one precondition change,
+# and a first release.
+
+[meta]
+format = "cwr.changelog"
+schema_version = 1
+
+[release.0.2.0]
+version = "0.2.0"
+date = "2026-11-06"
+summary = "fs.write refuses content above 1 MiB; kv is namespaced with a quota."
+changes = ["fs_write_size_limit", "kv_namespaces"]
+
+[change.fs_write_size_limit]
+kind = "precondition_added"
+target = "fs.write"
+before = "fs.write accepted any content length."
+after = "len(content) <= 1048576, otherwise LIMIT."
+migration = ""
+
+[change.kv_namespaces]
+kind = "state_shape"
+target = "kv"
+before = "kv state was one flat map."
+after = "kv state is a map of namespace to map."
+migration = "migrations/0_2_0_kv_namespaces.py"
+
+[release.0.1.0]
+version = "0.1.0"
+date = "2026-11-01"
+summary = "First release: fs, kv and search."
+changes = ["initial"]
+
+[change.initial]
+kind = "primitive_added"
+target = "fs"
+before = ""
+after = "fs, kv and search primitives exist."
+migration = ""

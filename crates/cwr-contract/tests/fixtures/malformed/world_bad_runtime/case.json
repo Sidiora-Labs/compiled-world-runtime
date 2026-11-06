@@ -1,0 +1,15 @@
+{
+  "class": "world_bad_runtime",
+  "clause": "3.4",
+  "description": "world.runtime other than 3.12.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 14,
+      "col": 11,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

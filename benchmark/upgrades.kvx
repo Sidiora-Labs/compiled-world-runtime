@@ -1,0 +1,377 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Upgrade pairs U1 to U6 for refworld: the frozen expectations of task 4.3 (clauses 5.2, 5.3, 11.4;
+# cases CWR-011 and CWR-016) and the H4 pair plan of experiments.md section H4.
+# Sources: examples/refworld-upgrades/UN/A and UN/B, generated from examples/refworld by
+# examples/refworld-upgrades/pairs.py, which also checks this file against the sources.
+# Status: authored and checked by the authoring model only. No Build exists, so every hash is null
+# and the notice texts carry {hash_a} and {hash_b} placeholders. Nothing here is evidence.
+# [pair.UN] is read by benchmark/analyse.py (task, changed_primitives, misuse_code, predicate).
+
+[meta]
+format = "cwr.upgrades"
+schema_version = 1
+world = "refworld"
+base_source = "examples/refworld"
+base_version = "0.2.0"
+pairs = ["U1", "U2", "U3", "U4", "U5", "U6"]
+status = "authored; UNRUN; frozen before any Build hash exists"
+generator = "examples/refworld-upgrades/pairs.py"
+diff_layout = "spec/cwr/compiler.md section 5: entries sorted by target then field; kind null marks a params entry, for which world-source.md section 11 has no change kind"
+coverage_rule_params = "A params entry is covered by a state_shape change whose target is the primitive's module in the same release (the convention of examples/refworld 0.2.0 change kv_namespaces). Open for task 1.2."
+coverage_rule_doc = "A doc entry is covered by any change in the newest release with the same target, or by the module's state_shape change; a doc entry whose target has no other change needs a doc_only change. A doc_only change must match a doc entry. Open for task 1.2."
+bump_rule = "Derived bump is the maximum over entries (params entries count as major). Pre-1.0 rule P15: while the major is 0, a minor increment satisfies a derived major and a patch increment satisfies a derived minor."
+notice_template = "spec/cwr/model-surface.md section 5: header line; Summary line; blank; 'Changes affecting primitives this instance has used:'; per listed change '  <verb>  <target><label>', '    before  <before>', '    after   <after>' verbatim from CHANGELOG.kvx; blank; 'State was migrated. ' when a migration ran, then 'Your ledger is intact. The manual above describes <new version>.' Verbs: removed for primitive_removed, added for primitive_added, changed otherwise. Labels: ' (state shape)' for state_shape, ' (documentation)' for doc_only. A module target counts as used when any of its primitives was used. With nothing listed the list is '  (none)'."
+notice_used_basis = "used_primitives is the set of primitives with a ledger record in the reference first half; a model's Instance may use a different set, and the kernel then lists the changes for that set by the same rule."
+midpoint_rule = "upgrade_after_turn = number of first-half reference turns: the Instance runs on Build A for turns 1..upgrade_after_turn, is upgraded, and continues on Build B (experiments.md H4 protocol)."
+
+[pair.U1]
+title = "Precondition tightened: fs.delete refuses a locked path"
+pair_class = "precondition_tightened"
+task = "u1-delete-locked-batch"
+task_dir = "examples/refworld-upgrades/U1/task"
+predicate = "examples/refworld-upgrades/U1/task/success.py"
+source_a = "examples/refworld-upgrades/U1/A"
+source_b = "examples/refworld-upgrades/U1/B"
+a_equals_base = false
+a_relation = "examples/refworld 0.2.0 with fs.delete lacking precondition 2 (it deletes a locked file and releases its lock), with fs.delete and fs.lock docs, manual prose and changelog history to match"
+b_relation = "examples/refworld 0.2.0 in every rule, file and fixture; version 0.3.0; changelog is A's plus release 0.3.0"
+from_version = "0.2.0"
+to_version = "0.3.0"
+build_a = null
+build_b = null
+changes = ["fs_delete_refuses_locked", "fs_lock_doc_delete"]
+change_kinds = ["precondition_added", "doc_only"]
+migrations = []
+changed_primitives = ["fs.delete"]
+misuse_code = "LOCKED"
+after_turn = 1
+model_visible_effect = "Before the upgrade fs.delete removes a locked file. After it, fs.delete on a locked path fails with LOCKED at precondition 2 and the manual lists 'not fs.locked(path) else LOCKED'; the model must call fs.unlock first. State is unchanged by the upgrade."
+misuse_definition = "An fs.delete record with code LOCKED after the upgrade record."
+
+[diff.U1]
+previous = "{hash_a}"
+entries = [{"kind": "precondition_added", "target": "fs.delete", "field": "preconditions", "before": [["fs.exists(path)", "NOT_FOUND"]], "after": [["fs.exists(path)", "NOT_FOUND"], ["not fs.locked(path)", "LOCKED"]]}]
+doc_entries = [{"kind": "doc_only", "target": "fs.delete", "field": "doc", "before": "Remove the file at path, releasing its lock if it holds one. Refused when the path does not exist.", "after": "Remove the file at path. Refused when the path does not exist or is locked."}, {"kind": "doc_only", "target": "fs.lock", "field": "doc", "before": "Lock the existing file at path; while locked it cannot be written or moved; deleting it releases the lock. Refused when already locked.", "after": "Lock the existing file at path; while locked it cannot be written, deleted or moved. Refused when already locked."}]
+doc_only_entries = 2
+derived_bump = "major"
+declared_bump = "minor"
+pre_1_0_rule_applied = true
+
+[notice.U1]
+old_version = "0.2.0"
+new_version = "0.3.0"
+summary = "fs.delete now refuses a locked path with LOCKED; unlock the path before deleting it."
+used_primitives = ["fs.delete", "fs.list"]
+listed_targets = ["fs.delete"]
+migrated = false
+text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})\nSummary: fs.delete now refuses a locked path with LOCKED; unlock the path before deleting it.\n\nChanges affecting primitives this instance has used:\n  changed  fs.delete\n    before  fs.delete removed a locked file and released its lock.\n    after   not fs.locked(path), otherwise LOCKED (precondition 2); unlock the path before deleting it.\n\nYour ledger is intact. The manual above describes 0.3.0."
+version_only_text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})"
+silent_text = ""
+
+[task.U1]
+dir = "examples/refworld-upgrades/U1/task"
+bin = "medium"
+reference_turns = 2
+upgrade_after_turn = 1
+first_half = ["solutions/a1.py"]
+post_upgrade = ["solutions/post2.py"]
+pre_upgrade = ["solutions/pre2.py"]
+pre_failure = {"primitive": "fs.delete", "code": "LOCKED", "precondition": 2}
+reference_primitive_count = 12
+count_source = "authoring-model"
+post_success = true
+pre_success = false
+
+[pair.U2]
+title = "Primitive removed: fs.move"
+pair_class = "primitive_removed"
+task = "u2-inbox-without-move"
+task_dir = "examples/refworld-upgrades/U2/task"
+predicate = "examples/refworld-upgrades/U2/task/success.py"
+source_a = "examples/refworld-upgrades/U2/A"
+source_b = "examples/refworld-upgrades/U2/B"
+a_equals_base = true
+a_relation = "byte-identical to examples/refworld 0.2.0"
+b_relation = "examples/refworld without fs.move (contract, lib function and fixture removed) and with the fs.lock doc no longer mentioning moves; version 0.3.0"
+from_version = "0.2.0"
+to_version = "0.3.0"
+build_a = null
+build_b = null
+changes = ["fs_move_removed", "fs_lock_doc_move"]
+change_kinds = ["primitive_removed", "doc_only"]
+migrations = []
+changed_primitives = ["fs.move"]
+misuse_code = "INVALID"
+after_turn = 1
+model_visible_effect = "After the upgrade fs.move is absent from the manual and the SDK; a call to it is a closure refusal (INVALID naming fs.move) and nothing executes. The model must rename with fs.read, fs.write and fs.delete. State is unchanged by the upgrade."
+misuse_definition = "A record naming fs.move with code INVALID after the upgrade record. Measurable only if the kernel records a closure refusal of an absent primitive as a ledger record naming it (open issue for tasks 2.2 and 2.5)."
+
+[diff.U2]
+previous = "{hash_a}"
+entries = [{"kind": "primitive_removed", "target": "fs.move", "field": "primitive"}]
+doc_entries = [{"kind": "doc_only", "target": "fs.lock", "field": "doc", "before": "Lock the existing file at path; while locked it cannot be written, deleted or moved. Refused when already locked.", "after": "Lock the existing file at path; while locked it cannot be written or deleted. Refused when already locked."}]
+doc_only_entries = 1
+derived_bump = "major"
+declared_bump = "minor"
+pre_1_0_rule_applied = true
+
+[notice.U2]
+old_version = "0.2.0"
+new_version = "0.3.0"
+summary = "fs.move is removed; to rename a file, read it, write the content to the new path and delete the old path."
+used_primitives = ["fs.list", "fs.move"]
+listed_targets = ["fs.move"]
+migrated = false
+text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})\nSummary: fs.move is removed; to rename a file, read it, write the content to the new path and delete the old path.\n\nChanges affecting primitives this instance has used:\n  removed  fs.move\n    before  fs.move(src, dst) renamed a file; refused when src was missing or locked or dst existed.\n    after   fs.move no longer exists; use fs.read, fs.write and fs.delete.\n\nYour ledger is intact. The manual above describes 0.3.0."
+version_only_text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})"
+silent_text = ""
+
+[task.U2]
+dir = "examples/refworld-upgrades/U2/task"
+bin = "medium"
+reference_turns = 2
+upgrade_after_turn = 1
+first_half = ["solutions/a1.py"]
+post_upgrade = ["solutions/post2.py"]
+pre_upgrade = ["solutions/pre2.py"]
+pre_failure = {"primitive": "fs.move", "code": "INVALID", "precondition": null}
+reference_primitive_count = 11
+count_source = "authoring-model"
+post_success = true
+pre_success = false
+
+[pair.U3]
+title = "Failure code changed: jobs.result before done is CONFLICT, not NOT_FOUND"
+pair_class = "failure_code_changed"
+task = "u3-poll-two-jobs"
+task_dir = "examples/refworld-upgrades/U3/task"
+predicate = "examples/refworld-upgrades/U3/task/success.py"
+source_a = "examples/refworld-upgrades/U3/A"
+source_b = "examples/refworld-upgrades/U3/B"
+a_equals_base = false
+a_relation = "examples/refworld 0.2.0 with jobs.result precondition 2 naming NOT_FOUND instead of CONFLICT, with the jobs.result doc, its fixture and manual prose to match"
+b_relation = "examples/refworld 0.2.0 in every rule, file and fixture; version 0.3.0; changelog is A's plus release 0.3.0"
+from_version = "0.2.0"
+to_version = "0.3.0"
+build_a = null
+build_b = null
+changes = ["jobs_result_not_done_conflict"]
+change_kinds = ["precondition_changed"]
+migrations = []
+changed_primitives = ["jobs.result"]
+misuse_code = "CONFLICT"
+after_turn = 2
+model_visible_effect = "Before the upgrade a not-done job's jobs.result fails with NOT_FOUND, so scripts catch NOT_FOUND as 'not ready'. After it the same call fails with CONFLICT; a handler that catches only NOT_FOUND lets the exception escape and the turn ends in error. State is unchanged by the upgrade."
+misuse_definition = "A jobs.result record with code CONFLICT after the upgrade record."
+
+[diff.U3]
+previous = "{hash_a}"
+entries = [{"kind": "precondition_changed", "target": "jobs.result", "field": "preconditions", "before": [["jobs.known(id)", "NOT_FOUND"], ["jobs.status(id) == \"done\"", "NOT_FOUND"]], "after": [["jobs.known(id)", "NOT_FOUND"], ["jobs.status(id) == \"done\"", "CONFLICT"]]}]
+doc_entries = [{"kind": "doc_only", "target": "jobs.result", "field": "doc", "before": "Result of a finished job. Refused with NOT_FOUND until jobs.status reports done, as for an unknown id; poll the status, do not guess.", "after": "Result of a finished job. Refused with CONFLICT until jobs.status reports done; poll the status, do not guess."}]
+doc_only_entries = 1
+derived_bump = "major"
+declared_bump = "minor"
+pre_1_0_rule_applied = true
+
+[notice.U3]
+old_version = "0.2.0"
+new_version = "0.3.0"
+summary = "jobs.result on a job that is not done now fails with CONFLICT instead of NOT_FOUND; NOT_FOUND now means only an unknown id."
+used_primitives = ["jobs.result", "jobs.submit", "kv.get", "kv.has", "kv.set"]
+listed_targets = ["jobs.result"]
+migrated = false
+text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})\nSummary: jobs.result on a job that is not done now fails with CONFLICT instead of NOT_FOUND; NOT_FOUND now means only an unknown id.\n\nChanges affecting primitives this instance has used:\n  changed  jobs.result\n    before  jobs.status(id) == \"done\", otherwise NOT_FOUND (precondition 2), the same code as an unknown id.\n    after   jobs.status(id) == \"done\", otherwise CONFLICT (precondition 2); NOT_FOUND only for an unknown id.\n\nYour ledger is intact. The manual above describes 0.3.0."
+version_only_text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})"
+silent_text = ""
+
+[task.U3]
+dir = "examples/refworld-upgrades/U3/task"
+bin = "medium"
+reference_turns = 4
+upgrade_after_turn = 2
+first_half = ["solutions/a1.py", "solutions/a2.py"]
+post_upgrade = ["solutions/post_poll.py", "solutions/post_poll.py"]
+pre_upgrade = ["solutions/pre_poll.py", "solutions/pre_poll.py"]
+pre_failure = {"primitive": "jobs.result", "code": "CONFLICT", "precondition": 2}
+reference_primitive_count = 22
+count_source = "authoring-model"
+post_success = true
+pre_success = false
+
+[pair.U4]
+title = "Limit changed: kv.set value limit halves from 1024 to 512 bytes"
+pair_class = "limit_changed"
+task = "u4-receipts-within-limit"
+task_dir = "examples/refworld-upgrades/U4/task"
+predicate = "examples/refworld-upgrades/U4/task/success.py"
+source_a = "examples/refworld-upgrades/U4/A"
+source_b = "examples/refworld-upgrades/U4/B"
+a_equals_base = true
+a_relation = "byte-identical to examples/refworld 0.2.0"
+b_relation = "examples/refworld with kv.set precondition 1 at 512 bytes, its doc, fixtures and the quota example to match; version 0.3.0"
+from_version = "0.2.0"
+to_version = "0.3.0"
+build_a = null
+build_b = null
+changes = ["kv_set_value_limit_512"]
+change_kinds = ["precondition_changed"]
+migrations = []
+changed_primitives = ["kv.set"]
+misuse_code = "INVALID"
+after_turn = 1
+model_visible_effect = "After the upgrade a kv.set of a value between 513 and 1024 bytes fails with INVALID at precondition 1; values stored before the upgrade keep their length. The model must split at 512 bytes. State is unchanged by the upgrade."
+misuse_definition = "A kv.set record with code INVALID after the upgrade record."
+
+[diff.U4]
+previous = "{hash_a}"
+entries = [{"kind": "precondition_changed", "target": "kv.set", "field": "preconditions", "before": [["len(value) <= 1024", "INVALID"], ["kv.used(ns) + len(value) <= 65536", "LIMIT"]], "after": [["len(value) <= 512", "INVALID"], ["kv.used(ns) + len(value) <= 65536", "LIMIT"]]}]
+doc_entries = [{"kind": "doc_only", "target": "kv.set", "field": "doc", "before": "Store value under key in namespace ns, replacing any previous value. Refused when the value exceeds 1024 bytes, or when the namespace's current usage plus the value would exceed 65536 bytes.", "after": "Store value under key in namespace ns, replacing any previous value. Refused when the value exceeds 512 bytes, or when the namespace's current usage plus the value would exceed 65536 bytes."}]
+doc_only_entries = 1
+derived_bump = "major"
+declared_bump = "minor"
+pre_1_0_rule_applied = true
+
+[notice.U4]
+old_version = "0.2.0"
+new_version = "0.3.0"
+summary = "kv.set now refuses values longer than 512 bytes with INVALID (the limit was 1024); values stored earlier are kept."
+used_primitives = ["fs.read", "kv.set"]
+listed_targets = ["kv.set"]
+migrated = false
+text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})\nSummary: kv.set now refuses values longer than 512 bytes with INVALID (the limit was 1024); values stored earlier are kept.\n\nChanges affecting primitives this instance has used:\n  changed  kv.set\n    before  len(value) <= 1024, otherwise INVALID (precondition 1).\n    after   len(value) <= 512, otherwise INVALID (precondition 1); values stored earlier keep their length.\n\nYour ledger is intact. The manual above describes 0.3.0."
+version_only_text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})"
+silent_text = ""
+
+[task.U4]
+dir = "examples/refworld-upgrades/U4/task"
+bin = "medium"
+reference_turns = 2
+upgrade_after_turn = 1
+first_half = ["solutions/a1.py"]
+post_upgrade = ["solutions/post2.py"]
+pre_upgrade = ["solutions/pre2.py"]
+pre_failure = {"primitive": "kv.set", "code": "INVALID", "precondition": 1}
+reference_primitive_count = 7
+count_source = "authoring-model"
+post_success = true
+pre_success = false
+
+[pair.U5]
+title = "State shape changed: kv becomes namespaced, with migration"
+pair_class = "state_shape_changed"
+task = "u5-read-migrated-receipts"
+task_dir = "examples/refworld-upgrades/U5/task"
+predicate = "examples/refworld-upgrades/U5/task/success.py"
+source_a = "examples/refworld-upgrades/U5/A"
+source_b = "examples/refworld-upgrades/U5/B"
+a_equals_base = false
+a_relation = "examples/refworld 0.2.0 with a flat kv (no ns parameter, one 64 KiB quota over the store): kv contract, lib, fixtures, manual prose and changelog history rewritten; no namespace migration"
+b_relation = "examples/refworld 0.2.0 in every rule; version 0.3.0; the namespace migration is renamed migrations/0_2_0_0_3_0_kv_namespaces.py (same function body) with fixtures/kv/migration_0_3_0.kvx; changelog is A's plus release 0.3.0"
+from_version = "0.2.0"
+to_version = "0.3.0"
+build_a = null
+build_b = null
+changes = ["kv_namespaces", "kv_get_ns", "kv_set_ns", "kv_set_ns_effects", "kv_del_ns", "kv_del_ns_effects"]
+change_kinds = ["state_shape", "precondition_changed", "precondition_changed", "effect_changed", "precondition_changed", "effect_changed"]
+migrations = ["migrations/0_2_0_0_3_0_kv_namespaces.py"]
+changed_primitives = ["kv.del", "kv.get", "kv.has", "kv.keys", "kv.set", "kv.used"]
+misuse_code = "INVALID"
+misuse_secondary = {"primitive": "kv.get", "code": "NOT_FOUND"}
+after_turn = 1
+model_visible_effect = "The upgrade migrates every flat key into namespace default. After it every kv primitive takes ns first: an old-style kv.get(key=...) fails parameter validation with INVALID, and a guessed namespace such as receipts fails with NOT_FOUND at precondition 1. Only a model that reads the notice knows the old keys are under default."
+misuse_definition = "A record of any kv primitive with code INVALID after the upgrade record (old-style call without ns). A NOT_FOUND on kv.get with a guessed namespace is the secondary signature, recorded in misuse_secondary."
+
+[diff.U5]
+previous = "{hash_a}"
+entries = [{"kind": "state_shape", "target": "kv", "field": "state"}, {"kind": "effect_changed", "target": "kv.del", "field": "effects", "before": ["not kv.has(key)"], "after": ["not kv.has(ns, key)"]}, {"kind": null, "target": "kv.del", "field": "params", "before": {"key": "str"}, "after": {"ns": "str", "key": "str"}}, {"kind": "precondition_changed", "target": "kv.del", "field": "preconditions", "before": [["kv.has(key)", "NOT_FOUND"]], "after": [["kv.has(ns, key)", "NOT_FOUND"]]}, {"kind": null, "target": "kv.get", "field": "params", "before": {"key": "str"}, "after": {"ns": "str", "key": "str"}}, {"kind": "precondition_changed", "target": "kv.get", "field": "preconditions", "before": [["kv.has(key)", "NOT_FOUND"]], "after": [["kv.has(ns, key)", "NOT_FOUND"]]}, {"kind": null, "target": "kv.has", "field": "params", "before": {"key": "str"}, "after": {"ns": "str", "key": "str"}}, {"kind": null, "target": "kv.keys", "field": "params", "before": {}, "after": {"ns": "str"}}, {"kind": "effect_changed", "target": "kv.set", "field": "effects", "before": ["kv.has(key)", "kv.get(key) == value"], "after": ["kv.has(ns, key)", "kv.get(ns, key) == value"]}, {"kind": null, "target": "kv.set", "field": "params", "before": {"key": "str", "value": "bytes"}, "after": {"ns": "str", "key": "str", "value": "bytes"}}, {"kind": "precondition_changed", "target": "kv.set", "field": "preconditions", "before": [["len(value) <= 1024", "INVALID"], ["kv.used() + len(value) <= 65536", "LIMIT"]], "after": [["len(value) <= 1024", "INVALID"], ["kv.used(ns) + len(value) <= 65536", "LIMIT"]]}, {"kind": null, "target": "kv.used", "field": "params", "before": {}, "after": {"ns": "str"}}]
+doc_entries = [{"kind": "doc_only", "target": "kv.del", "field": "doc", "before": "Remove key. Refused when the key is not stored.", "after": "Remove key from namespace ns. Refused when the key is not stored there."}, {"kind": "doc_only", "target": "kv.get", "field": "doc", "before": "Value stored under key.", "after": "Value stored under key in namespace ns."}, {"kind": "doc_only", "target": "kv.has", "field": "doc", "before": "True when key is stored. Never fails.", "after": "True when key is stored in namespace ns. Never fails."}, {"kind": "doc_only", "target": "kv.keys", "field": "doc", "before": "Every stored key, sorted bytewise; empty when nothing is stored. Never fails.", "after": "Every key in namespace ns, sorted bytewise; empty for a namespace that holds nothing. Never fails."}, {"kind": "doc_only", "target": "kv.set", "field": "doc", "before": "Store value under key, replacing any previous value. Refused when the value exceeds 1024 bytes, or when the store's current usage plus the value would exceed 65536 bytes.", "after": "Store value under key in namespace ns, replacing any previous value. Refused when the value exceeds 1024 bytes, or when the namespace's current usage plus the value would exceed 65536 bytes."}, {"kind": "doc_only", "target": "kv.used", "field": "doc", "before": "Total byte length of every stored value; 0 when nothing is stored. Never fails.", "after": "Total byte length of the values stored in namespace ns; 0 for an empty namespace. Never fails."}]
+doc_only_entries = 6
+derived_bump = "major"
+declared_bump = "minor"
+pre_1_0_rule_applied = true
+
+[notice.U5]
+old_version = "0.2.0"
+new_version = "0.3.0"
+summary = "kv is namespaced: every kv primitive takes ns first and the 64 KiB quota applies per namespace; existing keys moved to namespace default."
+used_primitives = ["fs.write", "kv.get"]
+listed_targets = ["kv", "kv.get"]
+migrated = true
+text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})\nSummary: kv is namespaced: every kv primitive takes ns first and the 64 KiB quota applies per namespace; existing keys moved to namespace default.\n\nChanges affecting primitives this instance has used:\n  changed  kv (state shape)\n    before  kv state is one flat map of key to value and kv primitives take no namespace.\n    after   kv state is a map of namespace to map of key to value and every kv primitive takes ns first; existing keys moved to namespace default.\n  changed  kv.get\n    before  kv.has(key), otherwise NOT_FOUND.\n    after   kv.has(ns, key), otherwise NOT_FOUND.\n\nState was migrated. Your ledger is intact. The manual above describes 0.3.0."
+version_only_text = "WORLD RECOMPILED  0.2.0 -> 0.3.0   ({hash_a} -> {hash_b})"
+silent_text = ""
+
+[task.U5]
+dir = "examples/refworld-upgrades/U5/task"
+bin = "medium"
+reference_turns = 2
+upgrade_after_turn = 1
+first_half = ["solutions/a1.py"]
+post_upgrade = ["solutions/post2.py"]
+pre_upgrade = ["solutions/pre2.py"]
+pre_failure = {"primitive": "kv.get", "code": "INVALID", "precondition": null}
+pre_upgrade_adapted = ["solutions/pre2_adapted.py"]
+pre_adapted_failure = {"primitive": "kv.get", "code": "NOT_FOUND", "precondition": 1}
+reference_primitive_count = 6
+count_source = "authoring-model"
+post_success = true
+pre_success = false
+
+[pair.U6]
+title = "Documentation only: fs.write doc states whole-content replacement"
+pair_class = "documentation_only"
+task = "u6-notes-control"
+task_dir = "examples/refworld-upgrades/U6/task"
+predicate = "examples/refworld-upgrades/U6/task/success.py"
+source_a = "examples/refworld-upgrades/U6/A"
+source_b = "examples/refworld-upgrades/U6/B"
+a_equals_base = true
+a_relation = "byte-identical to examples/refworld 0.2.0"
+b_relation = "examples/refworld with only the fs.write doc string reworded; version 0.2.1"
+from_version = "0.2.0"
+to_version = "0.2.1"
+build_a = null
+build_b = null
+changes = ["fs_write_doc_replace"]
+change_kinds = ["doc_only"]
+migrations = []
+changed_primitives = ["fs.write"]
+misuse_code = null
+after_turn = 1
+model_visible_effect = "No rule changes. The notice and the manual's fs.write entry change wording only; the pre-upgrade and post-upgrade solutions are identical and both succeed. This is the H4 notice-noise control."
+misuse_definition = "None: no call can fail differently after the upgrade."
+
+[diff.U6]
+previous = "{hash_a}"
+entries = []
+doc_entries = [{"kind": "doc_only", "target": "fs.write", "field": "doc", "before": "Create or replace the file at path. Refused while the path is locked or the content exceeds 1 MiB.", "after": "Create the file at path, or replace its whole content when it already exists; nothing is appended or merged. Refused while the path is locked or the content exceeds 1 MiB."}]
+doc_only_entries = 1
+derived_bump = "patch"
+declared_bump = "patch"
+pre_1_0_rule_applied = false
+
+[notice.U6]
+old_version = "0.2.0"
+new_version = "0.2.1"
+summary = "Documentation only: the fs.write description now states that it replaces the whole file; no rule changed."
+used_primitives = ["fs.read", "fs.write"]
+listed_targets = ["fs.write"]
+migrated = false
+text = "WORLD RECOMPILED  0.2.0 -> 0.2.1   ({hash_a} -> {hash_b})\nSummary: Documentation only: the fs.write description now states that it replaces the whole file; no rule changed.\n\nChanges affecting primitives this instance has used:\n  changed  fs.write (documentation)\n    before  The fs.write description said create or replace the file at path.\n    after   The fs.write description says the whole content is replaced and nothing is appended or merged.\n\nYour ledger is intact. The manual above describes 0.2.1."
+version_only_text = "WORLD RECOMPILED  0.2.0 -> 0.2.1   ({hash_a} -> {hash_b})"
+silent_text = ""
+
+[task.U6]
+dir = "examples/refworld-upgrades/U6/task"
+bin = "short"
+reference_turns = 2
+upgrade_after_turn = 1
+first_half = ["solutions/a1.py"]
+post_upgrade = ["solutions/post2.py"]
+pre_upgrade = ["solutions/pre2.py"]
+pre_failure = null
+reference_primitive_count = 5
+count_source = "authoring-model"
+post_success = true
+pre_success = true

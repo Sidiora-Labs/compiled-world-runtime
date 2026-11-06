@@ -1,0 +1,48 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# fs contract fixture.
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "fs"
+
+[primitive.fs.exists]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when a file exists at path. Never fails."
+
+[primitive.fs.locked]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when path is locked. Never fails."
+
+[primitive.fs.size]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "int"
+preconditions = [["fs.exists(path)", "NOT_FOUND", "LOCKED"]]
+effects = []
+doc = "Byte length of the file at path."
+
+[primitive.fs.write]
+side_effect = "mutating"
+params = {"path": "Path", "content": "bytes"}
+returns = "None"
+preconditions = [["not fs.locked(path)", "LOCKED"], ["len(content) <= 1048576", "LIMIT"]]
+effects = ["fs.exists(path)"]
+doc = "Create or replace the file at path."
+
+[primitive.fs.delete]
+side_effect = "mutating"
+params = {"path": "Path"}
+returns = "None"
+preconditions = [["fs.exists(path)", "NOT_FOUND"], ["not fs.locked(path)", "LOCKED"]]
+effects = ["not fs.exists(path)"]
+doc = "Remove the file at path."

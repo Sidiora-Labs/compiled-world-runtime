@@ -1,0 +1,245 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+Sidiora DEV OSS-1.0
+===================
+
+Development License with Automatic MIT Conversion
+Source-available for noncommercial use until conversion.
+
+Copyright (c) 2026 Sidiora Labs Inc.
+Additional copyright notices accompanying the Software remain applicable.
+
+License identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+1. SCOPE AND DEFINITIONS
+
+"Software" means the source code, object code, documentation, and other
+copyrightable material expressly made available under this License. Each
+copyright holder offering material under this License is a "Licensor" and
+grants rights only in material it has authority to license.
+
+"Project" means the upstream software project identified in the official
+repository or distribution in which Sidiora Labs Inc. first makes the
+applicable Software available under this License. A fork, redistribution,
+renaming, or extraction of code does not change the Project for that code.
+
+"Release Authority" means Sidiora Labs Inc., or a successor maintainer
+expressly designated by Sidiora Labs Inc. in a public notice for the Project.
+
+"Conversion Date" means the time of the event specified in Section 4. The
+version number in this License's name is the version of the license text,
+not the version of the Project.
+
+2. DEVELOPMENT LICENSE
+
+Before the Conversion Date, each Licensor grants you a worldwide,
+nonexclusive, royalty-free license to use, run, study, copy, modify, merge,
+create derivative works of, publicly display, publicly perform, publish,
+and distribute the Software, in source or object form, solely for
+Noncommercial Use and subject to this License.
+
+"Noncommercial Use" means use that is not primarily intended for or
+directed toward commercial advantage or monetary compensation.
+Noncommercial personal projects, learning, experimentation, teaching,
+research, charitable activities, and community collaboration are permitted.
+
+Commercial Use is not permitted under this development license. The uses
+below are Commercial Use even when incidental to a broader noncommercial
+project:
+
+(a) selling, renting, commercially licensing, or otherwise monetizing the
+    Software or a product or service incorporating it;
+
+(b) using the Software to provide paid, subscription-based, advertising-
+    supported, or otherwise monetized services, hosted applications,
+    APIs, or infrastructure;
+
+(c) using the Software in commercial business operations, internal
+    business workflows, or the development or delivery of commercial
+    products or services; and
+
+(d) using the Software to perform paid work for customers or to obtain
+    transaction fees, commissions, or other commercial compensation.
+
+A use can be commercial even if access is free, no copies are distributed,
+no profit is earned, or revenue has not yet been received. The nature and
+purpose of the activity control: a nonprofit can make Commercial Use, and
+a business or its personnel can make Noncommercial Use.
+
+Work performed solely to prepare and submit contributions to the Project
+is permitted even if the contributor is paid for that work. This exception
+permits compensation for preparing and submitting those contributions only.
+It does not permit commercial production use, hosted services for customers,
+customer deployments, or commercial exploitation beyond that contribution
+work.
+
+You may keep modifications private. This License does not require you to
+publish source code, disclose modifications, or contribute changes back.
+
+Commercial Use before conversion requires separate permission from the
+copyright holders whose permission is needed. The Release Authority may
+grant separate commercial rights only to the extent it has authority to
+do so.
+
+3. DISTRIBUTION AND YOUR OWN ADDITIONS
+
+Before the Conversion Date, include all applicable copyright notices and
+a complete copy of this License, including the future MIT license text,
+in all copies or substantial portions of the Software that you distribute.
+
+Recipients receive the applicable permissions directly from the
+Licensors. You may not remove the noncommercial condition from the covered
+Software, represent it as already MIT-licensed under this License, or
+impose terms that prevent recipients from exercising the rights and future
+MIT grant provided here.
+
+You may license your own additions separately, provided those terms do
+not alter the permissions or restrictions on the covered Software.
+Independent additions do not become MIT-licensed merely because they are
+combined with the Software. A copyright holder who expressly makes an
+addition or contribution available under this License grants the same
+development permissions and automatic future MIT license for that material.
+An addition or contribution expressly offered under this License for the
+Project uses the same Project and Conversion Date, whether or not the
+Release Authority incorporates it upstream.
+
+4. EXPIRY OF THE DEVELOPMENT RESTRICTION
+
+The Conversion Date is the first time the Release Authority publicly
+makes available an official stable release of the Project designated
+1.0.0, including a release tagged v1.0.0.
+
+If the Release Authority skips version 1.0.0, its first official stable
+release with a higher version number is the Conversion Date instead.
+For this purpose, compare the major, minor, and patch numbers numerically;
+an optional leading "v" and build metadata do not affect the comparison.
+
+A qualifying release must be publicly available through an official
+Project repository or distribution channel. An official release is treated
+as stable unless its version identifier or the Release Authority's release
+notice identifies it as an alpha, beta, release candidate, preview, draft,
+or other prerelease. Such prereleases do not qualify, even if a filename
+or package field contains "1.0.0".
+
+A version change alone, an independently issued fork release, or a release
+of a dependency or separately versioned component does not trigger
+conversion for the Project. A component release qualifies only if the
+Release Authority expressly identifies that component as the Project
+covered by this License.
+
+The Release Authority may bring the Conversion Date forward through an
+express public notice identifying the Project and the earlier effective
+date. Once reached, the Conversion Date cannot be postponed or reversed
+by deleting, withdrawing, renaming, or relabeling the release or notice.
+
+There is no separate calendar deadline. Until a qualifying release or
+earlier conversion takes effect, the development terms continue to apply.
+This License does not require the Release Authority to make a release.
+
+5. AUTOMATIC AND IRREVOCABLE MIT CONVERSION
+
+Each Licensor hereby irrevocably grants every recipient a license to its
+covered Software under the unmodified MIT License reproduced in Section 9,
+effective automatically on the Conversion Date. This future MIT grant is
+made now, but does not authorize MIT use before the Conversion Date.
+For each Licensor's material, the copyright notice in the MIT text includes
+that Licensor's applicable accompanying copyright notices.
+
+Conversion requires no payment, application, additional permission,
+replacement license file, or other action by a recipient or Licensor.
+
+Conversion covers all material made available under this License for the
+same Project before or on the Conversion Date, including earlier versions,
+archived releases, redistributed copies, and covered portions of forks
+and derivative works. It applies even if that material is omitted from
+the stable release or a copy still displays an earlier version number.
+
+Material first made available under this License for the same Project
+after the Conversion Date is licensed under MIT immediately. This
+License makes no grant for future material offered only under other terms.
+
+From the Conversion Date onward, the MIT License alone governs subsequent
+use, copying, modification, distribution, sublicensing, sale, and other
+exercise of the copyright permissions granted here. The noncommercial
+condition and all additional development-license conditions cease to apply
+to those acts. You may distribute converted Software with the applicable
+copyright notices and MIT text without retaining the development terms.
+
+The future MIT grant survives termination of the development license.
+Conversion does not retroactively authorize a violation committed before
+the Conversion Date or waive a claim arising from that violation, but a
+prior violation does not prevent the MIT grant from taking effect.
+
+6. THIRD-PARTY MATERIAL, OWNERSHIP, AND OTHER RIGHTS
+
+Separately licensed third-party code, dependencies, documentation, assets,
+and other material retain their respective licenses. Neither this License
+nor conversion gives anyone authority to relicense rights they do not own
+or control. Preserve applicable third-party notices and obligations.
+
+Copyright ownership is not transferred. Before conversion, this License
+does not grant trademark rights or permission to imply endorsement by a
+Licensor. It does not grant access to any hosted service, account, data,
+or other resource that is not itself covered Software.
+
+Data and outputs that do not contain covered Software are not licensed
+under this License merely because the Software processes or produces them.
+The use of the Software to produce them must nevertheless comply with the
+terms applicable at the time of that use.
+
+Nothing in this License limits rights you have independently of it,
+including applicable copyright exceptions or permissions under a separate
+license. Existing rights under another license are not withdrawn.
+
+7. TERMINATION AND REINSTATEMENT BEFORE CONVERSION
+
+Your development-license permissions terminate automatically if you
+violate their conditions. If you cease the violation and remedy it to the
+extent reasonably practicable within 30 days after you first become aware
+of it or receive notice of it, whichever occurs first, those permissions
+are automatically reinstated. The affected Licensor may also reinstate
+them expressly.
+
+Termination of your development permissions does not terminate the
+permissions of recipients who remain in compliance. Reinstatement does
+not erase liability for a past violation. Section 5's future MIT grant
+is unaffected by this Section.
+
+8. DEVELOPMENT-PHASE DISCLAIMER
+
+To the extent permitted by applicable law, the Software is supplied as
+available, without any warranty, whether express, implied, or statutory,
+including warranties of merchantability, fitness for a particular purpose,
+title, and noninfringement.
+
+To the extent permitted by applicable law, no Licensor or contributor is
+liable for any claim, loss, or damage arising from the Software or its use,
+whether the claim is based in contract, tort, or another legal theory.
+
+No Licensor is required by this License to provide support, maintenance,
+security fixes, continued development, or any particular release date.
+
+9. MIT LICENSE -- EFFECTIVE ONLY AS PROVIDED IN SECTION 5
+
+MIT License
+
+Copyright (c) 2026 Sidiora Labs Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

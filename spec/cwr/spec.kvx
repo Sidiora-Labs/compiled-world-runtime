@@ -1,0 +1,649 @@
+# Compiled World Runtime (CWR): the agent harness as a frozen, rule-governed world.
+# Normative requirements, proposed implementation tasks and UNRUN qualification cases.
+# Every experimental arm is a CWR build with one pillar ablated. Nothing here compares to or depends on another agent or harness.
+
+[meta]
+feature = "cwr"
+name = "Compiled World Runtime: harness as world, not body"
+version = "0.1.0-draft"
+status = "pending"
+stage = "design"
+review_date = "2026-11-06"
+intro = "A Compiled World Runtime turns the agent harness into a world the model lives in: a human-edited World Source is compiled into an immutable, content-addressed Build whose rules are documented and enforced identically; a kernel runs many Instances of one Build, executing one sandboxed script per turn through atomic primitives whose outcomes depend only on visible conditions; change happens only through human recompilation into a new versioned Build with a changelog the model is shown. Hypotheses H1 Stability, H2 Direct action, H3 Long context and H4 Controlled change are tested with internal ablation builds only."
+
+[decisions]
+d_1 = "A world is a frozen Build. Rules, limits and failure codes cannot change during an Instance's lifetime except through a human-initiated recompilation that produces a new versioned Build and an explicit instance upgrade."
+d_2 = "Interface determinism is over outcome, defined as the tuple of status, result shape and side-effect class. Payload equality is never claimed for adapter-backed primitives; they are content-not-guaranteed by contract."
+d_3 = "Scripts are Python 3.12 executed in a sandboxed process; the compiler and kernel are Rust crates; the Python SDK and the manual are generated from compiled contracts, never written by hand."
+d_4 = "Every rule is documented in the manual and enforced by the kernel from the same compiled contract. The compiler refuses a Build where documentation and enforcement could diverge."
+d_5 = "No external baseline. Every experimental arm is a CWR Build with exactly one pillar ablated through an experimental build flag. No adapter, metric, prompt or document in this feature references, invokes or compares against another agent or harness."
+d_6 = "One Build serves many Instances. Instance state, snapshots and the append-only ledger live outside the Build. The ledger is the only input the experiment harness reads."
+d_7 = "The proposal outbox is the model's only upward channel. It records text and has no effect on contracts, state, limits or scheduling."
+d_8 = "World Source files use KVX, the repository's one-JSON-value-per-line section format. Resource limits, tick values, context sizes, seed counts and task counts are proposed choices recorded in decisions.md and verification.md; their presence is not a measurement."
+d_9 = "Primitives are atomic; scripts are not transactional. A script that fails after a successful mutating primitive returns status partial with a complete trace rather than rolling back."
+d_10 = "The adapter gateway never retries. Reproducibility for external modules comes from recorded cassettes replayed by canonical request hash; a cache miss in replay mode is UNAVAILABLE, never a network call."
+
+[req.1]
+title = "Closure and stable rules"
+story = "As a model acting inside a world, I need every available action and its rules fixed for the life of the Build, so that the same action under the same visible conditions produces the same outcome."
+ac_1 = "A Build SHALL enumerate every primitive, adapter, limit and failure code available to an Instance; the kernel SHALL reject any call to a primitive, module, host facility or network endpoint that the Build does not enumerate."
+ac_2 = "Contracts, preconditions, effects, limits and failure codes SHALL be immutable for the lifetime of a Build; no kernel, adapter, operator, harness or model action SHALL alter them for a running Instance without an explicit instance upgrade to a different Build."
+ac_3 = "Two calls of one primitive with equal parameters under equal visible conditions SHALL produce equal outcomes, where outcome is the tuple of status, result shape and side-effect class; payload equality SHALL NOT be claimed for adapter-backed primitives."
+ac_4 = "A Build SHALL be identified by a sha256 over its manifest, compiled contracts, library, adapters, fixtures, migrations, manual and SDK; any byte difference SHALL produce a different hash and the kernel SHALL verify the hash before loading."
+ac_5 = "World time SHALL advance only through kernel-counted ticks; wall-clock time, host identity and process identity SHALL NOT be observable through any primitive unless its contract declares side_effect external."
+ac_6 = "A primitive that passes its declared preconditions and then fails with a code its contract does not declare SHALL be recorded as INVARIANT_VIOLATION with the full trace and SHALL count as a kernel or Build defect, never as an ordinary outcome."
+
+[req.2]
+title = "Visibility and predictable failure"
+story = "As a model, I need every rule that can block or alter my action to be visible before I act, and every failure to name the rule that caused it."
+ac_1 = "Every precondition SHALL be an expression over read_only primitives of the same Build and the call's parameters; the compiler SHALL reject a precondition that references a mutating or external primitive, host state or any value the model cannot query."
+ac_2 = "Each precondition SHALL declare exactly one failure code; the kernel SHALL evaluate preconditions in declared order and SHALL return the first failing precondition's code together with the primitive name and precondition index."
+ac_3 = "The failure envelope SHALL be the closed set NOT_FOUND, LOCKED, CONFLICT, INVALID, LIMIT, UNAVAILABLE, RATE_LIMITED, TIMEOUT, REJECTED, DUPLICATE_KEY and INVARIANT_VIOLATION; no primitive, adapter or kernel path SHALL emit another code, and RATE_LIMITED SHALL carry retry_after in ticks."
+ac_4 = "The manual SHALL render every primitive with parameters, return shape, side-effect class, ordered preconditions with failure codes, effects and declared adapter failures, generated from the compiled contracts so that documented and enforced rules cannot diverge."
+ac_5 = "Content-not-guaranteed primitives SHALL be labelled in the manual and in every result envelope; an ok status from such a primitive SHALL guarantee only shape and side-effect class."
+ac_6 = "Every condition named by a precondition SHALL be queryable by the model through read_only primitives before the mutating action is attempted, so that any failure is predictable from visible state."
+
+[req.3]
+title = "World Source and rule contracts"
+story = "As a world author, I need one human-editable source whose contracts fully determine the compiled world."
+ac_1 = "A World Source SHALL consist of world.kvx, CHANGELOG.kvx, lib/, contracts/, adapters/, migrations/, fixtures/ and manual/ with the grammar in world-source.md; unknown files, sections or keys SHALL be rejected by the compiler rather than ignored."
+ac_2 = "Each primitive contract SHALL declare name, side_effect in {read_only, mutating, external}, typed params, return type, ordered preconditions, effects and doc; a mutating primitive SHALL declare at least one effect and a read_only primitive SHALL declare none."
+ac_3 = "Each adapter contract SHALL declare side_effect external, idempotency in {none, natural, key}, timeout_ms, endpoint, declared failures drawn from the envelope and content_guaranteed false; an adapter SHALL NOT declare effects over world state other than ledger and outbox records."
+ac_4 = "world.kvx SHALL declare name, semantic version, language, runtime, modules, limits cpu_ms, wall_ms, memory_mb, primitive_calls and adapter_calls, clock tick_per_primitive and tick_per_turn, and rng seed_visible; an omitted limit SHALL be a compile error, not a default."
+ac_5 = "Native library code under lib/ SHALL implement primitives against the kernel state API only; the compiler SHALL reject imports of host filesystem, network, time, process, environment or random facilities outside the generated SDK."
+ac_6 = "A migration SHALL be a pure function from a prior Build's instance state to the new Build's state, declared in CHANGELOG.kvx for every change that alters state shape; a build whose ContractDiff alters state shape without a declared migration SHALL fail."
+
+[req.4]
+title = "Compiler pipeline and immutable Build artifact"
+story = "As a world author, I need a compiler that turns source into an immutable Build and refuses anything that would break closure, visibility or controlled change."
+ac_1 = "The compiler SHALL execute parse, resolve, lint, contract tests, diff, changelog gate, generate and package in that order and SHALL stop at the first failing stage, reporting lint codes CWR-V001 through CWR-M001 as listed in compiler.md."
+ac_2 = "Contract tests SHALL execute each primitive against its fixtures in an ephemeral Instance and SHALL assert that every declared precondition failure is reachable, every declared effect holds after an ok outcome and no undeclared failure code is emitted."
+ac_3 = "The compiler SHALL compute a ContractDiff against the previous Build naming every added, removed or changed primitive, precondition, effect, limit, failure, adapter and state shape, and SHALL derive the minimum semantic version bump: major for removal or stricter rule, minor for addition or looser rule, patch for documentation only."
+ac_4 = "The changelog gate SHALL refuse a Build whose ContractDiff contains an entry not covered by a CHANGELOG.kvx change for the declared version, or whose declared version is below the derived minimum bump."
+ac_5 = "The Build artifact SHALL be a directory keyed by its sha256 containing manifest.kvx, contracts.json, contract_diff.json, manual.md, sdk/, lib/, adapters/, fixtures/, migrations/ and tests.json; after packaging no file SHALL be writable and any later modification SHALL be detected by hash verification."
+ac_6 = "The generated SDK and manual SHALL be byte-deterministic functions of contracts.json and manual/; two compilations of one World Source on different hosts SHALL produce identical artifacts and hashes."
+
+[req.5]
+title = "Controlled change"
+story = "As a world owner, I need the only path to a different world to be a human-initiated recompilation that produces a versioned, documented Build the model is told about."
+ac_1 = "Recompilation SHALL be invoked only through the cwr build command by a human operator; no kernel, harness, scheduled process or model action SHALL invoke the compiler or write into a Build directory."
+ac_2 = "Instance upgrade SHALL load the target Build, verify its hash, apply the declared migrations in order inside a snapshot transaction and record the recompile notice derived from CHANGELOG.kvx; failure at any step SHALL roll back to the prior snapshot and Build with no partial state visible."
+ac_3 = "The recompile notice SHALL be rendered into the model's context on the first turn after upgrade and SHALL include the old and new versions, the human summary and every contract change affecting primitives the Instance has already used; only an experimental silent-change or version-only Build MAY alter this rendering."
+ac_4 = "The model SHALL have one upward channel, world.propose(text), that appends the text to the ledger and the outbox file; the outbox SHALL have no effect on contracts, state, limits or scheduling and SHALL be readable only outside the world."
+ac_5 = "Build versions SHALL follow the derived bump rules; the kernel SHALL refuse to upgrade an Instance to a Build whose world name differs or whose version is not greater than the running version unless the kernel runs with --allow-experimental."
+
+[req.6]
+title = "Kernel execution and script semantics"
+story = "As a model, I need to act through one script per turn that runs natively in the world, with each primitive atomic and every partial result explained."
+ac_1 = "Each turn SHALL execute exactly one Python 3.12 script in a fresh sandboxed process with no network, no host filesystem, no host clock and only the Build SDK importable; the kernel SHALL enforce cpu_ms, wall_ms and memory_mb and SHALL terminate an exceeding script with LIMIT naming the limit."
+ac_2 = "Each primitive call SHALL cross the sandbox boundary as one RPC and SHALL be atomic in the order validate parameters, evaluate preconditions, execute, assert effects in debug mode, advance world_time, append the ledger record; a failure before execute SHALL leave state unchanged."
+ac_3 = "Scripts SHALL be non-transactional: a primitive failure SHALL raise a typed exception carrying the envelope; if the script ends with an uncaught failure after at least one mutating or external primitive succeeded, the result status SHALL be partial with the full trace."
+ac_4 = "The result envelope SHALL be {status, returned, error, trace, world, resources} with status in {ok, error, partial}, world = {version, build, time, turn} and returned equal to the script's top-level return value serialised through the SDK codec."
+ac_5 = "primitive_calls and adapter_calls SHALL be enforced per turn and reported as LIMIT naming the limit; the script SHALL be able to read remaining budgets through world.limits() before acting."
+ac_6 = "Randomness SHALL come only from world.random(), a PCG stream seeded per Instance and advanced only by draws; two Instances with equal seed and equal ledger prefix SHALL produce equal draws."
+
+[req.7]
+title = "Adapter gateway and external effects"
+story = "As a world author, I need external services exposed as rules whose interface is guaranteed even though their content is not."
+ac_1 = "All external traffic SHALL pass through the adapter gateway; lib/ and scripts SHALL have no network capability and the gateway SHALL contact only endpoints declared in adapter contracts."
+ac_2 = "The gateway SHALL normalise every adapter response into the declared return shape or the failure envelope; an undeclared status, transport error or malformed body SHALL map to UNAVAILABLE or INVALID as the contract declares and never to an undeclared code."
+ac_3 = "The gateway SHALL never retry; retry decisions belong to the model and SHALL be informed by RATE_LIMITED retry_after and the manual."
+ac_4 = "Idempotency SHALL be enforced per contract: a key adapter SHALL return the original outcome for an identical replay and DUPLICATE_KEY for a reused key with a different payload; a natural adapter SHALL record the evidence of idempotency in the ledger; a none adapter SHALL be labelled non-idempotent in the manual."
+ac_5 = "The gateway SHALL support live, record and replay modes; replay SHALL serve cassettes keyed by adapter, canonical request hash and sequence and SHALL fail with UNAVAILABLE on a cassette miss rather than contacting any network."
+ac_6 = "Adapter timeouts SHALL use the contract's timeout_ms measured in host time and SHALL be reported as TIMEOUT; world_time SHALL advance by the declared tick regardless of host duration."
+
+[req.8]
+title = "Instance state, ledger and recovery"
+story = "As an experimenter, I need a complete, append-only record of every action and outcome that is sufficient to replay an Instance."
+ac_1 = "The ledger SHALL be an append-only JSONL file per Instance with the record schema in kernel.md, written durably before a primitive's result returns to the script."
+ac_2 = "Instance state SHALL be stored separately from the Build in a content-addressed store; a snapshot SHALL capture state, ledger seq, world_time, rng state, tail size K and Build hash, and restoring it SHALL yield an observably identical Instance."
+ac_3 = "After a kernel crash mid-turn the kernel SHALL recover from the last snapshot plus the ledger prefix, SHALL record the interrupted turn as status error with code UNAVAILABLE and SHALL never re-execute an external primitive whose ledger record already exists."
+ac_4 = "Replaying an Instance from its seed, initial state, Build and cassettes SHALL reproduce an identical ledger except for host_ts and duration_us."
+ac_5 = "The ledger and final state SHALL be the only inputs the experiment harness and the case oracles read from an Instance; kernel internals, sandbox stdout and raw adapter payloads SHALL NOT be metric sources."
+
+[req.9]
+title = "Model surface"
+story = "As a model, I need a stable manual, my recent history and the last result in a fixed layout so I can act without re-deriving the world each turn."
+ac_1 = "Context SHALL be composed in the fixed order manual, recompile notice when present, ledger tail of K records, last result envelope; the manual SHALL be byte-identical across every turn and Instance of one Build."
+ac_2 = "The manual SHALL contain the ten sections listed in model-surface.md and every primitive entry in the rendered entry format, and SHALL state the three pillars and the failure envelope verbatim from the Build."
+ac_3 = "The turn protocol SHALL accept exactly one fenced python block with an optional top-level return; a turn with zero or more than one block SHALL be rejected as INVALID without executing anything or advancing world_time."
+ac_4 = "The ledger tail SHALL render each record on one line with turn, primitive, status, code and world_time; K SHALL be a per-Instance parameter with default 20, recorded in the ledger and in every snapshot."
+ac_5 = "world.history(n) SHALL return the last n ledger records to the script; nothing outside the manual, the notice, the ledger tail, world.history and the result envelope SHALL be visible to the model."
+
+[req.10]
+title = "Experimental ablation builds"
+story = "As an experimenter, I need to ablate exactly one pillar of a world in a Build that is otherwise identical, so that any difference is attributable to that pillar."
+ac_1 = "The flags --x-drift, --x-silent-change, --x-version-only and --x-one-primitive SHALL produce Builds under the xbuild/ namespace with experimental true in the manifest; the kernel SHALL refuse to load them without --allow-experimental and SHALL record the flag in every ledger record."
+ac_2 = "--x-drift <spec> SHALL inject rule changes at scheduled turns per the drift grammar in compiler.md, naming the primitive, the precondition or failure and the first affected turn, without altering the manual; every injected change SHALL be logged in the ledger as kind drift."
+ac_3 = "--x-silent-change SHALL perform an instance upgrade without rendering the recompile notice and --x-version-only SHALL render only the version line; both SHALL otherwise be byte-identical to the control Build's behaviour."
+ac_4 = "--x-one-primitive SHALL limit each turn to one primitive call, returning LIMIT with limit primitive_calls=1 on the second call; the manual of such a Build SHALL state this limit."
+ac_5 = "An experimental Build SHALL differ from its control only in the ablated dimension; the ContractDiff between control and experimental Builds SHALL list only entries attributable to the flag."
+
+[req.11]
+title = "Reference world and task suite"
+story = "As an experimenter, I need a world rich enough to exercise every pillar and a task suite with objective success predicates."
+ac_1 = "refworld SHALL ship modules fs, kv, jobs, search, publish and world with the primitives, rules and limits in reference-world.md; search and publish SHALL be adapters backed by stub servers with recorded cassettes."
+ac_2 = "The task suite SHALL contain 60 tasks in bins short (at most 5 primitives), medium (6 to 25) and long (26 to 120) with 20 per bin; at least 12 long tasks SHALL require reusing a rule first encountered earlier in the same Instance."
+ac_3 = "Each task SHALL be a directory with task.md, initial.kvx, success.py, bin and rules; success.py SHALL be a pure predicate over final Instance state and ledger with no parsing of model text."
+ac_4 = "Six upgrade pairs U1 through U6 SHALL exist, each a source pair with a valid CHANGELOG.kvx and migration, covering precondition tightening, primitive removal, failure code change, limit change, state shape change and documentation-only change."
+ac_5 = "Stub servers SHALL implement the declared adapter contracts including rate limiting, duplicate keys and injected unavailability, so that every declared adapter failure is reachable in record and replay modes."
+
+[req.12]
+title = "Experiment harness and hypotheses"
+story = "As a researcher, I need to test H1 through H4 with internal ablations only, with pre-registered metrics and reproducible runs."
+ac_1 = "Every experimental arm SHALL be a CWR Build; the harness SHALL have no adapter, configuration, prompt or metric that references, invokes or compares against any other agent or harness."
+ac_2 = "H1 SHALL compare frozen, drift-1 and drift-3 arms on the full suite; H2 SHALL compare script and one-primitive arms; H3 SHALL compare outcomes per bin and per ledger tail K in {5, 20, full}; H4 SHALL compare changelog, version-only and silent arms on the upgrade pairs."
+ac_3 = "Each arm SHALL run 10 seeds per task with the same model, sampling settings, cassettes and context layout; seed, model identity and arm SHALL be recorded in the ledger header."
+ac_4 = "Metrics SHALL be computed only from ledgers and final state: task success, turns to success, primitive calls, failure rate by code, repeated-failure rate for the same primitive and code, rule reuse rate and post-upgrade misuse rate, with the definitions in experiments.md."
+ac_5 = "Analysis SHALL report mean and 95% bootstrap confidence interval per arm and bin and SHALL pre-register the expected direction of each hypothesis before any run; metric definitions SHALL NOT change after execution."
+ac_6 = "Campaigns SHALL run in replay mode against recorded cassettes; a live-mode run SHALL be labelled separately and SHALL NOT be pooled with replay runs."
+
+[req.13]
+title = "Qualification and evidence"
+story = "As the owner, I need every claim about CWR backed by executed cases with independent oracles, with authoring checks never counting as product evidence."
+ac_1 = "All cases CWR-001 onward SHALL remain UNRUN until executed; the validator SHALL refuse a case with any other status and SHALL refuse a task status other than pending while the stage is design."
+ac_2 = "Every attempt SHALL record Build hash, Instance id, seed, cassette set, model identity, compiler and kernel revisions, exit status, log location and observed assertions in an append-only registry."
+ac_3 = "Independent oracles SHALL compute outcomes from ledgers and final state only and SHALL be separate programs from the implementation under test."
+ac_4 = "Component evidence SHALL NOT imply full-case or hypothesis qualification; a hypothesis result SHALL require the complete arm matrix with the pre-registered metrics."
+ac_5 = "Specification authoring validation SHALL check structure, references, coverage, examples and links only and SHALL NOT execute a compiler, kernel, model or driver."
+
+[req.14]
+title = "Documentation and release"
+story = "As an adopter, I need documentation describing what is built and evidence that distinguishes design from shipped behaviour."
+ac_1 = "The pack SHALL maintain complete clause-to-task-to-case traceability with generated implementation-plan.md and traceability.md; a stale derived view SHALL fail validation."
+ac_2 = "Documentation SHALL describe implemented compiler, kernel, surface and harness behaviour with links to source and evidence; proposed behaviour SHALL be distinguished from shipped behaviour."
+ac_3 = "A release SHALL pin compiler, kernel and SDK revisions, the refworld Build hashes, cassette sets and the task suite digest; a missing input SHALL produce a named diagnostic."
+ac_4 = "Release closure SHALL require every case executed with recorded outcomes, the four hypothesis reports with their pre-registration and recorded owner acceptance; an unresolved required failure SHALL block a release claim."
+
+[design]
+overview = "The normative contract is spec.kvx, refined by design.body.md, world-source.md, compiler.md, kernel.md, model-surface.md, reference-world.md, experiments.md and verification.md. README.md indexes the pack; implementation-plan.md and traceability.md are derived views."
+layers = "World Source (human-edited) feeds the World Compiler, which emits an immutable content-addressed Build. The World Kernel runs many Instances of one Build. The Model Surface renders manual, notice, ledger tail and result envelope. The Experiment Harness sits outside the world and reads only ledgers."
+implementation = "Rust crates crates/cwr-contract, crates/cwr-compiler, crates/cwr-kernel and crates/cwr-cli; generated Python SDK under sdk/python/cwr; reference world under examples/refworld; task suite and harness under benchmark/."
+verification = "Future per-task drivers live at tests/cwr/cases/W_N.py and are created by their tasks. Task 0.2 defines the evidence registry. Structural validation uses tools/validate_spec.py and does not execute product code."
+
+[documentation]
+mode = "manual"
+status = "pending"
+audiences = ["world author", "experimenter", "operator"]
+targets = ["spec/cwr/**", "docs/cwr/world-source.md", "docs/cwr/kernel.md", "docs/cwr/experiments.md", "README.md"]
+
+[tasks]
+heading = "Contracts and evidence first, then compiler, kernel, surface, reference world, experiments and release"
+
+[task.0.1]
+title = "Freeze the CWR specification pack and structural validator"
+status = "pending"
+wave = 0
+requires = []
+touches = ["spec/cwr/spec.kvx", "spec/cwr/tools/validate_spec.py", "spec/cwr/README.md", "spec/cwr/implementation-plan.md", "spec/cwr/traceability.md", "tests/cwr/cases/0_1.py"]
+verify_cmd = "python3 tests/cwr/cases/0_1.py"
+do_1 = "Run the structural validator over the pack and confirm strict KVX parsing, consecutive acceptance clauses containing SHALL, symmetric task and case mappings, wave-ordered dependencies and complete clause coverage by both a task and a case."
+do_2 = "Confirm the example World Source under examples/refworld parses and satisfies the cross-file checks: version agrees with the latest changelog release, preconditions reference only read_only primitives, every failure code is in the envelope and every state-shape change names a migration."
+do_3 = "Regenerate implementation-plan.md and traceability.md and confirm a modified clause, task or case makes the derived views stale and fails validation until re-rendered."
+do_4 = "Create the task driver to run the validator as a subprocess, assert exit code zero and a PASS report, and assert that tampering with a case status or a task status away from UNRUN or pending fails nonzero. The driver proves authoring consistency only, never product behaviour."
+reqs = ["13.1", "13.5", "14.1"]
+owner = "spec"
+cases = ["CWR-020"]
+
+[task.0.2]
+title = "Qualification registry, evidence schema and independent checker"
+status = "pending"
+wave = 0
+requires = ["0.1"]
+touches = ["tests/cwr/registry.kvx", "tests/cwr/qualify.py", "tests/cwr/check_evidence.py", "tests/cwr/evidence.schema.json", "tests/cwr/cases/0_2.py"]
+verify_cmd = "python3 tests/cwr/cases/0_2.py"
+do_1 = "Define the append-only attempt record: case and assertion ids, clauses, Build hash, Instance id, seed, cassette set digest, model identity, compiler and kernel revisions, arm, UTC start and end, exit status, log path and observed assertions. Reject records missing any field."
+do_2 = "Implement the registry loader for CWR-NNN identities with per-case expected assertion inventories and tiers component, integration, campaign and release; a case without a registered inventory cannot be marked PASS."
+do_3 = "Implement the independent checker as a separate program that reads only ledgers, final state and attempt records, recomputes each assertion and refuses zero-assertion, tampered, stale-Build or mismatched-seed evidence."
+do_4 = "Create the task driver with false-success traps: an attempt claiming PASS with no assertions, an attempt whose Build hash differs from the registered Build and an attempt with a modified ledger must each fail nonzero. Component PASS must not change the parent case status."
+reqs = ["13.2", "13.3", "13.4"]
+owner = "qualification"
+cases = ["CWR-019"]
+
+[task.0.3]
+title = "Contract grammar, failure envelope and World Source schema crate"
+status = "pending"
+wave = 0
+requires = ["0.1"]
+touches = ["crates/cwr-contract/Cargo.toml", "crates/cwr-contract/src/lib.rs", "crates/cwr-contract/src/kvx.rs", "crates/cwr-contract/src/envelope.rs", "crates/cwr-contract/src/world.rs", "crates/cwr-contract/src/primitive.rs", "crates/cwr-contract/src/adapter.rs", "crates/cwr-contract/src/changelog.rs", "crates/cwr-contract/tests/fixtures/**", "tests/cwr/cases/0_3.py"]
+verify_cmd = "python3 tests/cwr/cases/0_3.py"
+do_1 = "Implement the strict KVX reader for World Source files and typed models for world.kvx, primitive contracts, adapter contracts, CHANGELOG.kvx and migrations. Unknown sections or keys, duplicate keys and non-JSON values are errors with file and line."
+do_2 = "Encode the closed failure envelope as a Rust enum with retry_after only on RATE_LIMITED; serialisation of any other code is impossible by construction and deserialisation of an unknown code fails."
+do_3 = "Enforce the shape rules: side_effect classes, mutating primitives declare at least one effect, read_only primitives declare none, adapters declare external, idempotency, timeout_ms, endpoint, failures within the envelope and content_guaranteed false; a missing limit in world.kvx is an error."
+do_4 = "Create the task driver to build the crate, run its unit tests and feed malformed fixtures: an adapter with effects, a read_only primitive with effects, a precondition with an unknown code, a world file missing memory_mb and a changelog state-shape change without a migration. Each must be rejected with a located error."
+reqs = ["2.3", "3.1", "3.2", "3.3", "3.4", "3.6"]
+owner = "contracts"
+cases = ["CWR-001"]
+
+[task.1.1]
+title = "Compiler front end: parse, resolve and lint for closure and visibility"
+status = "pending"
+wave = 1
+requires = ["0.3"]
+touches = ["crates/cwr-compiler/Cargo.toml", "crates/cwr-compiler/src/lib.rs", "crates/cwr-compiler/src/parse.rs", "crates/cwr-compiler/src/resolve.rs", "crates/cwr-compiler/src/lint.rs", "crates/cwr-compiler/src/expr.rs", "crates/cwr-compiler/src/pyimports.rs", "crates/cwr-cli/src/build.rs", "tests/cwr/cases/1_1.py"]
+verify_cmd = "python3 tests/cwr/cases/1_1.py"
+do_1 = "Implement the ordered pipeline skeleton with stage identities parse, resolve, lint, contract_tests, diff, changelog_gate, generate and package; the pipeline stops at the first failing stage and reports every lint code with file, section and key."
+do_2 = "Implement the precondition expression language: identifiers resolve to parameters or to read_only primitives of the same Build; any reference to a mutating or external primitive, an unknown name or a host facility is CWR-V001 or CWR-V002."
+do_3 = "Implement the lib/ import scanner that rejects os, sys, socket, time, datetime, random, subprocess, pathlib and any module outside the generated SDK as CWR-L001, and rejects unknown source files, sections or keys as CWR-C001."
+do_4 = "Create the task driver that compiles the example World Source through the lint stage, then mutates it in five ways (hidden precondition, host import, unknown key, duplicate primitive, missing module) and asserts the exact lint code and stage for each failure."
+reqs = ["2.1", "2.2", "3.1", "3.5", "4.1"]
+owner = "compiler"
+cases = ["CWR-002"]
+
+[task.1.2]
+title = "Contract tests, ContractDiff, changelog gate and version derivation"
+status = "pending"
+wave = 1
+requires = ["1.1"]
+touches = ["crates/cwr-compiler/src/contract_tests.rs", "crates/cwr-compiler/src/diff.rs", "crates/cwr-compiler/src/changelog_gate.rs", "crates/cwr-compiler/src/version.rs", "crates/cwr-compiler/src/ephemeral.rs", "crates/cwr-cli/src/diff.rs", "tests/cwr/cases/1_2.py"]
+verify_cmd = "python3 tests/cwr/cases/1_2.py"
+do_1 = "Implement the ephemeral Instance used by contract tests and run each primitive against its fixtures: every declared precondition failure must be reachable, every declared effect must hold after ok, and any undeclared code or an effect that does not hold is a failure naming the primitive."
+do_2 = "Implement ContractDiff over primitives, preconditions, effects, limits, failures, adapters and state shapes with stable ordering and canonical JSON output, and derive the minimum bump: major for removal or stricter rule, minor for addition or looser rule, patch for documentation."
+do_3 = "Implement the changelog gate: every diff entry must be covered by a CHANGELOG.kvx change for the declared version, every state-shape change must name an existing migration and the declared version must be at least the derived bump; otherwise fail with the uncovered entries listed."
+do_4 = "Create the task driver that compiles the upgrade pair fixtures and asserts: an undocumented stricter precondition is refused, a documented one passes with a major bump, a documentation-only change passes with a patch bump, a state-shape change without migration is refused and a primitive emitting an undeclared code fails contract tests."
+reqs = ["1.6", "3.6", "4.2", "4.3", "4.4", "5.5"]
+owner = "compiler"
+cases = ["CWR-003", "CWR-004"]
+
+[task.1.3]
+title = "Build packaging, manual generation and Python SDK generation"
+status = "pending"
+wave = 1
+requires = ["1.2"]
+touches = ["crates/cwr-compiler/src/generate/manual.rs", "crates/cwr-compiler/src/generate/sdk.rs", "crates/cwr-compiler/src/package.rs", "crates/cwr-compiler/src/manifest.rs", "sdk/python/cwr/_codec.py", "sdk/python/cwr/_rpc.py", "sdk/python/cwr/templates/**", "crates/cwr-cli/src/manual.rs", "tests/cwr/cases/1_3.py"]
+verify_cmd = "python3 tests/cwr/cases/1_3.py"
+do_1 = "Generate manual.md from contracts.json and manual/ with the ten fixed sections and the rendered primitive entry format, including the content-not-guaranteed label, the verbatim failure envelope and the three pillars; the generator is a pure function with sorted iteration and no timestamps."
+do_2 = "Generate the Python SDK: one typed function per primitive that performs exactly one RPC, typed exceptions per failure code, world.limits, world.random, world.history and world.propose, and a codec for the result envelope."
+do_3 = "Package the Build directory keyed by sha256 over manifest.kvx, contracts.json, contract_diff.json, manual.md, sdk/, lib/, adapters/, fixtures/, migrations/ and tests.json; set every file read-only and write the hash into the manifest last."
+do_4 = "Create the task driver that compiles the example world twice on two differing working directories and asserts identical hashes, asserts that every primitive appears exactly once in the manual with its ordered preconditions and codes, and asserts that modifying one byte of a packaged file is detected by hash verification."
+reqs = ["1.4", "2.4", "2.5", "4.5", "4.6", "9.2"]
+owner = "compiler"
+cases = ["CWR-005"]
+
+[task.2.1]
+title = "Instance store, ledger, world clock, RNG and snapshots"
+status = "pending"
+wave = 2
+requires = ["0.3"]
+touches = ["crates/cwr-kernel/Cargo.toml", "crates/cwr-kernel/src/lib.rs", "crates/cwr-kernel/src/state.rs", "crates/cwr-kernel/src/ledger.rs", "crates/cwr-kernel/src/clock.rs", "crates/cwr-kernel/src/rng.rs", "crates/cwr-kernel/src/snapshot.rs", "crates/cwr-cli/src/instance.rs", "tests/cwr/cases/2_1.py"]
+verify_cmd = "python3 tests/cwr/cases/2_1.py"
+do_1 = "Implement the content-addressed Instance state store separate from the Build, with typed module state, the per-Instance tail size K recorded at creation and a header record carrying Build hash, seed, K and arm."
+do_2 = "Implement the append-only JSONL ledger with the schema in kernel.md, fsync before the result is returned, monotonic seq and a corruption check that refuses to open a ledger whose last record is truncated without an explicit recovery."
+do_3 = "Implement the tick clock advancing only by tick_per_primitive and tick_per_turn, and the PCG RNG seeded per Instance and advanced only by world.random draws, with state captured in snapshots."
+do_4 = "Create the task driver that creates an Instance, appends records, snapshots, mutates further, restores and asserts identical state, seq, world_time, rng state and K; asserts that no primitive exposes host time; and asserts equal random draws across two Instances with equal seed and ledger prefix."
+reqs = ["1.5", "6.6", "8.1", "8.2", "9.4"]
+owner = "kernel"
+cases = ["CWR-006"]
+
+[task.2.2]
+title = "Sandboxed executor and atomic contract check"
+status = "pending"
+wave = 2
+requires = ["2.1", "1.3"]
+touches = ["crates/cwr-kernel/src/sandbox.rs", "crates/cwr-kernel/src/rpc.rs", "crates/cwr-kernel/src/executor.rs", "crates/cwr-kernel/src/contract_check.rs", "crates/cwr-kernel/src/limits.rs", "crates/cwr-kernel/src/envelope.rs", "sdk/python/cwr/_runner.py", "crates/cwr-cli/src/turn.rs", "tests/cwr/cases/2_2.py"]
+verify_cmd = "python3 tests/cwr/cases/2_2.py"
+do_1 = "Implement the per-turn sandbox: a fresh Python 3.12 process with no network namespace, an empty read-only filesystem view containing only the Build SDK, no host clock access, and cpu_ms, wall_ms and memory_mb enforcement that terminates with LIMIT naming the limit."
+do_2 = "Implement one RPC per primitive over a unix socket and the atomic contract check in the order validate, preconditions in declared order, execute, assert effects in debug mode, advance world_time, append ledger; a failure before execute leaves state unchanged and returns the first failing precondition's code with primitive name and index."
+do_3 = "Implement script result semantics: typed exceptions carrying the envelope, status partial when an uncaught failure follows a successful mutating or external primitive, the result envelope with returned, error, trace, world and resources, and world.limits reporting remaining budgets."
+do_4 = "Create the task driver that runs scripts calling an unlisted module, an unlisted primitive, a socket, the host filesystem and os.time and asserts each is refused as closure violations; runs an exceeding loop and asserts LIMIT; and asserts a partial script leaves exactly the successful mutations applied."
+do_5 = "Extend the driver with an interface-determinism check: repeat each refworld primitive under equal visible conditions and assert equal status, shape and side-effect class; inject a lib defect that emits an undeclared code and assert it is recorded as INVARIANT_VIOLATION."
+reqs = ["1.1", "1.2", "1.3", "1.6", "2.2", "2.6", "6.1", "6.2", "6.3", "6.4", "6.5"]
+owner = "kernel"
+cases = ["CWR-007", "CWR-008"]
+
+[task.2.3]
+title = "Adapter gateway with normalisation, idempotency and cassette modes"
+status = "pending"
+wave = 2
+requires = ["2.2"]
+touches = ["crates/cwr-kernel/src/gateway/mod.rs", "crates/cwr-kernel/src/gateway/normalise.rs", "crates/cwr-kernel/src/gateway/idempotency.rs", "crates/cwr-kernel/src/gateway/cassette.rs", "crates/cwr-kernel/src/gateway/live.rs", "crates/cwr-kernel/src/gateway/timeout.rs", "tests/cwr/cases/2_3.py"]
+verify_cmd = "python3 tests/cwr/cases/2_3.py"
+do_1 = "Implement the gateway as the sole network capability of the kernel process, restricted to endpoints declared in adapter contracts; lib/ and the sandbox have no socket capability."
+do_2 = "Implement normalisation of every adapter response into the declared return shape or the envelope; undeclared statuses, transport errors and malformed bodies map to UNAVAILABLE or INVALID as declared; timeouts use timeout_ms in host time and report TIMEOUT while world_time advances by the declared tick."
+do_3 = "Implement idempotency enforcement per contract: key adapters store the first outcome per key and payload hash, replay identical requests from the store and return DUPLICATE_KEY for a different payload; natural adapters record evidence; none adapters are labelled. The gateway never retries."
+do_4 = "Implement live, record and replay modes with cassettes keyed by adapter, canonical request hash and sequence; replay misses return UNAVAILABLE and never open a socket, which the driver proves with an unreachable endpoint."
+do_5 = "Create the task driver against the refworld stub servers: exercise every declared failure of publish.post and search.query, prove DUPLICATE_KEY and identical-replay behaviour, prove a stub 503 maps only to the declared code, and prove the recorded cassette replays byte-identical outcomes offline."
+reqs = ["1.3", "7.1", "7.2", "7.3", "7.4", "7.5", "7.6"]
+owner = "kernel"
+cases = ["CWR-009"]
+
+[task.2.4]
+title = "Crash recovery and ledger replay"
+status = "pending"
+wave = 2
+requires = ["2.3"]
+touches = ["crates/cwr-kernel/src/recovery.rs", "crates/cwr-kernel/src/replay.rs", "crates/cwr-cli/src/replay.rs", "tests/cwr/cases/2_4.py"]
+verify_cmd = "python3 tests/cwr/cases/2_4.py"
+do_1 = "Implement recovery from the last snapshot plus ledger prefix after a kernel crash: the interrupted turn is recorded as status error with code UNAVAILABLE, and any external primitive with an existing ledger record is marked complete rather than re-executed."
+do_2 = "Implement cwr instance replay from seed, initial state, Build and cassettes, re-running every turn's recorded script and producing a new ledger."
+do_3 = "Implement the ledger comparison that ignores host_ts and duration_us and reports the first divergent record with both values."
+do_4 = "Create the task driver that kills the kernel at every boundary of a turn with one external call (before execute, after execute before ledger append, after append) and asserts the recovery outcome and that the stub server saw exactly one request; then replays a 40-turn Instance and asserts an identical ledger except host fields."
+reqs = ["6.6", "8.3", "8.4", "8.5"]
+owner = "kernel"
+cases = ["CWR-010"]
+
+[task.2.5]
+title = "Instance upgrade, migrations, recompile notice and proposal outbox"
+status = "pending"
+wave = 2
+requires = ["2.4", "1.2"]
+touches = ["crates/cwr-kernel/src/upgrade.rs", "crates/cwr-kernel/src/migrate.rs", "crates/cwr-kernel/src/notice.rs", "crates/cwr-kernel/src/outbox.rs", "crates/cwr-cli/src/upgrade.rs", "sdk/python/cwr/_world.py", "tests/cwr/cases/2_5.py"]
+verify_cmd = "python3 tests/cwr/cases/2_5.py"
+do_1 = "Implement cwr instance upgrade: verify the target Build hash, refuse a different world name or a non-increasing version unless --allow-experimental, snapshot, apply declared migrations in order as pure state functions, then commit; any failure rolls back to the prior snapshot and Build with nothing partial visible."
+do_2 = "Implement the recompile notice derived from CHANGELOG.kvx: old and new versions, human summary and every contract change touching a primitive present in the Instance ledger, stored in the Instance and rendered on the next turn."
+do_3 = "Implement world.propose(text) as a ledger record of kind proposal plus an append to the outbox file outside the Build and state; confirm nothing in the kernel reads the outbox."
+do_4 = "Prove that nothing but the cwr build command can create or modify a Build: the kernel, harness and SDK have no write path into build/ or xbuild/, and the driver asserts that a running Instance observes no rule change when the source is edited without recompilation."
+do_5 = "Create the task driver that upgrades Instances across the six fixture pairs, asserts migration results and notice content, injects a failing migration and asserts rollback, asserts the outbox changes no contract or state, and asserts that a lower-version Build is refused."
+reqs = ["3.6", "5.1", "5.2", "5.3", "5.4", "5.5"]
+owner = "kernel"
+cases = ["CWR-011"]
+
+[task.3.1]
+title = "Context assembly and turn protocol"
+status = "pending"
+wave = 3
+requires = ["2.5"]
+touches = ["crates/cwr-kernel/src/surface/context.rs", "crates/cwr-kernel/src/surface/tail.rs", "crates/cwr-kernel/src/surface/protocol.rs", "crates/cwr-kernel/src/surface/envelope_render.rs", "crates/cwr-cli/src/context.rs", "tests/cwr/cases/3_1.py"]
+verify_cmd = "python3 tests/cwr/cases/3_1.py"
+do_1 = "Implement context assembly in the fixed order manual, recompile notice when present, ledger tail of K records, last result envelope; the manual bytes come unchanged from the Build and the assembler never edits them."
+do_2 = "Implement the ledger tail renderer with one line per record carrying turn, primitive, status, code and world_time, with K read from the Instance header; implement world.history(n) over the same records."
+do_3 = "Implement the turn protocol: extract exactly one fenced python block; zero or more than one block is INVALID with no execution and no world_time advance; the optional top-level return becomes the envelope's returned value."
+do_4 = "Create the task driver that renders 50 turns and asserts the manual prefix is byte-identical across turns and Instances, the ten manual sections and every primitive entry are present, a two-block turn is refused without a ledger execution record, and the only context sources are the four components plus world.history."
+reqs = ["2.4", "2.5", "9.1", "9.2", "9.3", "9.4", "9.5"]
+owner = "surface"
+cases = ["CWR-012"]
+
+[task.3.2]
+title = "Experimental ablation builds and kernel gate"
+status = "pending"
+wave = 3
+requires = ["3.1"]
+touches = ["crates/cwr-compiler/src/experimental/mod.rs", "crates/cwr-compiler/src/experimental/drift.rs", "crates/cwr-compiler/src/experimental/notice.rs", "crates/cwr-compiler/src/experimental/one_primitive.rs", "crates/cwr-kernel/src/drift_injector.rs", "crates/cwr-cli/src/build.rs", "tests/cwr/cases/3_2.py"]
+verify_cmd = "python3 tests/cwr/cases/3_2.py"
+do_1 = "Implement the four flags producing Builds under xbuild/ with experimental true and the flag name in the manifest; the kernel refuses to load them without --allow-experimental and stamps the flag into every ledger record."
+do_2 = "Implement the drift injector from the drift grammar in compiler.md: at the scheduled turn the named precondition or failure is swapped in the running contract table while the manual stays unchanged, and a ledger record of kind drift logs each injection."
+do_3 = "Implement silent-change and version-only notice rendering and the one-primitive limit returning LIMIT with primitive_calls=1 on the second call, with the one-primitive manual stating the limit."
+do_4 = "Create the task driver that builds each experimental Build from the control source, asserts the ContractDiff between control and experimental lists only flag-attributable entries, asserts the kernel gate, asserts the drift injection fires at the scheduled turn with a ledger record while the manual is byte-identical, and asserts the three notice renderings."
+reqs = ["5.3", "10.1", "10.2", "10.3", "10.4", "10.5"]
+owner = "compiler"
+cases = ["CWR-013"]
+
+[task.4.1]
+title = "Reference world modules, stub servers and cassettes"
+status = "pending"
+wave = 4
+requires = ["2.3", "1.3"]
+touches = ["examples/refworld/world.kvx", "examples/refworld/CHANGELOG.kvx", "examples/refworld/contracts/**", "examples/refworld/adapters/**", "examples/refworld/lib/**", "examples/refworld/fixtures/**", "examples/refworld/manual/**", "benchmark/stubs/search_server.py", "benchmark/stubs/publish_server.py", "benchmark/cassettes/**", "tests/cwr/cases/4_1.py"]
+verify_cmd = "python3 tests/cwr/cases/4_1.py"
+do_1 = "Author the refworld World Source with modules fs, kv, jobs, search, publish and world and the rules in reference-world.md, including locks, quotas, job states, rate limits and duplicate keys, with fixtures reaching every declared failure."
+do_2 = "Implement the search and publish stub servers against the adapter contracts with deterministic rate limiting, duplicate-key detection and schedulable unavailability, driven by a seed."
+do_3 = "Record the cassette set for the task suite in record mode and freeze its digest; the harness and drivers use replay mode only."
+do_4 = "Create the task driver that compiles refworld, asserts every declared failure of every primitive and adapter is reached by contract tests or stub schedules, asserts the stub servers emit only declared codes, and asserts the cassette set replays offline with the frozen digest."
+reqs = ["7.5", "11.1", "11.5"]
+owner = "refworld"
+cases = ["CWR-009", "CWR-014"]
+
+[task.4.2]
+title = "Task suite with bins, rule-reuse tasks and success predicates"
+status = "pending"
+wave = 4
+requires = ["4.1", "3.1"]
+touches = ["benchmark/tasks/**", "benchmark/suite.kvx", "benchmark/predicates/common.py", "tests/cwr/cases/4_2.py"]
+verify_cmd = "python3 tests/cwr/cases/4_2.py"
+do_1 = "Author 60 tasks, 20 per bin, each with task.md, initial.kvx, success.py, bin and rules; at least 12 long tasks require reuse of a rule first encountered earlier in the same Instance and name that rule."
+do_2 = "Implement success predicates as pure functions over final state and ledger using benchmark/predicates/common.py helpers; predicates never read model text or kernel internals."
+do_3 = "Write a reference solution script per task and record the minimum primitive count establishing its bin; freeze the suite digest in benchmark/suite.kvx."
+do_4 = "Create the task driver that runs every reference solution in replay mode and asserts success, asserts the bin boundaries from recorded primitive counts, asserts predicates are deterministic across two runs, and asserts no predicate imports the kernel crate or parses text."
+reqs = ["11.2", "11.3"]
+owner = "refworld"
+cases = ["CWR-015"]
+
+[task.4.3]
+title = "Upgrade pairs U1 through U6"
+status = "pending"
+wave = 4
+requires = ["4.1", "2.5"]
+touches = ["examples/refworld-upgrades/U1/**", "examples/refworld-upgrades/U2/**", "examples/refworld-upgrades/U3/**", "examples/refworld-upgrades/U4/**", "examples/refworld-upgrades/U5/**", "examples/refworld-upgrades/U6/**", "benchmark/upgrades.kvx", "tests/cwr/cases/4_3.py"]
+verify_cmd = "python3 tests/cwr/cases/4_3.py"
+do_1 = "Author six source pairs covering precondition tightening, primitive removal, failure code change, limit change, state shape change with migration and documentation-only change, each with a valid CHANGELOG.kvx and the derived version bump."
+do_2 = "Author one post-upgrade task per pair whose success requires acting on the changed rule, with success predicates in the suite format."
+do_3 = "Record for each pair the expected recompile notice content and the expected ContractDiff and freeze them in benchmark/upgrades.kvx."
+do_4 = "Create the task driver that compiles both sides of each pair, asserts the ContractDiff and bump, upgrades a live Instance, asserts the notice matches the frozen expectation, and asserts the post-upgrade reference solution succeeds while the pre-upgrade solution fails with the documented code."
+reqs = ["5.2", "5.3", "11.4"]
+owner = "refworld"
+cases = ["CWR-011", "CWR-016"]
+
+[task.5.1]
+title = "Experiment harness runner and ledger-only metrics"
+status = "pending"
+wave = 5
+requires = ["0.2", "3.2", "4.2", "4.3"]
+touches = ["benchmark/harness/run.py", "benchmark/harness/arms.kvx", "benchmark/harness/metrics.py", "benchmark/harness/model.py", "benchmark/analyse.py", "benchmark/preregistration.kvx", "tests/cwr/cases/5_1.py"]
+verify_cmd = "python3 tests/cwr/cases/5_1.py"
+do_1 = "Implement the runner: for an arm, task and seed it creates an Instance of the arm's Build with --allow-experimental where needed, runs turns through the model adapter with the fixed context layout in replay mode, and stops at success, turn limit or budget exhaustion."
+do_2 = "Implement metrics strictly over ledgers and final state: task success, turns to success, primitive calls, failure rate by code, repeated-failure rate, rule reuse rate and post-upgrade misuse rate, with the definitions in experiments.md and no other inputs."
+do_3 = "Implement benchmark/analyse.py with mean and 95% bootstrap confidence intervals per arm and bin, reading the pre-registered directions from benchmark/preregistration.kvx and refusing to run if metric definitions differ from the registered digest."
+do_4 = "Create the task driver that greps the harness, arms and prompts for any reference to another agent or harness and fails on a match, runs two seeds of one short task in replay mode, asserts the metrics are recomputable from the ledgers alone, and asserts a live-mode run is labelled and excluded from pooling."
+reqs = ["8.5", "12.1", "12.3", "12.4", "12.6"]
+owner = "experiments"
+cases = ["CWR-017"]
+
+[task.5.2]
+title = "H1 stability and H2 direct-action campaigns"
+status = "pending"
+wave = 5
+requires = ["5.1"]
+touches = ["benchmark/campaigns/h1.kvx", "benchmark/campaigns/h2.kvx", "benchmark/results/h1/**", "benchmark/results/h2/**", "research/h1-stability.md", "research/h2-direct-action.md", "tests/cwr/cases/5_2.py"]
+verify_cmd = "python3 tests/cwr/cases/5_2.py"
+do_1 = "Register the H1 arms frozen, drift-1 and drift-3 and the H2 arms script and one-primitive with their Build hashes, the full 60-task suite, 10 seeds and the pre-registered directions before any run."
+do_2 = "Execute H1 and H2 in replay mode, writing one ledger per arm, task and seed under benchmark/results with the attempt record in the registry."
+do_3 = "Run benchmark/analyse.py and write the two research reports with the metric tables, confidence intervals and every deviation from pre-registration stated explicitly."
+do_4 = "Create the task driver that verifies the complete arm matrix exists, every ledger carries the registered arm and seed, the drift arms contain the expected drift records at the scheduled turns, and the reports' numbers equal a fresh recomputation from the ledgers."
+reqs = ["10.2", "10.4", "12.2", "12.5"]
+owner = "experiments"
+cases = ["CWR-018"]
+
+[task.5.3]
+title = "H3 long-context and H4 controlled-change campaigns and analysis"
+status = "pending"
+wave = 5
+requires = ["5.1"]
+touches = ["benchmark/campaigns/h3.kvx", "benchmark/campaigns/h4.kvx", "benchmark/results/h3/**", "benchmark/results/h4/**", "research/h3-long-context.md", "research/h4-controlled-change.md", "tests/cwr/cases/5_3.py"]
+verify_cmd = "python3 tests/cwr/cases/5_3.py"
+do_1 = "Register the H3 arms over bins and ledger tail K in {5, 20, full} and the H4 arms changelog, version-only and silent over the six upgrade pairs, with Build hashes, seeds and pre-registered directions before any run."
+do_2 = "Execute H3 on the full suite and H4 on the upgrade-pair tasks in replay mode, writing ledgers and attempt records."
+do_3 = "Run benchmark/analyse.py, including rule reuse rate per bin and post-upgrade misuse rate per notice arm, and write the two research reports."
+do_4 = "Create the task driver that verifies the arm matrices, asserts that the three H4 arms differ only in notice rendering by comparing their Build ContractDiffs, asserts K is recorded in every ledger header, and asserts report numbers equal a fresh recomputation."
+reqs = ["5.3", "10.3", "12.2", "12.5"]
+owner = "experiments"
+cases = ["CWR-018"]
+
+[task.6.1]
+title = "Documentation and reproducible release artifacts"
+status = "pending"
+wave = 6
+requires = ["5.2", "5.3"]
+touches = ["docs/cwr/world-source.md", "docs/cwr/kernel.md", "docs/cwr/experiments.md", "README.md", "CHANGELOG.md", "RELEASE.md", "crates/cwr-cli/Cargo.toml", "sdk/python/pyproject.toml", "benchmark/release.kvx", "tests/cwr/cases/6_1.py"]
+verify_cmd = "python3 tests/cwr/cases/6_1.py"
+do_1 = "Document the implemented World Source grammar, compiler, kernel, model surface and harness with links to source and evidence, marking proposed or unimplemented behaviour explicitly."
+do_2 = "Pin the release: compiler, kernel and SDK revisions, refworld control and experimental Build hashes, cassette set digest and task suite digest in benchmark/release.kvx; a missing input produces a named diagnostic."
+do_3 = "Package the cwr CLI and Python SDK with pinned dependencies and checksums, and exercise cwr build, instance create, turn, upgrade and replay from the packaged artifacts."
+do_4 = "Create the task driver that checks every documented command runs against the packaged artifacts, every evidence link resolves, the release file is complete and no document claims a result without an attempt record."
+reqs = ["14.2", "14.3"]
+owner = "release"
+cases = ["CWR-020"]
+
+[task.6.2]
+title = "Evidence closure and owner acceptance"
+status = "pending"
+wave = 6
+requires = ["6.1"]
+touches = ["tests/cwr/closure.py", "tests/cwr/cases/6_2.py", "spec/cwr/qualification.kvx", "spec/cwr/spec.kvx"]
+verify_cmd = "python3 tests/cwr/cases/6_2.py"
+do_1 = "Assemble closure from the registry: every case CWR-001 through CWR-020 has an executed attempt with an independent checker result, every clause maps to an executed case and the four hypothesis reports carry their pre-registration."
+do_2 = "Refuse closure on any missing, tampered, stale-Build or zero-assertion evidence and list the blocking items."
+do_3 = "Record owner acceptance of the running journey: build refworld, create an Instance, run a long task, upgrade across one pair and replay, with the acceptance record referencing exact Build hashes."
+do_4 = "Create the closure driver and update task and case statuses only from registry outcomes; the authoring validator's PASS is never an input to closure."
+reqs = ["13.1", "13.4", "14.1", "14.4"]
+owner = "release"
+cases = ["CWR-020"]
+
+[case.CWR-001]
+title = "Contract grammar and closed failure envelope"
+status = "UNRUN"
+tier = "component"
+reqs = ["2.3", "3.1", "3.2", "3.3", "3.4", "3.6"]
+tasks = ["0.3"]
+oracle = "Malformed source is rejected with located errors; valid source round-trips through the typed model; no code outside the envelope can be constructed or parsed."
+
+[case.CWR-002]
+title = "Compiler closure and visibility lints"
+status = "UNRUN"
+tier = "component"
+reqs = ["2.1", "2.2", "3.1", "3.5", "4.1"]
+tasks = ["1.1"]
+oracle = "Each seeded defect stops the pipeline at the expected stage with the expected lint code; a clean source passes every stage up to lint."
+
+[case.CWR-003]
+title = "Contract tests and rule determinism"
+status = "UNRUN"
+tier = "component"
+reqs = ["1.6", "4.2"]
+tasks = ["1.2"]
+oracle = "Every declared precondition failure and effect is exercised in an ephemeral Instance; an undeclared code or unmet effect fails the build naming the primitive."
+
+[case.CWR-004]
+title = "ContractDiff, changelog gate and version derivation"
+status = "UNRUN"
+tier = "component"
+reqs = ["3.6", "4.3", "4.4", "5.5"]
+tasks = ["1.2"]
+oracle = "Independent recomputation of the diff from both contract sets matches; uncovered diff entries and under-bumped versions are refused; state-shape changes require a migration."
+
+[case.CWR-005]
+title = "Immutable, deterministic Build artifacts and generated manual"
+status = "UNRUN"
+tier = "component"
+reqs = ["1.4", "2.4", "2.5", "4.5", "4.6", "9.2"]
+tasks = ["1.3"]
+oracle = "Two compilations on different hosts hash identically; a one-byte change is detected; every primitive's manual entry equals its compiled contract."
+
+[case.CWR-006]
+title = "Ledger, snapshot, world clock and RNG"
+status = "UNRUN"
+tier = "component"
+reqs = ["1.5", "6.6", "8.1", "8.2", "9.4"]
+tasks = ["2.1"]
+oracle = "Restored snapshots are observably identical; ledger records are durable before results return; no primitive reveals host time; equal seeds and prefixes draw equal randoms."
+
+[case.CWR-007]
+title = "Sandbox closure and resource limits"
+status = "UNRUN"
+tier = "component"
+reqs = ["1.1", "1.2", "6.1", "6.5"]
+tasks = ["2.2"]
+oracle = "Every unlisted capability is refused from inside the script; exceeding cpu, wall, memory, primitive or adapter budgets returns LIMIT naming the limit; rules are unchanged across the Instance's life."
+
+[case.CWR-008]
+title = "Atomic primitives, ordered preconditions and partial scripts"
+status = "UNRUN"
+tier = "integration"
+reqs = ["1.3", "1.6", "2.2", "2.6", "6.2", "6.3", "6.4"]
+tasks = ["2.2"]
+oracle = "State after a failed precondition equals state before; the first failing precondition in declared order is reported; partial scripts apply exactly the successful mutations; repeated calls under equal visible conditions yield equal outcomes."
+
+[case.CWR-009]
+title = "Adapter gateway normalisation, idempotency and cassette replay"
+status = "UNRUN"
+tier = "integration"
+reqs = ["1.3", "7.1", "7.2", "7.3", "7.4", "7.5", "7.6"]
+tasks = ["2.3", "4.1"]
+oracle = "Stub servers observe exactly the requests the ledger records with no retries; every response maps to a declared code; replay produces identical outcomes with no socket opened."
+
+[case.CWR-010]
+title = "Crash recovery and ledger replay"
+status = "UNRUN"
+tier = "integration"
+reqs = ["6.6", "8.3", "8.4", "8.5"]
+tasks = ["2.4"]
+oracle = "After a crash at any turn boundary the stub server saw one request and the ledger records the interrupted turn as UNAVAILABLE; a full replay reproduces the ledger except host fields."
+
+[case.CWR-011]
+title = "Controlled upgrade, migrations, recompile notice and outbox"
+status = "UNRUN"
+tier = "integration"
+reqs = ["3.6", "5.1", "5.2", "5.3", "5.4", "5.5"]
+tasks = ["2.5", "4.3"]
+oracle = "Only cwr build creates Builds; upgrades are atomic with rollback on failure; notices match the frozen expectation; proposals change nothing observable inside the world."
+
+[case.CWR-012]
+title = "Context composition and turn protocol"
+status = "UNRUN"
+tier = "integration"
+reqs = ["2.4", "2.5", "9.1", "9.2", "9.3", "9.4", "9.5"]
+tasks = ["3.1"]
+oracle = "The manual prefix is byte-identical across turns and Instances; the context contains only the four components; invalid turns execute nothing."
+
+[case.CWR-013]
+title = "Experimental ablation builds and kernel gate"
+status = "UNRUN"
+tier = "integration"
+reqs = ["5.3", "10.1", "10.2", "10.3", "10.4", "10.5"]
+tasks = ["3.2"]
+oracle = "Each experimental Build's ContractDiff against control lists only flag-attributable entries; drift fires at the scheduled turn with a ledger record and an unchanged manual; the kernel gate holds."
+
+[case.CWR-014]
+title = "Reference world rules, stub servers and cassettes"
+status = "UNRUN"
+tier = "integration"
+reqs = ["7.5", "11.1", "11.5"]
+tasks = ["4.1"]
+oracle = "Every declared failure of every refworld primitive and adapter is reachable; stub servers emit only declared codes; the cassette digest is frozen and replays offline."
+
+[case.CWR-015]
+title = "Task suite bins and success predicates"
+status = "UNRUN"
+tier = "integration"
+reqs = ["11.2", "11.3"]
+tasks = ["4.2"]
+oracle = "Reference solutions succeed under their predicates; bin membership follows recorded primitive counts; predicates are deterministic and read only state and ledger."
+
+[case.CWR-016]
+title = "Upgrade pairs U1 through U6"
+status = "UNRUN"
+tier = "integration"
+reqs = ["5.2", "5.3", "11.4"]
+tasks = ["4.3"]
+oracle = "Each pair compiles with the derived bump and frozen diff; the post-upgrade solution succeeds and the pre-upgrade solution fails with the documented code."
+
+[case.CWR-017]
+title = "Harness isolation and ledger-only metrics"
+status = "UNRUN"
+tier = "integration"
+reqs = ["8.5", "12.1", "12.3", "12.4", "12.6"]
+tasks = ["5.1"]
+oracle = "No harness file references another agent or harness; metrics recomputed from ledgers alone match the harness output; live runs are excluded from pooled replay results."
+
+[case.CWR-018]
+title = "Hypothesis campaigns H1 through H4"
+status = "UNRUN"
+tier = "campaign"
+reqs = ["5.3", "10.2", "10.3", "10.4", "12.2", "12.5"]
+tasks = ["5.2", "5.3"]
+oracle = "Complete arm matrices with 10 seeds per task exist; report numbers equal an independent recomputation from ledgers; pre-registration digests match the executed metric definitions."
+
+[case.CWR-019]
+title = "Evidence registry and false-success traps"
+status = "UNRUN"
+tier = "component"
+reqs = ["13.2", "13.3", "13.4"]
+tasks = ["0.2"]
+oracle = "Zero-assertion, tampered, stale-Build and mismatched-seed evidence fails nonzero; the checker is a separate program from the kernel; component PASS leaves the parent case UNRUN."
+
+[case.CWR-020]
+title = "Specification, documentation and release closure"
+status = "UNRUN"
+tier = "release"
+reqs = ["13.1", "13.5", "14.1", "14.2", "14.3", "14.4"]
+tasks = ["0.1", "6.1", "6.2"]
+oracle = "Authoring validation passes without executing product code; documented commands run against packaged artifacts; closure lists every case with an executed outcome and owner acceptance, or names what blocks it."

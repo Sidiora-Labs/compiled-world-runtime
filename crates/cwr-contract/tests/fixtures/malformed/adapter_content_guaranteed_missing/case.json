@@ -1,0 +1,15 @@
+{
+  "class": "adapter_content_guaranteed_missing",
+  "clause": "3.3",
+  "description": "An adapter omits content_guaranteed.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 10,
+      "col": 1,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

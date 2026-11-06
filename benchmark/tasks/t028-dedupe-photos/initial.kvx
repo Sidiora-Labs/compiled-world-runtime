@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t028-dedupe-photos. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t028-dedupe-photos"
+
+[fs]
+files = {"/photos/p1.jpg": "image bytes A\n", "/photos/p2.jpg": "image bytes B\n", "/photos/p3.jpg": "image bytes A\n", "/photos/p4.jpg": "image bytes C\n", "/photos/p5.jpg": "image bytes B\n", "/photos/p6.jpg": "image bytes D\n", "/photos/p7.jpg": "image bytes A\n", "/photos/p8.jpg": "image bytes E\n"}
+locks = ["/photos/p5.jpg"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

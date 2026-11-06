@@ -1,0 +1,15 @@
+{
+  "class": "adapter_zero_timeout",
+  "clause": "3.3",
+  "description": "An adapter timeout_ms that is not positive.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 16,
+      "col": 14,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

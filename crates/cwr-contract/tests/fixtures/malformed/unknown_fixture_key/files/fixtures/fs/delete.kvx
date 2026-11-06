@@ -1,0 +1,25 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixture for fs.delete.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "fs"
+primitive = "fs.delete"
+
+[case.pre_1_not_found]
+world_time = 0
+state = {"fs": {"files": {}, "locks": []}}
+params = {"path": "/missing"}
+expect = "NOT_FOUND"
+precondition = 1
+
+[case.ok]
+world_time = 3
+state = {"fs": {"files": {"/a": "x"}, "locks": []}}
+params = {"path": "/a"}
+expect = "ok"
+precondition = null
+returned = null
+note = "x"

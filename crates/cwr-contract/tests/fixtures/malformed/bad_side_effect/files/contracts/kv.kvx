@@ -1,0 +1,32 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# kv contract fixture; parameter order is significant (ns before key).
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "kv"
+
+[primitive.kv.has]
+side_effect = "read_only"
+params = {"ns": "str", "key": "str"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when key is stored in namespace ns."
+
+[primitive.kv.used]
+side_effect = "pure"
+params = {"ns": "str"}
+returns = "int"
+preconditions = []
+effects = []
+doc = "Bytes stored in namespace ns."
+
+[primitive.kv.set]
+side_effect = "mutating"
+params = {"ns": "str", "key": "str", "value": "bytes"}
+returns = "None"
+preconditions = [["len(value) <= 1024", "INVALID"], ["kv.used(ns) + len(value) <= 65536", "LIMIT"]]
+effects = ["kv.has(ns, key)"]
+doc = "Store value under key in namespace ns."

@@ -1,0 +1,15 @@
+{
+  "class": "world_missing_modules",
+  "clause": "3.4",
+  "description": "world.kvx omits world.modules.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 10,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

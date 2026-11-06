@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t023-batch-archive. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t023-batch-archive"
+
+[fs]
+files = {"/archive/b.txt": "archive b, stale\n", "/archive/e.txt": "archive e, stale\n", "/inbox/a.txt": "inbox a, current\n", "/inbox/b.txt": "inbox b, current\n", "/inbox/c.txt": "inbox c, current\n", "/inbox/d.txt": "inbox d, current\n", "/inbox/e.txt": "inbox e, current\n", "/inbox/f.txt": "inbox f, current\n"}
+locks = ["/inbox/d.txt"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

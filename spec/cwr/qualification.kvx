@@ -1,0 +1,13 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Recorded authoring runs for the CWR specification pack. No compiler, kernel, model or driver has run.
+# Every entry states product_evidence = false while all cases are UNRUN.
+
+[progress.authoring_validation]
+revision = "working-tree spec/cwr 2026-11-06"
+command = "python3 spec/cwr/tools/validate_spec.py --render"
+exit_code = 0
+log = "spec/cwr/authoring-validation.json"
+observed = "Strict KVX parse of spec.kvx; 14 requirements, 76 acceptance clauses, 21 pending tasks in waves 0 to 6, 20 UNRUN cases; every clause covered by a task and a case; example World Source consistent across files; derived views rendered."
+assumption = "Authoring consistency only. No Build hash exists, no Instance has run and no hypothesis has a result. The exit code records the validator, not the product."
+product_evidence = false

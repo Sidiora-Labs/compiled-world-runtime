@@ -1,0 +1,134 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# refworld changelog. One release section per version, newest first; each change names a kind from
+# spec/cwr/world-source.md section 11, a target, the rule before and after, and a migration when the
+# state shape changes. world.kvx version must equal the newest release.
+# 0.2.0 carries two major-kind changes and is accepted at 0.2.0 only by the pre-1.0 rule (P15):
+# while the major version is 0, a minor increment satisfies a derived major bump.
+
+[meta]
+format = "cwr.changelog"
+schema_version = 1
+
+[release.0.3.0]
+version = "0.3.0"
+date = "2026-11-06"
+summary = "kv is namespaced: every kv primitive takes ns first and the 64 KiB quota applies per namespace; existing keys moved to namespace default."
+changes = ["kv_namespaces", "kv_get_ns", "kv_set_ns", "kv_set_ns_effects", "kv_del_ns", "kv_del_ns_effects"]
+
+[change.kv_namespaces]
+kind = "state_shape"
+target = "kv"
+before = "kv state is one flat map of key to value and kv primitives take no namespace."
+after = "kv state is a map of namespace to map of key to value and every kv primitive takes ns first; existing keys moved to namespace default."
+migration = "migrations/0_2_0_0_3_0_kv_namespaces.py"
+
+[change.kv_get_ns]
+kind = "precondition_changed"
+target = "kv.get"
+before = "kv.has(key), otherwise NOT_FOUND."
+after = "kv.has(ns, key), otherwise NOT_FOUND."
+migration = ""
+
+[change.kv_set_ns]
+kind = "precondition_changed"
+target = "kv.set"
+before = "kv.used() + len(value) <= 65536 over the whole store, otherwise LIMIT (precondition 2)."
+after = "kv.used(ns) + len(value) <= 65536 within namespace ns, otherwise LIMIT (precondition 2)."
+migration = ""
+
+[change.kv_set_ns_effects]
+kind = "effect_changed"
+target = "kv.set"
+before = "Ensures kv.has(key) and kv.get(key) == value."
+after = "Ensures kv.has(ns, key) and kv.get(ns, key) == value."
+migration = ""
+
+[change.kv_del_ns]
+kind = "precondition_changed"
+target = "kv.del"
+before = "kv.has(key), otherwise NOT_FOUND."
+after = "kv.has(ns, key), otherwise NOT_FOUND."
+migration = ""
+
+[change.kv_del_ns_effects]
+kind = "effect_changed"
+target = "kv.del"
+before = "Ensures not kv.has(key)."
+after = "Ensures not kv.has(ns, key)."
+migration = ""
+
+[release.0.2.0]
+version = "0.2.0"
+date = "2026-11-06"
+summary = "fs.write now refuses content above 1 MiB with LIMIT; kv has a 64 KiB quota over the whole store, readable through kv.used."
+changes = ["fs_write_size_limit", "kv_used_added", "kv_set_quota"]
+
+[change.fs_write_size_limit]
+kind = "precondition_added"
+target = "fs.write"
+before = "fs.write accepted any content length."
+after = "len(content) <= 1048576, otherwise LIMIT."
+migration = ""
+
+[change.kv_used_added]
+kind = "primitive_added"
+target = "kv.used"
+before = ""
+after = "kv.used() returns the total byte length of every value stored in kv."
+migration = ""
+
+[change.kv_set_quota]
+kind = "precondition_added"
+target = "kv.set"
+before = "kv.set refused only values longer than 1024 bytes, with INVALID."
+after = "kv.set additionally requires kv.used() + len(value) <= 65536, otherwise LIMIT."
+migration = ""
+
+[release.0.1.0]
+version = "0.1.0"
+date = "2026-11-01"
+summary = "First refworld release: fs, kv, jobs, search, publish and world modules."
+changes = ["initial_fs", "initial_kv", "initial_jobs", "initial_search", "initial_publish", "initial_world"]
+
+[change.initial_fs]
+kind = "primitive_added"
+target = "fs"
+before = ""
+after = "fs.exists, fs.locked, fs.size, fs.list, fs.read, fs.write, fs.delete, fs.lock, fs.unlock and fs.move exist; delete and move refuse locked paths, move refuses an existing destination."
+migration = ""
+
+[change.initial_kv]
+kind = "primitive_added"
+target = "kv"
+before = ""
+after = "kv.has, kv.get, kv.keys, kv.set and kv.del exist over one flat key space; kv.set refuses values longer than 1024 bytes with INVALID."
+migration = ""
+
+[change.initial_jobs]
+kind = "primitive_added"
+target = "jobs"
+before = ""
+after = "jobs.submit, jobs.known, jobs.status, jobs.active, jobs.result and jobs.cancel exist; jobs move from queued to running to done as a pure function of world time, at most 8 active at once."
+migration = ""
+
+[change.initial_search]
+kind = "primitive_added"
+target = "search.query"
+before = ""
+after = "search.query is an external adapter returning at most limit SearchHit records; content is not guaranteed."
+migration = ""
+
+[change.initial_publish]
+kind = "primitive_added"
+target = "publish"
+before = ""
+after = "publish.post, publish.status and publish.delete are external adapters; publish.post is idempotent by key and rate limited by the service; content is not guaranteed."
+migration = ""
+
+[change.initial_world]
+kind = "primitive_added"
+target = "world"
+before = ""
+after = "world.now, world.version, world.seed, world.limits, world.random, world.history and world.propose exist; world.propose has no effect inside the world."
+migration = ""

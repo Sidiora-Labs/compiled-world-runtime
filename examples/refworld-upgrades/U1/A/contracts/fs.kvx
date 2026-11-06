@@ -1,0 +1,92 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Rule contracts for the fs module: path-keyed byte files and the per-Instance lock set.
+# Preconditions are [expression, failure code] pairs evaluated in declared order; the first false
+# expression names the failure and its one-based index. Expressions reference parameters and
+# read_only primitives only. Effects are postconditions asserted after an ok outcome.
+# Catalogue: spec/cwr/reference-world.md section 2.1.
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "fs"
+
+[primitive.fs.exists]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when a file exists at path. Never fails."
+
+[primitive.fs.locked]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when path is currently locked. Never fails."
+
+[primitive.fs.size]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "int"
+preconditions = [["fs.exists(path)", "NOT_FOUND"]]
+effects = []
+doc = "Byte length of the file at path."
+
+[primitive.fs.list]
+side_effect = "read_only"
+params = {"prefix": "str"}
+returns = "list[Path]"
+preconditions = []
+effects = []
+doc = "Every existing path that starts with prefix, sorted bytewise. Directories are not objects; a prefix is a string convention. Never fails."
+
+[primitive.fs.read]
+side_effect = "read_only"
+params = {"path": "Path"}
+returns = "bytes"
+preconditions = [["fs.exists(path)", "NOT_FOUND"]]
+effects = []
+doc = "Contents of the file at path."
+
+[primitive.fs.write]
+side_effect = "mutating"
+params = {"path": "Path", "content": "bytes"}
+returns = "None"
+preconditions = [["not fs.locked(path)", "LOCKED"], ["len(content) <= 1048576", "LIMIT"]]
+effects = ["fs.exists(path)", "fs.read(path) == content"]
+doc = "Create or replace the file at path. Refused while the path is locked or the content exceeds 1 MiB."
+
+[primitive.fs.delete]
+side_effect = "mutating"
+params = {"path": "Path"}
+returns = "None"
+preconditions = [["fs.exists(path)", "NOT_FOUND"]]
+effects = ["not fs.exists(path)"]
+doc = "Remove the file at path, releasing its lock if it holds one. Refused when the path does not exist."
+
+[primitive.fs.lock]
+side_effect = "mutating"
+params = {"path": "Path"}
+returns = "None"
+preconditions = [["fs.exists(path)", "NOT_FOUND"], ["not fs.locked(path)", "CONFLICT"]]
+effects = ["fs.locked(path)"]
+doc = "Lock the existing file at path; while locked it cannot be written or moved; deleting it releases the lock. Refused when already locked."
+
+[primitive.fs.unlock]
+side_effect = "mutating"
+params = {"path": "Path"}
+returns = "None"
+preconditions = [["fs.locked(path)", "NOT_FOUND"]]
+effects = ["not fs.locked(path)"]
+doc = "Release the lock on path. Refused with NOT_FOUND when path holds no lock."
+
+[primitive.fs.move]
+side_effect = "mutating"
+params = {"src": "Path", "dst": "Path"}
+returns = "None"
+preconditions = [["fs.exists(src)", "NOT_FOUND"], ["not fs.locked(src)", "LOCKED"], ["not fs.exists(dst)", "CONFLICT"]]
+effects = ["not fs.exists(src)", "fs.exists(dst)"]
+doc = "Rename the file at src to dst. Refused when src does not exist or is locked, or when dst already exists."

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cwr/evidence.schema.json",
+  "title": "CWR qualification attempt record",
+  "description": "One immutable attempt record written by tests/cwr/qualify.py to tests/cwr/evidence/<case>/<timestamp>-<n>.json and validated by tests/cwr/check_evidence.py (spec/cwr/verification.md section 2). Every property is required; a value that does not apply is null or an empty list, never omitted. Paths are relative to the repository root. observed holds the driver's ASSERT lines; recomputed holds the independent oracle's outcome for every registered assertion of the scope (UNVERIFIED when the case has no oracle), and only recomputed outcomes can make a PASS. attempt_sha256 digests every file of the attempt directory. A record is evidence only while it is an entry of the hash-chained index tests/cwr/evidence/index.jsonl whose head is pinned in tests/cwr/registry.kvx.",
+  "version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "record_id", "case", "scope", "task", "tier", "assertion_ids", "clauses",
+    "spec_revision", "registry_version", "registry_sha256",
+    "build_hash", "builds", "experimental_flags", "world",
+    "instance_id", "seed", "tail_size", "arm", "instances",
+    "cassette_digest", "gateway_mode", "model", "preregistration_digest",
+    "compiler_revision", "kernel_revision", "sdk_revision", "host",
+    "started_at", "ended_at", "duration_ms", "timestamp",
+    "command", "exit_code", "invocations", "log", "log_sha256",
+    "ledger_digest", "ledgers", "final_states", "attempt_sha256",
+    "observed", "recomputed", "coverage_gaps", "unexpected_assertions", "diagnostics", "blocked_reason",
+    "outcome", "checker"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "record_id": {"type": "string", "pattern": "^CWR-[0-9]{3}/[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*$"},
+    "case": {"type": "string", "pattern": "^CWR-[0-9]{3}$"},
+    "scope": {"enum": ["task", "case"]},
+    "task": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+$"},
+    "tier": {"enum": ["component", "integration", "campaign", "release"]},
+    "assertion_ids": {"type": "array", "items": {"$ref": "#/$defs/assertion_id"}},
+    "clauses": {"type": "array", "items": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"}},
+    "spec_revision": {"$ref": "#/$defs/sha256"},
+    "registry_version": {"type": "integer", "minimum": 1},
+    "registry_sha256": {"$ref": "#/$defs/sha256"},
+    "build_hash": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "builds": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
+    "experimental_flags": {"type": "array", "items": {"type": "string", "pattern": "^--x-[a-z-]+$"}},
+    "world": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["name", "version"],
+         "properties": {"name": {"type": "string", "minLength": 1}, "version": {"type": "string", "minLength": 1}}}
+      ]
+    },
+    "instance_id": {"type": ["string", "null"], "minLength": 1},
+    "seed": {"type": ["integer", "null"], "minimum": 0},
+    "tail_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"const": "full"}, {"type": "null"}]},
+    "arm": {"type": ["string", "null"], "minLength": 1},
+    "instances": {"type": "array", "items": {"$ref": "#/$defs/instance"}},
+    "cassette_digest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "gateway_mode": {"enum": ["replay", "record", "live", null]},
+    "model": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": false, "required": ["identity", "sampling"],
+         "properties": {"identity": {"type": "string", "minLength": 1}, "sampling": {"type": "object"}}}
+      ]
+    },
+    "preregistration_digest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "compiler_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "kernel_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "sdk_revision": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "host": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hostname", "os", "machine", "python", "sandbox"],
+      "properties": {
+        "hostname": {"type": "string"}, "os": {"type": "string"}, "machine": {"type": "string"},
+        "python": {"type": "string"}, "sandbox": {"type": ["string", "null"]}
+      }
+    },
+    "started_at": {"$ref": "#/$defs/utc"},
+    "ended_at": {"$ref": "#/$defs/utc"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "timestamp": {"$ref": "#/$defs/utc"},
+    "command": {"type": "string", "minLength": 1},
+    "exit_code": {"type": "integer"},
+    "invocations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/invocation"}},
+    "log": {"$ref": "#/$defs/path"},
+    "log_sha256": {"$ref": "#/$defs/sha256"},
+    "ledger_digest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "ledgers": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "final_states": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "attempt_sha256": {"$ref": "#/$defs/sha256"},
+    "observed": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+    "recomputed": {"type": "array", "items": {"$ref": "#/$defs/recomputation"}},
+    "coverage_gaps": {"type": "array", "items": {"$ref": "#/$defs/assertion_id"}},
+    "unexpected_assertions": {"type": "array", "items": {"type": "string"}},
+    "diagnostics": {"type": "array", "items": {"type": "string"}},
+    "blocked_reason": {"type": ["string", "null"], "minLength": 1},
+    "outcome": {"enum": ["PASS", "FAIL", "BLOCKED"]},
+    "checker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["program", "revision", "accepted", "errors"],
+      "properties": {
+        "program": {"const": "tests/cwr/check_evidence.py"},
+        "revision": {"$ref": "#/$defs/sha256"},
+        "accepted": {"type": "boolean"},
+        "errors": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"},
+    "path": {"type": "string", "pattern": "^tests/cwr/evidence/CWR-[0-9]{3}/[^\\s]+$"},
+    "assertion_id": {"type": "string", "pattern": "^CWR-[0-9]{3}\\.a[1-9][0-9]*$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": {"path": {"$ref": "#/$defs/path"}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false, "required": ["id", "outcome", "diagnostic"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "outcome": {"enum": ["PASS", "FAIL"]},
+        "diagnostic": {"type": "string"}
+      }
+    },
+    "recomputation": {
+      "type": "object", "additionalProperties": false, "required": ["id", "outcome", "diagnostic"],
+      "properties": {
+        "id": {"$ref": "#/$defs/assertion_id"},
+        "outcome": {"enum": ["PASS", "FAIL", "UNVERIFIED"]},
+        "diagnostic": {"type": "string"}
+      }
+    },
+    "instance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "seed", "tail_size", "arm", "hypothesis", "task", "build", "initial_state_digest", "ledger", "final_state"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "seed": {"type": "integer", "minimum": 0},
+        "tail_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"const": "full"}]},
+        "arm": {"type": ["string", "null"]},
+        "hypothesis": {"type": ["string", "null"], "pattern": "^H[1-4]$"},
+        "task": {"type": ["string", "null"]},
+        "build": {"$ref": "#/$defs/sha256"},
+        "initial_state_digest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "ledger": {"$ref": "#/$defs/artifact"},
+        "final_state": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task", "command", "exit_code", "timed_out", "duration_ms", "stdout_log", "stdout_sha256", "stderr_log", "stderr_sha256"],
+      "properties": {
+        "task": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "exit_code": {"type": ["integer", "null"]},
+        "timed_out": {"type": "boolean"},
+        "duration_ms": {"type": "integer", "minimum": 0},
+        "stdout_log": {"$ref": "#/$defs/path"},
+        "stdout_sha256": {"$ref": "#/$defs/sha256"},
+        "stderr_log": {"$ref": "#/$defs/path"},
+        "stderr_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

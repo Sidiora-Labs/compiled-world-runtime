@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t046-burst-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t046-burst-twice"
+
+[fs]
+files = {"/early/e1.txt": "Early 1\nearly body 1\n", "/early/e2.txt": "Early 2\nearly body 2\n", "/early/e3.txt": "Early 3\nearly body 3\n", "/early/e4.txt": "Early 4\nearly body 4\n", "/late/l1.txt": "Late 1\nlate body 1\n", "/late/l2.txt": "Late 2\nlate body 2\n", "/late/l3.txt": "Late 3\nlate body 3\n", "/late/l4.txt": "Late 4\nlate body 4\n", "/pages/p01.txt": "page 1\n", "/pages/p02.txt": "page 2\n", "/pages/p03.txt": "page 3\n", "/pages/p04.txt": "page 4\n", "/pages/p05.txt": "page 5\n", "/pages/p06.txt": "page 6\n", "/pages/p07.txt": "page 7\n", "/pages/p08.txt": "page 8\n", "/pages/p09.txt": "page 9\n", "/pages/p10.txt": "page 10\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

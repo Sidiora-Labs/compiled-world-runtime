@@ -1,0 +1,15 @@
+{
+  "class": "migration_file_missing",
+  "clause": "3.6",
+  "description": "A state_shape change naming a migration file that does not exist.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 28,
+      "col": 13,
+      "kind": "migration",
+      "code": "CWR-M001"
+    }
+  ]
+}

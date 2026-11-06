@@ -1,0 +1,15 @@
+{
+  "class": "duplicate_key",
+  "clause": "3.1",
+  "description": "A key repeated inside one section.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 23,
+      "col": 1,
+      "kind": "duplicate_key",
+      "code": null
+    }
+  ]
+}

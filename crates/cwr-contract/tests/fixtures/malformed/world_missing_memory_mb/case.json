@@ -1,0 +1,15 @@
+{
+  "class": "world_missing_memory_mb",
+  "clause": "3.4",
+  "description": "world.kvx omits limits.memory_mb.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 17,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

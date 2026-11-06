@@ -1,0 +1,15 @@
+{
+  "class": "adapter_without_unavailable",
+  "clause": "3.3",
+  "description": "An adapter failure set without UNAVAILABLE.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 17,
+      "col": 12,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

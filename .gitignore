@@ -1,0 +1,42 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+# Credentials and private configuration: never committed.
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+*.crt
+secrets/
+/spec/cwr/private/
+
+# Build outputs.
+/target/
+**/target/
+/out/
+/xbuild/
+/build/
+/.cwr/
+/artifacts/*
+!/artifacts/README.md
+!/artifacts/.gitkeep
+
+# Python.
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+/sdk/python/dist/
+
+# Local tool state.
+/.hyperfide/
+/.codegraph/
+*.kvx.lock
+*.kvx.claim.lock
+tmp/
+*.swp
+.DS_Store

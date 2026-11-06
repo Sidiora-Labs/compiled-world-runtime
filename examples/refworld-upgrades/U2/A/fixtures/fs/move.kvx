@@ -1,0 +1,42 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for fs.move. Each [case.<name>] is one ephemeral-Instance run:
+# world_time and state are the initial conditions (state is keyed by module; modules not named start
+# from their lib INITIAL_STATE), params is the call, expect is "ok" or the envelope code, precondition
+# is the one-based index of the failing precondition or null, returned (optional) is the exact value an
+# internal primitive must return. Value codec: a JSON string in a position typed bytes is its UTF-8
+# encoding; {"$repeat": [s, n]} is the string s repeated n times; nothing else is special.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "fs"
+primitive = "fs.move"
+
+[case.pre_1_not_found]
+world_time = 0
+state = {"fs": {"files": {"/notes/a.md": "alpha", "/notes/b.md": "beta", "/inbox/1.txt": "one"}, "locks": []}}
+params = {"src": "/missing", "dst": "/done/1.txt"}
+expect = "NOT_FOUND"
+precondition = 1
+
+[case.pre_2_locked]
+world_time = 0
+state = {"fs": {"files": {"/inbox/1.txt": "one"}, "locks": ["/inbox/1.txt"]}}
+params = {"src": "/inbox/1.txt", "dst": "/done/1.txt"}
+expect = "LOCKED"
+precondition = 2
+
+[case.pre_3_conflict]
+world_time = 0
+state = {"fs": {"files": {"/inbox/1.txt": "one", "/done/1.txt": "old"}, "locks": []}}
+params = {"src": "/inbox/1.txt", "dst": "/done/1.txt"}
+expect = "CONFLICT"
+precondition = 3
+
+[case.ok]
+world_time = 0
+state = {"fs": {"files": {"/notes/a.md": "alpha", "/notes/b.md": "beta", "/inbox/1.txt": "one"}, "locks": []}}
+params = {"src": "/inbox/1.txt", "dst": "/done/1.txt"}
+expect = "ok"
+precondition = null

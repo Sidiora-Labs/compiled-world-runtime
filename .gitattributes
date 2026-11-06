@@ -1,0 +1,17 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+* text=auto eol=lf
+*.kvx text
+*.md text
+*.rs text
+*.py text
+*.sh text eol=lf
+*.jsonl text -diff
+vendor/** linguist-vendored
+benchmark/cassettes/** linguist-generated -diff
+benchmark/results/** linguist-generated -diff
+tests/cwr/evidence/** linguist-generated -diff
+CODEMAP.md linguist-generated
+spec/cwr/implementation-plan.md linguist-generated
+spec/cwr/traceability.md linguist-generated

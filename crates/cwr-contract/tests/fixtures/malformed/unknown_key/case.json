@@ -1,0 +1,15 @@
+{
+  "class": "unknown_key",
+  "clause": "3.1",
+  "description": "A primitive declares a key the grammar does not define.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 49,
+      "col": 1,
+      "kind": "unknown_key",
+      "code": "CWR-C001"
+    }
+  ]
+}

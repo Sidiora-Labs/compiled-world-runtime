@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t025-kv-migrate. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t025-kv-migrate"
+
+[fs]
+files = {}
+locks = []
+
+[kv]
+namespaces = {"legacy": {"k1": "legacy value 1", "k2": "legacy value 2", "k3": "legacy value 3", "k4": "legacy value 4", "k5": "legacy value 5", "k6": "legacy value 6"}}
+
+[jobs]
+jobs = {}

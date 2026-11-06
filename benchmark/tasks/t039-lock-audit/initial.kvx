@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t039-lock-audit. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t039-lock-audit"
+
+[fs]
+files = {"/vault/v1.dat": "vault 1\n", "/vault/v2.dat": "vault 2\n", "/vault/v3.dat": "vault 3\n", "/vault/v4.dat": "vault 4\n", "/vault/v5.dat": "vault 5\n", "/vault/v6.dat": "vault 6\n", "/vault/v7.dat": "vault 7\n", "/vault/v8.dat": "vault 8\n", "/vault/v9.dat": "vault 9\n"}
+locks = ["/vault/v2.dat", "/vault/v4.dat", "/vault/v5.dat", "/vault/v8.dat"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

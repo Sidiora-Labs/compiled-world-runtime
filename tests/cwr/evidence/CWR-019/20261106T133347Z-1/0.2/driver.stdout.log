@@ -1,0 +1,121 @@
+CHECK 13.3 PASS trap suite written by the real runner: CWR-005 case PASS, CWR-009 component PASS, CWR-005 zero-assertion attempt recorded FAIL
+CHECK 13.2 PASS qualify --case CWR-005 with a passing driver: rc=0 outcome=PASS
+CHECK 13.2 PASS record written at tests/cwr/evidence/CWR-005/20261106T133349Z-1.json, named by its start time (expected tests/cwr/evidence/CWR-005/20261106T133349Z-1.json)
+CHECK 13.2 PASS the record is entry 0 of the hash-chained attempt index with its sha256, and the registry pins the index head and length and records the case outcome
+CHECK 13.2 PASS record carries every evidence field with the observed values (20 groups); wrong=[]
+CHECK 13.2,13.3 PASS checker accepts the genuine record rc=0
+CHECK 13.2 PASS a record missing any of the 49 required fields is rejected; not rejected=[]
+CHECK 13.2 PASS a record with an unregistered field is rejected rc=1
+CHECK 13.2 PASS repeat attempts append 20261106T133353Z-1.json and 20261106T133353Z-2.json as index entries 1 and 2; first record unchanged; occupied name skipped; mode=0o444
+CHECK 13.2 PASS a record name cannot be chosen: qualify --timestamp is refused rc=2
+CHECK 13.2 PASS registry and --status agree on the latest attempt in index order (20261106T133353Z-2.json); the 14 unindexed files are reported, not counted
+CHECK 13.2 PASS a driver reporting a missing resource is recorded BLOCKED with the resource rc=3
+CHECK 13.3 PASS forged PASS of a BLOCKED attempt: checker rc=1, names 'claims PASS'=True
+CHECK 13.2 PASS qualify refuses a case whose driver does not exist rc=2, no record written=True
+CHECK 13.3 PASS control: genuine CWR-006 attempt is PASS and accepted rc=0
+CHECK 13.3 PASS driver exiting 0 with no assertions is recorded FAIL, never PASS (rc=1 outcome=FAIL)
+CHECK 13.3 PASS forged PASS with no assertions: checker rc=1, names 'no assertions were observed'=True
+CHECK 13.3 PASS forged PASS with an emptied inventory and no assertions: checker rc=1, names 'REJECT'=True
+CHECK 13.3 PASS attempt on an unregistered Build is recorded FAIL by the checker (rc=1)
+CHECK 13.3 PASS forged PASS on a stale Build: checker rc=1, names 'differs from the registered Build'=True
+CHECK 13.3 PASS genuine PASS rewritten (record and ledger, digests recomputed) to another Build: checker rc=1, names 'differs from the registered Build'=True
+CHECK 13.3 PASS genuine PASS with one ledger record edited: checker rc=1, names 'modified ledger'=True
+CHECK 13.3 PASS genuine PASS with a truncated trailing ledger record: checker rc=1, names 'modified ledger'=True
+CHECK 13.3 PASS genuine PASS with a ledger record removed and digests recomputed (seq recomputed from the ledger): checker rc=1, names 'gap or duplicate'=True
+CHECK 13.3 PASS genuine PASS with the final state edited: checker rc=1, names 'modified final state'=True
+CHECK 13.3 PASS ledger appended to after the attempt was recorded: checker rc=1, names 'modified ledger'=True
+CHECK 13.3 PASS attempt whose declared seed 7 disagrees with ledger header seed 8 is recorded FAIL (rc=1)
+CHECK 13.3 PASS forged PASS with a mismatched seed: checker rc=1, names 'seed mismatch'=True
+CHECK 13.3 PASS genuine PASS whose record seed is rewritten to 9: checker rc=1, names 'seed mismatch'=True
+CHECK 13.3 PASS a failed assertion makes the attempt FAIL (rc=1)
+CHECK 13.3 PASS forged PASS with the failed observation flipped in the record: checker rc=1, names 'differ from those recomputed from the driver logs'=True
+CHECK 13.3 PASS forged PASS over a failed assertion: checker rc=1, names 'claims PASS'=True
+CHECK 13.3 PASS fully self-consistent fabricated CWR-001 PASS (every digest recomputed), not indexed: checker rc=1, names 'is not in the append-only attempt index'=True
+CHECK 13.3 PASS the same fabrication appended to the index with the registry head re-pinned: no oracle recomputes it: checker rc=1, names 'is UNVERIFIED'=True
+CHECK 13.3,13.4 PASS the indexed fabrication never qualifies CWR-001: registry UNRUN, --status refuses to derive (rc=1, ["indexed record tests/cwr/evidence/CWR-001/20261106T133358Z-50.json (seq 1) was accepted when written and is refused now: recomputed assertions in the record differ from the checker's own recomputation: record=[('CWR-001.a1', 'PASS'), ('CWR-001.a2', 'PASS'), ('CWR-001.a3', 'PASS'), ('CWR-001.a4', 'PASS')] checker=[('CWR-001.a1', 'UNVERIFIED'), ('CWR-001.a2', 'UNVERIFIED'), ('CWR-001.a3', 'UNVERIFIED'), ('CWR-001.a4', 'UNVERIFIED')]; claims PASS but the evidence does not support it: assertion CWR-001.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS; assertion CWR-001.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS; assertion CWR-001.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS; assertion CWR-001.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_001.py does not exist); a driver observation alone never makes a PASS"])
+CHECK 13.3,13.2 PASS a PASS dated 2099, indexed and pinned: checker rc=1, names 'lies in the future'=True
+CHECK 13.2 PASS --status refuses an index holding a future entry: rc=1 status=None
+CHECK 13.2,13.3 PASS a genuine PASS copied under a backdated name, indexed and pinned: checker rc=1, names 'is not the attempt's start time'=True
+CHECK 13.3 PASS ledger primitive outcome edited in place with every record digest recomputed: checker rc=1, names 'does not match the attempt index'=True
+CHECK 13.3 PASS the same edit with the index entry, chain and registry head rewritten too: checker rc=1, names 'recomputed FAIL by the independent oracle'=True
+CHECK 13.3 PASS ledger status flipped ok -> error with no envelope code, everything recomputed: checker rc=1, names 'violates the kernel ledger schema'=True
+CHECK 13.3 PASS restored genuine record is accepted again rc=0
+CHECK 13.3 PASS PASS with every ASSERT line removed, every digest recomputed, indexed and pinned: checker rc=1, names 'no assertions were observed'=True
+CHECK 13.3 PASS PASS whose ledger header seed was changed, every digest recomputed, indexed and pinned: checker rc=1, names 'seed mismatch'=True
+CHECK 13.3 PASS PASS rewritten to an unregistered Build, every digest recomputed, indexed and pinned: checker rc=1, names 'differs from the registered Build'=True
+CHECK 13.2 PASS --status reports the three indexed forgeries and refuses to derive a status (rc=1)
+CHECK 13.2 PASS after a PASS and a later FAIL the registry and --status both say FAIL/FAIL from 20261106T133400Z-1.json
+CHECK 13.2 PASS deleting the latest attempt record and its directory is reported: rc=1 ['indexed record tests/cwr/evidence/CWR-006/20261106T133400Z-1.json (seq 1) is missing']
+CHECK 13.2 PASS deleting the record and its index entry is reported against the pinned head: rc=1
+CHECK 13.2 PASS the runner refuses to append to a damaged index rc=2
+CHECK 13.3 PASS stand-in CWR-019 attempt carrying the trap suite is PASS rc=0
+CHECK 13.3 PASS checker's CWR-019 oracle recomputes CWR-019.a1 PASS: 2/2 traps refused: PASS with every ASSERT line and observation removed, runner records a driver exiting 0 without assertions as FAIL
+CHECK 13.3 PASS checker's CWR-019 oracle recomputes CWR-019.a2 PASS: 1/1 traps refused: PASS on an unregistered Build with record and ledger rewritten
+CHECK 13.3 PASS checker's CWR-019 oracle recomputes CWR-019.a3 PASS: 5/5 traps refused: ledger outcome edited, digests left as recorded, ledger outcome edited, every digest, the index and its head recomputed, ledger status edited outside the envelope, everything recomputed, ledger record deleted, everything recomputed, ledger outcome edited, record digests recomputed
+CHECK 13.3 PASS checker's CWR-019 oracle recomputes CWR-019.a4 PASS: 2/2 traps refused: ledger header seed changed, record and instance seed changed
+CHECK 13.3 PASS checker's CWR-019 oracle recomputes CWR-019.a5 PASS: check_evidence.py imports only the standard library, starts no process, opens no socket; oracles are vetted to the same rule without file access
+CHECK 13.4 PASS checker's CWR-019 oracle recomputes CWR-019.a6 PASS: 3/3 traps refused: suite holds an accepted component PASS and no case-scope attempt of its case, derived parent status is UNRUN, component record relabelled as case scope is refused
+CHECK 13.2 PASS checker's CWR-019 oracle recomputes CWR-019.a7 PASS: 3/3 traps refused: each of 49 required fields missing is refused, deleting an indexed record is reported, a self-consistent record the runner never appended is refused
+CHECK 13.2 PASS checker's CWR-019 oracle recomputes CWR-019.a8 PASS: 1/1 traps refused: the genuine PASS against a registry without the case inventory is refused
+CHECK 13.3 PASS checker accepts it (rc=0) and derives PASS
+CHECK 13.3 PASS a CWR-019 driver printing ASSERT PASS for a1..a8 without evidence is recorded FAIL by recomputation rc=1
+CHECK 13.3 PASS that attempt forged to PASS, indexed and pinned: checker rc=1, names 'recomputed FAIL by the independent oracle'=True
+CHECK 13.3 PASS with that forgery in the index, --status refuses to derive CWR-019 rather than fall back (rc=1)
+CHECK 13.3 PASS a trap suite whose base ledger was edited is recomputed FAIL for every assertion rc=1
+CHECK 13.3 PASS the latest attempt decides: registry and --status say FAIL
+CHECK 13.3 PASS check_evidence.py imports only the standard library ['__future__', 'argparse', 'ast', 'dataclasses', 'datetime', 'hashlib', 'importlib', 'json', 'pathlib', 're', 'sys']; foreign=[] process/network modules=[] dynamic code=[]
+CHECK 13.3 PASS qualify.py never imports the checker; it runs it as a separate process (--staged)
+CHECK 13.3 PASS no crate under crates/ embeds or references the checker: []
+CHECK 13.3 PASS runtime audit of the checker: rc=0 processes=[] network=[] writes=[] reads beyond record/registry/schema/attempt artifacts=[]; artifacts read=['1.3/attempt.json', '1.3/driver.stderr.log', '1.3/driver.stdout.log', '1.3/ledgers/01FIXTURE005.jsonl', '1.3/state/01FIXTURE005.json']
+CHECK 13.2 PASS registry check names the case without an inventory rc=2
+CHECK 13.2 PASS qualify refuses to qualify a case without an inventory rc=2, records written=0
+CHECK 13.2 PASS a genuine PASS record presented against a registry without the case inventory: checker rc=1, names 'has no registered assertion inventory and cannot be marked PASS'=True
+CHECK 13.2 PASS derived status without an inventory stays UNRUN
+CHECK 13.2 PASS the real registry has 20 cases, each with a registered inventory and task subsets rc=0
+CHECK 13.4 PASS task 2.3 component PASS for its registered subset of CWR-009 rc=0
+CHECK 13.4 PASS after a component PASS the registry says UNRUN and the checker derives UNRUN
+CHECK 13.4 PASS qualify --task 4.1 writes one component record per owned case: {'CWR-009': 'PASS', 'CWR-014': 'FAIL'}
+CHECK 13.4 PASS component PASSes covering every subset of CWR-009 still leave it UNRUN (registry=UNRUN, derived=UNRUN, component PASS records=2)
+CHECK 13.4 PASS task-scope FAIL for CWR-014 leaves it UNRUN too
+CHECK 13.4 PASS component record relabelled as case scope: checker rc=1, names 'registered inventory for this scope'=True
+CHECK 13.4 PASS component record relabelled as a full-case PASS with the full inventory: checker rc=1, names 'was not observed'=True
+CHECK 13.4 PASS forged case-scope records are ignored by status derivation: UNRUN, rejected=2
+CHECK 13.4 PASS single-task case: component PASS with the full inventory leaves CWR-005 UNRUN
+CHECK 13.4 PASS only a full-case attempt running every task driver qualifies CWR-009: registry=PASS evidence=tests/cwr/evidence/CWR-009/20261106T133405Z-1.json
+CHECK 13.4 PASS campaign with every assertion PASS but 4 of 4,980 matrix cells and no registered pre-registration is FAIL (rc=1)
+CHECK 13.4 PASS forged hypothesis PASS without the complete matrix: checker rc=1, names 'incomplete arm matrix'=True
+CHECK 13.4 PASS a component campaign record leaves the CWR-018 status where the last full-case attempt put it (FAIL -> FAIL)
+CHECK 13.4 PASS control: the complete registered matrix (8 Instances) with the registered pre-registration is PASS rc=0
+CHECK 13.4 PASS one missing cell makes the matrix incomplete and the campaign FAIL rc=1
+CHECK 13.4 PASS a pre-registration digest that differs from the registered one is FAIL rc=1
+CHECK 13.4,13.2 PASS implementation-stage pack prepared: CWR-005 case PASS rc=0, CWR-009 component PASS rc=0
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 PASS backed by the registry and an accepted case record: rc=0 PASS expected
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-006 PASS with no registry backing: rc=1 expects 'case CWR-006: status PASS is not backed by the registry' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 FAIL while the registry records PASS: rc=1 expects 'case CWR-005: status FAIL is not backed by the registry' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-009 PASS backed only by component evidence: rc=1 expects 'is component (task-scope) evidence and cannot qualify the case' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 PASS pointing at a missing record: rc=1 expects 'does not exist' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 PASS whose ledger was modified: rc=1 expects 'is rejected by check_evidence.py' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-001 PASS on a fabricated, indexed record while task 0.3 has no driver: rc=1 expects 'verification driver of task(s) 0.3 does not exist' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-001 PASS on a fabricated, indexed record with a driver present: rc=1 expects 'is rejected by check_evidence.py' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 PASS whose registry evidence is an older attempt than the latest in the index: rc=1 expects 'latest accepted case-scope attempt in the index is PASS from tests/cwr/evidence/CWR-005/20261106T133411Z-1.json' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 PASS backed by the latest accepted attempt: rc=0 PASS expected
+CHECK 13.4,13.2 PASS validator (implementation stage) CWR-005 status DONE: rc=1 expects 'status must be UNRUN, PASS, FAIL or BLOCKED' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) qualification entry claims product evidence without a record: rc=1 expects 'names no evidence record' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) qualification entry claims product evidence with a missing record: rc=1 expects 'does not exist' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) qualification entry claims product evidence with an accepted record: rc=0 PASS expected
+CHECK 13.4,13.2 PASS validator (implementation stage) task 1.3 done with its driver present: rc=0 PASS expected
+CHECK 13.4,13.2 PASS validator (implementation stage) task 2.2 implemented without its driver: rc=1 expects 'task 2.2: implemented task lacks verification driver' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) design stage is unchanged: a backed CWR-005 PASS is still refused: rc=1 expects 'case CWR-005: product qualification must remain UNRUN' found=True
+CHECK 13.4,13.2 PASS validator (implementation stage) design stage is unchanged: product_evidence true is still refused: rc=1 expects 'must state product_evidence false while cases are UNRUN' found=True
+CHECK 13.2 PASS the real registry and evidence directory are untouched by this driver
+ASSERT CWR-019.a1 PASS 11/11 checks
+ASSERT CWR-019.a2 PASS 5/5 checks
+ASSERT CWR-019.a3 PASS 10/10 checks
+ASSERT CWR-019.a4 PASS 5/5 checks
+ASSERT CWR-019.a5 PASS 5/5 checks
+ASSERT CWR-019.a6 PASS 13/13 checks
+ASSERT CWR-019.a7 PASS 24/24 checks
+ASSERT CWR-019.a8 PASS 6/6 checks
+CLAUSE 13.2 PASS 47/47 checks passed
+CLAUSE 13.3 PASS 49/49 checks passed
+CLAUSE 13.4 PASS 37/37 checks passed

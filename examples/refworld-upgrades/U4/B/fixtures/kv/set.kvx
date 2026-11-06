@@ -1,0 +1,49 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for kv.set. Each [case.<name>] is one ephemeral-Instance run:
+# world_time and state are the initial conditions (state is keyed by module; modules not named start
+# from their lib INITIAL_STATE), params is the call, expect is "ok" or the envelope code, precondition
+# is the one-based index of the failing precondition or null, returned (optional) is the exact value an
+# internal primitive must return. Value codec: a JSON string in a position typed bytes is its UTF-8
+# encoding; {"$repeat": [s, n]} is the string s repeated n times; nothing else is special.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "kv"
+primitive = "kv.set"
+
+[case.pre_1_invalid]
+world_time = 0
+state = {"kv": {"namespaces": {"receipts": {"golf-1": "p_0001"}, "notes": {"a": "1", "b": "22"}}}}
+params = {"ns": "notes", "key": "c", "value": {"$repeat": ["v", 513]}}
+expect = "INVALID"
+precondition = 1
+
+[case.pre_2_limit]
+world_time = 0
+state = {"kv": {"namespaces": {"big": {"k00": {"$repeat": ["x", 1024]}, "k01": {"$repeat": ["x", 1024]}, "k02": {"$repeat": ["x", 1024]}, "k03": {"$repeat": ["x", 1024]}, "k04": {"$repeat": ["x", 1024]}, "k05": {"$repeat": ["x", 1024]}, "k06": {"$repeat": ["x", 1024]}, "k07": {"$repeat": ["x", 1024]}, "k08": {"$repeat": ["x", 1024]}, "k09": {"$repeat": ["x", 1024]}, "k10": {"$repeat": ["x", 1024]}, "k11": {"$repeat": ["x", 1024]}, "k12": {"$repeat": ["x", 1024]}, "k13": {"$repeat": ["x", 1024]}, "k14": {"$repeat": ["x", 1024]}, "k15": {"$repeat": ["x", 1024]}, "k16": {"$repeat": ["x", 1024]}, "k17": {"$repeat": ["x", 1024]}, "k18": {"$repeat": ["x", 1024]}, "k19": {"$repeat": ["x", 1024]}, "k20": {"$repeat": ["x", 1024]}, "k21": {"$repeat": ["x", 1024]}, "k22": {"$repeat": ["x", 1024]}, "k23": {"$repeat": ["x", 1024]}, "k24": {"$repeat": ["x", 1024]}, "k25": {"$repeat": ["x", 1024]}, "k26": {"$repeat": ["x", 1024]}, "k27": {"$repeat": ["x", 1024]}, "k28": {"$repeat": ["x", 1024]}, "k29": {"$repeat": ["x", 1024]}, "k30": {"$repeat": ["x", 1024]}, "k31": {"$repeat": ["x", 1024]}, "k32": {"$repeat": ["x", 1024]}, "k33": {"$repeat": ["x", 1024]}, "k34": {"$repeat": ["x", 1024]}, "k35": {"$repeat": ["x", 1024]}, "k36": {"$repeat": ["x", 1024]}, "k37": {"$repeat": ["x", 1024]}, "k38": {"$repeat": ["x", 1024]}, "k39": {"$repeat": ["x", 1024]}, "k40": {"$repeat": ["x", 1024]}, "k41": {"$repeat": ["x", 1024]}, "k42": {"$repeat": ["x", 1024]}, "k43": {"$repeat": ["x", 1024]}, "k44": {"$repeat": ["x", 1024]}, "k45": {"$repeat": ["x", 1024]}, "k46": {"$repeat": ["x", 1024]}, "k47": {"$repeat": ["x", 1024]}, "k48": {"$repeat": ["x", 1024]}, "k49": {"$repeat": ["x", 1024]}, "k50": {"$repeat": ["x", 1024]}, "k51": {"$repeat": ["x", 1024]}, "k52": {"$repeat": ["x", 1024]}, "k53": {"$repeat": ["x", 1024]}, "k54": {"$repeat": ["x", 1024]}, "k55": {"$repeat": ["x", 1024]}, "k56": {"$repeat": ["x", 1024]}, "k57": {"$repeat": ["x", 1024]}, "k58": {"$repeat": ["x", 1024]}, "k59": {"$repeat": ["x", 1024]}, "k60": {"$repeat": ["x", 1024]}, "k61": {"$repeat": ["x", 1024]}, "k62": {"$repeat": ["x", 1024]}, "k63": {"$repeat": ["x", 1024]}}}}}
+params = {"ns": "big", "key": "one-more", "value": "z"}
+expect = "LIMIT"
+precondition = 2
+
+[case.ok_new_namespace]
+world_time = 0
+state = {"kv": {"namespaces": {"receipts": {"golf-1": "p_0001"}, "notes": {"a": "1", "b": "22"}}}}
+params = {"ns": "fresh", "key": "k", "value": "v"}
+expect = "ok"
+precondition = null
+
+[case.ok_replace]
+world_time = 0
+state = {"kv": {"namespaces": {"receipts": {"golf-1": "p_0001"}, "notes": {"a": "1", "b": "22"}}}}
+params = {"ns": "notes", "key": "a", "value": "111"}
+expect = "ok"
+precondition = null
+
+[case.ok_other_namespace_unaffected_by_full]
+world_time = 0
+state = {"kv": {"namespaces": {"big": {"k00": {"$repeat": ["x", 1024]}, "k01": {"$repeat": ["x", 1024]}, "k02": {"$repeat": ["x", 1024]}, "k03": {"$repeat": ["x", 1024]}, "k04": {"$repeat": ["x", 1024]}, "k05": {"$repeat": ["x", 1024]}, "k06": {"$repeat": ["x", 1024]}, "k07": {"$repeat": ["x", 1024]}, "k08": {"$repeat": ["x", 1024]}, "k09": {"$repeat": ["x", 1024]}, "k10": {"$repeat": ["x", 1024]}, "k11": {"$repeat": ["x", 1024]}, "k12": {"$repeat": ["x", 1024]}, "k13": {"$repeat": ["x", 1024]}, "k14": {"$repeat": ["x", 1024]}, "k15": {"$repeat": ["x", 1024]}, "k16": {"$repeat": ["x", 1024]}, "k17": {"$repeat": ["x", 1024]}, "k18": {"$repeat": ["x", 1024]}, "k19": {"$repeat": ["x", 1024]}, "k20": {"$repeat": ["x", 1024]}, "k21": {"$repeat": ["x", 1024]}, "k22": {"$repeat": ["x", 1024]}, "k23": {"$repeat": ["x", 1024]}, "k24": {"$repeat": ["x", 1024]}, "k25": {"$repeat": ["x", 1024]}, "k26": {"$repeat": ["x", 1024]}, "k27": {"$repeat": ["x", 1024]}, "k28": {"$repeat": ["x", 1024]}, "k29": {"$repeat": ["x", 1024]}, "k30": {"$repeat": ["x", 1024]}, "k31": {"$repeat": ["x", 1024]}, "k32": {"$repeat": ["x", 1024]}, "k33": {"$repeat": ["x", 1024]}, "k34": {"$repeat": ["x", 1024]}, "k35": {"$repeat": ["x", 1024]}, "k36": {"$repeat": ["x", 1024]}, "k37": {"$repeat": ["x", 1024]}, "k38": {"$repeat": ["x", 1024]}, "k39": {"$repeat": ["x", 1024]}, "k40": {"$repeat": ["x", 1024]}, "k41": {"$repeat": ["x", 1024]}, "k42": {"$repeat": ["x", 1024]}, "k43": {"$repeat": ["x", 1024]}, "k44": {"$repeat": ["x", 1024]}, "k45": {"$repeat": ["x", 1024]}, "k46": {"$repeat": ["x", 1024]}, "k47": {"$repeat": ["x", 1024]}, "k48": {"$repeat": ["x", 1024]}, "k49": {"$repeat": ["x", 1024]}, "k50": {"$repeat": ["x", 1024]}, "k51": {"$repeat": ["x", 1024]}, "k52": {"$repeat": ["x", 1024]}, "k53": {"$repeat": ["x", 1024]}, "k54": {"$repeat": ["x", 1024]}, "k55": {"$repeat": ["x", 1024]}, "k56": {"$repeat": ["x", 1024]}, "k57": {"$repeat": ["x", 1024]}, "k58": {"$repeat": ["x", 1024]}, "k59": {"$repeat": ["x", 1024]}, "k60": {"$repeat": ["x", 1024]}, "k61": {"$repeat": ["x", 1024]}, "k62": {"$repeat": ["x", 1024]}, "k63": {"$repeat": ["x", 1024]}}}}}
+params = {"ns": "small", "key": "k", "value": {"$repeat": ["y", 512]}}
+expect = "ok"
+precondition = null

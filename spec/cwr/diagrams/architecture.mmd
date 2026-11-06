@@ -1,0 +1,21 @@
+%% Copyright Sidiora Labs Inc. CWR® 2026-2027
+%% SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+flowchart TB
+    S[World Source: world.kvx, contracts, adapters, lib, migrations, manual] -->|cwr build, human only| C[World Compiler: parse, resolve, lint, contract tests, diff, changelog gate, generate, package]
+    C --> B[Immutable Build keyed by sha256: contracts.json, manual.md, sdk, lib, adapters, migrations]
+    C -->|--x-drift, --x-silent-change, --x-version-only, --x-one-primitive| X[Experimental Build under xbuild/]
+    B --> K[World Kernel: one Build, many Instances]
+    X -->|--allow-experimental| K
+    K --> I[Instance: state store, ledger, snapshots, world clock, RNG]
+    K --> P[Sandboxed turn process: one Python script, SDK only, RPC per primitive]
+    K --> G[Adapter gateway: normalise, idempotency, live or record or replay, never retry]
+    G --> E[Declared external endpoints or stub servers and cassettes]
+    K --> M[Model surface: manual, recompile notice, ledger tail, result envelope]
+    M --> L[Model]
+    L -->|one fenced python block per turn| K
+    L -->|world.propose text only| O[Proposal outbox outside the world]
+    I -->|append-only ledger| H[Experiment harness: arms, seeds, metrics, analysis]
+    O --> U[Human world owner]
+    H --> U
+    U -->|edits source, recompiles| S

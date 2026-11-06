@@ -1,0 +1,15 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Starting Instance state for the post-upgrade task of pair U6, loaded on Build A (refworld 0.2.0).
+# Layout as benchmark/tasks/*/initial.kvx: one section per module, keys are that module's state fields.
+# File contents and kv values are UTF-8 text.
+
+[meta]
+format = "cwr.task-state"
+schema_version = 1
+pair = "U6"
+side = "A"
+
+[fs]
+files = {"/notes/readme.md": "notes live here"}
+locks = []

@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t043-archive-twice. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t043-archive-twice"
+title = "Archive quarters around a summary"
+bin = "long"
+rules = ["fs.move[3]:CONFLICT", "fs.move[2]:LOCKED", "fs.delete[1]:NOT_FOUND"]
+rule_reuse = true
+reused_rule = "fs.move[3]:CONFLICT"
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t043-archive-twice.py"

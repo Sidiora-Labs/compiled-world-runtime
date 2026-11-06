@@ -1,0 +1,24 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Compiled World Runtime (CWR) Cargo workspace. Crate roles: spec/cwr/README.md and decisions.md P01.
+[workspace]
+resolver = "2"
+members = [
+    "crates/cwr-contract",
+    "crates/cwr-compiler",
+    "crates/cwr-kernel",
+    "crates/cwr-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+cwr-contract = { path = "crates/cwr-contract" }

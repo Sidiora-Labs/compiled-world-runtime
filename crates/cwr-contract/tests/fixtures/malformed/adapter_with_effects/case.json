@@ -1,0 +1,15 @@
+{
+  "class": "adapter_with_effects",
+  "clause": "3.3",
+  "description": "An adapter declares effects over world state.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 19,
+      "col": 1,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

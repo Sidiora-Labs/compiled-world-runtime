@@ -1,0 +1,49 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for fs.write. Each [case.<name>] is one ephemeral-Instance run:
+# world_time and state are the initial conditions (state is keyed by module; modules not named start
+# from their lib INITIAL_STATE), params is the call, expect is "ok" or the envelope code, precondition
+# is the one-based index of the failing precondition or null, returned (optional) is the exact value an
+# internal primitive must return. Value codec: a JSON string in a position typed bytes is its UTF-8
+# encoding; {"$repeat": [s, n]} is the string s repeated n times; nothing else is special.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "fs"
+primitive = "fs.write"
+
+[case.pre_1_locked]
+world_time = 0
+state = {"fs": {"files": {"/r.md": "old"}, "locks": ["/r.md"]}}
+params = {"path": "/r.md", "content": "new"}
+expect = "LOCKED"
+precondition = 1
+
+[case.pre_2_limit]
+world_time = 0
+state = {"fs": {"files": {}, "locks": []}}
+params = {"path": "/big.bin", "content": {"$repeat": ["a", 1048577]}}
+expect = "LIMIT"
+precondition = 2
+
+[case.ok_create]
+world_time = 0
+state = {"fs": {"files": {}, "locks": []}}
+params = {"path": "/notes/new.md", "content": "hello"}
+expect = "ok"
+precondition = null
+
+[case.ok_replace]
+world_time = 0
+state = {"fs": {"files": {"/r.md": "old"}, "locks": []}}
+params = {"path": "/r.md", "content": "new"}
+expect = "ok"
+precondition = null
+
+[case.ok_at_limit]
+world_time = 0
+state = {"fs": {"files": {}, "locks": []}}
+params = {"path": "/edge.bin", "content": {"$repeat": ["a", 1048576]}}
+expect = "ok"
+precondition = null

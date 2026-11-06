@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t055-inbox-digest. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t055-inbox-digest"
+
+[fs]
+files = {"/inbox/m01.txt": "topic 1\nbody of message 1\n", "/inbox/m02.txt": "topic 2\nbody of message 2\n", "/inbox/m03.txt": "topic 3\nbody of message 3\n", "/inbox/m04.txt": "topic 4\nbody of message 4\n", "/inbox/m05.txt": "topic 5\nbody of message 5\n", "/inbox/m06.txt": "topic 6\nbody of message 6\n", "/inbox/m07.txt": "topic 7\nbody of message 7\n", "/inbox/m08.txt": "topic 8\nbody of message 8\n", "/inbox/m09.txt": "topic 9\nbody of message 9\n", "/inbox/m10.txt": "topic 10\nbody of message 10\n", "/inbox/m11.txt": "topic 11\nbody of message 11\n", "/inbox/m12.txt": "topic 12\nbody of message 12\n", "/inbox/m13.txt": "topic 13\nbody of message 13\n", "/inbox/m14.txt": "topic 14\nbody of message 14\n", "/inbox/m15.txt": "topic 15\nbody of message 15\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

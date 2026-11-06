@@ -1,0 +1,187 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Pre-registration of the CWR hypothesis campaigns (spec/cwr/experiments.md section 5, requirement 12.5).
+# Committed before any campaign. It freezes the hypotheses H1 to H4, their arms (by the digest of
+# benchmark/harness/arms.kvx, which carries the Build hashes), task sets, metric definitions (by the
+# sha256 of benchmark/harness/metrics.py), analysis parameters and expected directions.
+# benchmark/analyse.py refuses to run when either digest differs. A change to a metric after execution
+# is a new pre-registration and a new campaign; earlier results stay under their original registration.
+#
+# STATUS: draft. Campaign inputs that do not exist yet are null: model identity and sampling settings
+# (task 5.2 records them), suite and cassette digests (tasks 4.1, 4.2), upgrade-pair digest (task 4.3)
+# and the Build hashes in arms.kvx. analyse.py and run.py refuse a campaign while any is null; set
+# meta.status to "registered" only when none is. Every arm is a CWR Build; there is no external baseline.
+
+[meta]
+format = "cwr.preregistration"
+schema_version = 1
+feature = "cwr"
+campaign = "cwr-campaign-1"
+status = "draft"
+registered_on = "2026-11-06"
+supersedes = null
+spec = "spec/cwr/spec.kvx 0.1.0-draft; spec/cwr/experiments.md"
+
+[digests]
+metrics_py = "sha256:b45bafadc6d46a708bb437f07951e73dff2d7ac338b12d358c820f17de468918"
+arms_kvx = "sha256:ca9bc28ac671962f0b68529a7f799fd41831b6119b3717b1446180e86d94f50b"
+
+[campaign]
+world = "refworld"
+model = null
+sampling = null
+seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+seeds_per_task = 10
+gateway_mode = "replay"
+live_runs = "labelled mode=live, written under benchmark/results/live, analysed separately, never pooled"
+context_layout = ["manual", "recompile_notice", "ledger_tail", "result_envelope"]
+tail_default = 20
+turn_limit_by_bin = {"short": 15, "medium": 40, "long": 120}
+turn_limit_max = 200
+max_tokens_per_turn = 16000
+token_budget_per_instance = null
+suite_digest = null
+cassette_digest = null
+upgrades_digest = null
+stop_rule = "stop after the first turn whose success predicate holds over the exported state and ledger, at the turn limit, on budget exhaustion, on a model error or on INVARIANT_VIOLATION"
+note = "Turn limits per bin follow verification.md section 3; turn_limit_max is the 200-turn cap of experiments.md section 2. No sampling parameter is sent unless [campaign].sampling names it."
+
+[analysis]
+estimator = "mean over Instances (tasks x seeds) per arm and group"
+interval = "percentile_bootstrap"
+confidence = 0.95
+resamples = 10000
+resample_unit = "instance"
+seed = 20261106
+rng = "random.Random(derived_seed).random(); index floor(u*n); derived_seed = first 16 hex of sha256('<seed>|<hypothesis>|<arm>|<group>|<metric>')"
+quantile = "linear interpolation between order statistics (Hyndman-Fan type 7)"
+pool_bins = false
+undefined_values = "excluded from that metric's sample and counted as undefined"
+excluded = ["mode other than replay", "attempt not run under a complete registration", "INVARIANT_VIOLATION recorded", "exit_status model_error or kernel_error"]
+cassette_pooling = "refused when included ledgers carry different cassette digests"
+direction_labels = "consistent when the delta interval lies wholly on the expected side, inconsistent when wholly on the other side, else inconclusive; a=b is consistent when the interval contains 0"
+
+[conventions]
+c1 = "Primitive calls are ledger records of kind primitive or adapter; header, turn, drift, proposal, upgrade and recovery records are never calls."
+c2 = "Failure-based metrics count only call records; a turn record's status is never a failure record."
+c3 = "A rate with a zero denominator is undefined and excluded from that metric's sample."
+c4 = "Rule reuse scores 0 on an Instance with no ok record of the reused primitive or no second encounter at least ten call records later."
+c5 = "The last quarter is the call-record indices k with 4k >= 3N, N the Instance's call-record count."
+c6 = "A changed-primitive entry without a dot names a whole module."
+c7 = "Turns to success evaluates the predicate on the per-turn states written by the runner; without them it uses the registered stop rule, under which the final turn of a successful Instance is its first satisfying turn."
+
+[metric.task_success]
+function = "metrics.task_success"
+kind = "binary"
+applies = "all"
+definition = "success.py evaluated once on the final state and the full ledger; 1 or 0."
+
+[metric.turns_to_success]
+function = "metrics.turns_to_success"
+kind = "count"
+applies = "all"
+definition = "Turn number of the first turn after which the predicate holds; undefined on failure, never a large number."
+
+[metric.primitive_calls]
+function = "metrics.primitive_calls"
+kind = "count"
+applies = "all"
+definition = "Count of call records (convention c1)."
+
+[metric.failure_rate]
+function = "metrics.failure_rate_by_code"
+kind = "rate per envelope code, reported as failure_rate.<CODE>"
+applies = "all"
+definition = "For each of the eleven envelope codes, call records with outcome.status error and that code divided by primitive calls."
+
+[metric.repeated_failure_rate]
+function = "metrics.repeated_failure_rate"
+kind = "rate"
+applies = "all"
+definition = "Walking records in seq order, failing call records whose (primitive, outcome.code) equals that of an earlier failing record, divided by failing call records."
+
+[metric.rule_reuse]
+function = "metrics.rule_reuse"
+kind = "binary per Instance; the rate is its mean over rule-reuse tasks"
+applies = "rule-reuse tasks named in benchmark/suite.kvx"
+definition = "First ok record of the reused primitive, then the first record of that primitive at least ten call records later; 1 when that record and every later record of the primitive in the last quarter has no failure with the rule's code."
+
+[metric.post_upgrade_misuse_rate]
+function = "metrics.post_upgrade_misuse_rate"
+kind = "rate"
+applies = "upgrade-pair tasks (H4)"
+definition = "After the upgrade record, turns containing a call record of a primitive named in the pair's ContractDiff failing with the code Build B's new rule raises on an old-style call, divided by post-upgrade turns."
+
+[metric.partial_rate]
+function = "metrics.partial_rate"
+kind = "rate"
+applies = "all"
+definition = "Turn records with status partial divided by turn records."
+
+[metric.probing_ratio]
+function = "metrics.probing_ratio"
+kind = "ratio"
+applies = "all"
+definition = "Call records with side_effect read_only divided by those with mutating or external; a secondary H1 proxy only."
+
+[metric.turns_to_first_correct_use]
+function = "metrics.turns_to_first_correct_use"
+kind = "count"
+applies = "upgrade-pair tasks (H4)"
+definition = "Turn of the first ok call of a changed primitive after the upgrade record minus the upgrade record's turn; undefined when it never happens."
+
+[metric.proposals_after_upgrade]
+function = "metrics.proposals_after_upgrade"
+kind = "count"
+applies = "upgrade-pair tasks (H4)"
+definition = "Proposal records after the upgrade record."
+
+[metric.drift_records]
+function = "metrics.drift_records"
+kind = "count"
+applies = "all; a check that drift arms carry their scheduled injections"
+definition = "Count of records of kind drift."
+
+[hypothesis.H1]
+claim = "A world whose rules are fixed for the life of the Build yields higher task success and fewer repeated failures than an otherwise identical world whose rules drift mid-task without notice."
+arms = ["frozen", "drift-1", "drift-3"]
+control = "frozen"
+task_set = "suite:all"
+grouping = "bin"
+primary = "task_success"
+secondary = ["repeated_failure_rate", "turns_to_success", "probing_ratio"]
+directions = [{"id": "H1.success.frozen-vs-drift-1", "metric": "task_success", "a": "frozen", "b": "drift-1", "expect": "a>b"}, {"id": "H1.success.drift-1-vs-drift-3", "metric": "task_success", "a": "drift-1", "b": "drift-3", "expect": "a>b"}, {"id": "H1.repeat.frozen-vs-drift-1", "metric": "repeated_failure_rate", "a": "frozen", "b": "drift-1", "expect": "a<b"}, {"id": "H1.repeat.drift-1-vs-drift-3", "metric": "repeated_failure_rate", "a": "drift-1", "b": "drift-3", "expect": "a<b"}]
+
+[hypothesis.H2]
+claim = "One script per turn completes tasks in fewer turns than one primitive per turn, without a higher partial-failure cost."
+arms = ["script", "one-primitive"]
+control = "script"
+task_set = "suite:all"
+grouping = "bin"
+primary = "turns_to_success"
+secondary = ["task_success", "primitive_calls", "partial_rate", "failure_rate"]
+directions = [{"id": "H2.turns.script-vs-one-primitive", "metric": "turns_to_success", "a": "script", "b": "one-primitive", "expect": "a<b"}, {"id": "H2.success.script-vs-one-primitive", "metric": "task_success", "a": "script", "b": "one-primitive", "expect": "a>=b"}, {"id": "H2.partial-vs-limit", "metric_a": "partial_rate", "metric_b": "failure_rate.LIMIT", "a": "script", "b": "one-primitive", "expect": "a<b"}]
+note = "Model-boundary tokens per task are harness-recorded and reported in a separately labelled block."
+
+[hypothesis.H3]
+claim = "The advantages measured in H1 and H2 grow with task length, and a stable world lets the model reuse a rule learned earlier without re-probing."
+arms = ["k5", "k20", "kfull"]
+control = "k20"
+task_set = "suite:all"
+grouping = "bin"
+primary = "rule_reuse"
+secondary = ["task_success", "turns_to_success", "probing_ratio"]
+directions = [{"id": "H3.delta.success.frozen-vs-drift-1", "source": "H1", "metric": "task_success", "a": "frozen", "b": "drift-1", "expect": "long>short"}, {"id": "H3.delta.turns.one-primitive-vs-script", "source": "H2", "metric": "turns_to_success", "a": "one-primitive", "b": "script", "expect": "long>short"}, {"id": "H3.reuse.frozen-vs-drift-1", "source": "H1", "metric": "rule_reuse", "a": "frozen", "b": "drift-1", "expect": "a>b", "groups": ["long"]}, {"id": "H3.reuse.kfull-vs-k20", "metric": "rule_reuse", "a": "kfull", "b": "k20", "expect": "undetermined", "groups": ["long"]}, {"id": "H3.reuse.k20-vs-k5", "metric": "rule_reuse", "a": "k20", "b": "k5", "expect": "undetermined", "groups": ["long"]}]
+note = "The K sweep runs on the full suite (verification.md section 3), a superset of the 20 long tasks experiments.md names; rule reuse exists only on the long rule-reuse tasks. Drift arms run at K=20 only, so frozen-versus-drift rule reuse is registered at K=20."
+
+[hypothesis.H4]
+claim = "After a versioned recompilation with a changelog the model adopts the changed rule in fewer turns and with fewer old-rule errors than after a silent change, and the changelog carries more of the effect than the version signal alone."
+arms = ["changelog", "version-only", "silent"]
+control = "changelog"
+task_set = "upgrades:all"
+grouping = "pair"
+pool_exclude = ["U6"]
+primary = "post_upgrade_misuse_rate"
+secondary = ["turns_to_first_correct_use", "task_success", "proposals_after_upgrade"]
+directions = [{"id": "H4.misuse.changelog-vs-version-only", "metric": "post_upgrade_misuse_rate", "a": "changelog", "b": "version-only", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.misuse.version-only-vs-silent", "metric": "post_upgrade_misuse_rate", "a": "version-only", "b": "silent", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.first-use.changelog-vs-version-only", "metric": "turns_to_first_correct_use", "a": "changelog", "b": "version-only", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.first-use.version-only-vs-silent", "metric": "turns_to_first_correct_use", "a": "version-only", "b": "silent", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.U6.misuse.changelog-vs-silent", "metric": "post_upgrade_misuse_rate", "a": "changelog", "b": "silent", "expect": "a=b", "groups": ["U6"]}, {"id": "H4.U6.success.changelog-vs-silent", "metric": "task_success", "a": "changelog", "b": "silent", "expect": "a=b", "groups": ["U6"]}]
+note = "pooled is U1 to U5; U6, the documentation-only pair, is the notice-noise control and is reported separately. Whether a proposal names the changed primitive is not computable from the ledger (proposal records carry a text hash) and is not registered."

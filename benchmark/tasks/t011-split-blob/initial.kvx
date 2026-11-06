@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t011-split-blob. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t011-split-blob"
+
+[fs]
+files = {"/data/blob.txt": "blob line 000: the quick brown fox jumps over the lazy dog\nblob line 001: the quick brown fox jumps over the lazy dog\nblob line 002: the quick brown fox jumps over the lazy dog\nblob line 003: the quick brown fox jumps over the lazy dog\nblob line 004: the quick brown fox jumps over the lazy dog\nblob line 005: the quick brown fox jumps over the lazy dog\nblob line 006: the quick brown fox jumps over the lazy dog\nblob line 007: the quick brown fox jumps over the lazy dog\nblob line 008: the quick brown fox jumps over the lazy dog\nblob line 009: the quick brown fox jumps over the lazy dog\nblob line 010: the quick brown fox jumps over the lazy dog\nblob line 011: the quick brown fox jumps over the lazy dog\nblob line 012: the quick brown fox jumps over the lazy dog\nblob line 013: the quick brown fox jumps over the lazy dog\nblob line 014: the quick brown fox jumps over the lazy dog\nblob line 015: the quick brown fox jumps over the lazy dog\nblob line 016: the quick brown fox jumps over the lazy dog\nblob line 017: the quick brown fox jumps over the lazy dog\nblob line 018: the quick brown fox jumps over the lazy dog\nblob line 019: the quick brown fox jumps over the lazy dog\nblob line 020: the quick brown fox jumps over the lazy dog\nblob line 021: the quick brown fox jumps over the lazy dog\nblob line 022: the quick brown fox jumps over the lazy dog\nblob line 023: the quick brown fox jumps over the lazy dog\nblob line 024: the quick brown fox jumps over the lazy dog\nblob line 025: the quick brown fox jumps over the lazy dog\nblob line 026: the quick brown fox jumps over the lazy dog\nblob line 027: the quick brown fox jumps over the lazy dog\nblob line 028: the quick brown fox jumps over the lazy dog\nblob line 029: the quick brown fox jumps over the lazy dog\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

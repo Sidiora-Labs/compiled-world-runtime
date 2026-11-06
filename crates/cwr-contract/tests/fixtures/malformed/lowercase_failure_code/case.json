@@ -1,0 +1,15 @@
+{
+  "class": "lowercase_failure_code",
+  "clause": "2.3",
+  "description": "A code in the wrong case is not an envelope code.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/kv.kvx",
+      "line": 30,
+      "col": 41,
+      "kind": "envelope",
+      "code": "CWR-F001"
+    }
+  ]
+}

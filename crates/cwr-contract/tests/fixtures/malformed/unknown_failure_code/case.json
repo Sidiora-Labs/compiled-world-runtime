@@ -1,0 +1,15 @@
+{
+  "class": "unknown_failure_code",
+  "clause": "2.3",
+  "description": "A precondition names a code outside the envelope.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 46,
+      "col": 38,
+      "kind": "envelope",
+      "code": "CWR-F001"
+    }
+  ]
+}

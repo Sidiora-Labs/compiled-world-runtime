@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t058-site-build. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t058-site-build"
+
+[fs]
+files = {"/site/about.html": "<html><body>old about</body></html>\n", "/src/pages/about.md": "# about\n", "/src/pages/blog.md": "# blog\n", "/src/pages/careers.md": "# careers\n", "/src/pages/contact.md": "# contact\n", "/src/pages/docs.md": "# docs\n", "/src/pages/faq.md": "# faq\n", "/src/pages/home.md": "# home\n", "/src/pages/press.md": "# press\n", "/src/pages/pricing.md": "# pricing\n", "/src/pages/team.md": "# team\n"}
+locks = ["/site/about.html"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

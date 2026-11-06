@@ -1,0 +1,14 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "jobs"
+
+[primitive.jobs.known]
+side_effect = "read_only"
+params = {"id": "str"}
+returns = "bool"
+preconditions = []
+effects = []
+doc = "True when the job id is known."

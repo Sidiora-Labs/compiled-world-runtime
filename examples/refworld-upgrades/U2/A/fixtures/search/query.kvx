@@ -1,0 +1,140 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for adapter search.query, in cassette form. Each [case.<name>] runs the gateway in
+# replay mode: prior lists cassette entries consumed earlier in the same ephemeral Instance, response is
+# the recorded stub response for the call under test, or null when no request is sent (a precondition
+# failed, or a key adapter replays its stored outcome). Responses are {"status", "body"} plus
+# optional "delay_ms" (host time; past timeout_ms the gateway reports TIMEOUT). request_hash is the
+# canonical request hash of benchmark/cassettes/FORMAT.md section 3, sha256 over {"adapter", "params"}
+# as sorted-key compact JSON. expect, precondition: as for primitives.
+# Value codec: {"$repeat": [s, n]} is s repeated n times.
+# Every response below was captured from benchmark/stubs/search_server.py (seed 1, default rules plus
+# the named schedule fault, allow_undeclared false), except a case named synthetic_*, whose status the
+# stubs never send; it pins the gateway's undeclared_status fallback.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "search"
+primitive = "search.query"
+
+[case.pre_1_invalid]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":5,"q":""}
+expect = "INVALID"
+precondition = 1
+request_hash = null
+sequence = null
+response = null
+
+[case.pre_2_limit]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":51,"q":"tennis"}
+expect = "LIMIT"
+precondition = 2
+request_hash = null
+sequence = null
+response = null
+
+[case.service_invalid]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":-1,"q":"tennis"}
+expect = "INVALID"
+precondition = null
+request_hash = "sha256:57bb988c2c43bc63adef83da1c34ac9e1e6d0ea3a4854f59fdaa1d41f2a8ba68"
+sequence = 1
+response = {"body":{"code":"INVALID","detail":"limit must be non-negative"},"status":400}
+
+[case.rate_limited]
+world_time = 10
+state = {}
+prior = [{"params":{"limit":1,"q":"warmup 0"},"request_hash":"sha256:a3b4167d2cea7bda79fc2e6c62a61434325fb8f3d6c752aab30cdd99d5d94e13","response":{"body":{"result":[{"rank":1,"snippet":"Iris cedar report harbor nimbus primer summit sierra cedar guide fjord garnet.","title":"Meadow Warmup 0 Oasis Fern","url":"https://search.stub.invalid/doc/1a1b1fce715446f8"}]},"status":200},"sequence":1,"world_time":0},{"params":{"limit":1,"q":"warmup 1"},"request_hash":"sha256:5552c3c74f7d188b03f4d32187da94e9f74dc9d494bf55ca7305c8ecce585104","response":{"body":{"result":[{"rank":1,"snippet":"Survey willow reef reef report compass canyon nimbus reef notes garnet yarrow.","title":"Warmup 1 Quill Guide Meadow","url":"https://search.stub.invalid/doc/d225b75b5c3af227"}]},"status":200},"sequence":1,"world_time":1},{"params":{"limit":1,"q":"warmup 2"},"request_hash":"sha256:3b18126efdf1b881f9fee986c5ac0ba650a4fd7fe3427a9b011c595a353b92bc","response":{"body":{"result":[{"rank":1,"snippet":"Fjord harbor ledger index oasis maple coral wren iris lagoon fable ember.","title":"Compass Review Onyx","url":"https://search.stub.invalid/doc/bf7e7f20540f92bd"}]},"status":200},"sequence":1,"world_time":2},{"params":{"limit":1,"q":"warmup 3"},"request_hash":"sha256:56609590022b63635220e710912ff17be4274da9e37b2cb93a17dbc73f0194ed","response":{"body":{"result":[{"rank":1,"snippet":"Prairie fjord sierra index basin nectar jade yarrow kelp jade mesa comet.","title":"Thistle Warmup 3 Glacier Basin","url":"https://search.stub.invalid/doc/f62d518235638fea"}]},"status":200},"sequence":1,"world_time":3},{"params":{"limit":1,"q":"warmup 4"},"request_hash":"sha256:78e41fc31738eded3c3ae73b980149cebc3e2958f34afd2b0f5dccc1e7c14fd3","response":{"body":{"result":[{"rank":1,"snippet":"Atlas jade vale lantern compass onyx atlas nimbus summit raven quill guide.","title":"Warmup 4 Spruce Meadow Quill","url":"https://search.stub.invalid/doc/366b1b250001d531"}]},"status":200},"sequence":1,"world_time":4},{"params":{"limit":1,"q":"warmup 5"},"request_hash":"sha256:088071ab02d93b7f96bc6f7fa21b256a9e2d2f086152310cb4ee5e458b5e71ee","response":{"body":{"result":[{"rank":1,"snippet":"Fern fern juniper summit fable beacon quartz umber nectar onyx primer valley.","title":"Warmup 5 Pebble Basin Glacier","url":"https://search.stub.invalid/doc/20a2c291240eced6"}]},"status":200},"sequence":1,"world_time":5},{"params":{"limit":1,"q":"warmup 6"},"request_hash":"sha256:a6ff9fb50b3c800dfe9427f3b073ff2040cb0e5473b459fb7d52177f7ca7f6f5","response":{"body":{"result":[{"rank":1,"snippet":"Yarrow basin yarrow ridge quill pebble orchid notes meadow oasis vale birch.","title":"Hollow Beacon Basin","url":"https://search.stub.invalid/doc/3b934302f4b442b4"}]},"status":200},"sequence":1,"world_time":6},{"params":{"limit":1,"q":"warmup 7"},"request_hash":"sha256:84839ad2d46f3e143e553191480ba72bc8f14454375d37cd738067d69efc879f","response":{"body":{"result":[{"rank":1,"snippet":"Birch notes glacier coral lantern sierra ember lantern kelp lagoon thistle onyx.","title":"Atlas Tundra Nectar","url":"https://search.stub.invalid/doc/1501ee5d0e44b651"}]},"status":200},"sequence":1,"world_time":7},{"params":{"limit":1,"q":"warmup 8"},"request_hash":"sha256:4a6b8830b6730b9d03bcf43426a4bcc7233e33d76ab66ec49af134692fb1417d","response":{"body":{"result":[{"rank":1,"snippet":"Jade iris maple ledger quill atlas beacon onyx basin compass reef juniper.","title":"Primer Ridge Prairie","url":"https://search.stub.invalid/doc/43fc286344d514da"}]},"status":200},"sequence":1,"world_time":8},{"params":{"limit":1,"q":"warmup 9"},"request_hash":"sha256:b52eb7ed1a5583be23bb3d1e00365ef9c7afd3e807d5fa4f9596ce794842b7bb","response":{"body":{"result":[{"rank":1,"snippet":"Fable survey mesa quartz ledger valley vale onyx zephyr thistle prairie meadow.","title":"Mesa Warmup 9 Report Harbor","url":"https://search.stub.invalid/doc/881cf85279cd7a1c"}]},"status":200},"sequence":1,"world_time":9}]
+params = {"limit":5,"q":"tennis"}
+expect = "RATE_LIMITED"
+precondition = null
+request_hash = "sha256:c4b23b7d9fbb6230b3ed66d376756191481e3af803729d3bc0c7eda032f7949a"
+sequence = 1
+response = {"body":{"code":"RATE_LIMITED","detail":"10 queries per 50 ticks","retry_after":40},"status":429}
+
+[case.unavailable]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":5,"q":"tennis"}
+expect = "UNAVAILABLE"
+precondition = null
+request_hash = "sha256:c4b23b7d9fbb6230b3ed66d376756191481e3af803729d3bc0c7eda032f7949a"
+sequence = 1
+response = {"body":{"code":"UNAVAILABLE","detail":"stub schedule UNAVAILABLE"},"status":503}
+
+[case.malformed]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":5,"q":"tennis"}
+expect = "INVALID"
+precondition = null
+request_hash = "sha256:c4b23b7d9fbb6230b3ed66d376756191481e3af803729d3bc0c7eda032f7949a"
+sequence = 1
+response = {"body":{"detail":"stub schedule MALFORMED","malformed":true},"status":200}
+
+[case.synthetic_undeclared_status]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":5,"q":"tennis"}
+expect = "UNAVAILABLE"
+precondition = null
+request_hash = "sha256:c4b23b7d9fbb6230b3ed66d376756191481e3af803729d3bc0c7eda032f7949a"
+sequence = 1
+response = {"body":{},"status":500}
+
+[case.timeout]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":5,"q":"tennis"}
+expect = "TIMEOUT"
+precondition = null
+request_hash = "sha256:c4b23b7d9fbb6230b3ed66d376756191481e3af803729d3bc0c7eda032f7949a"
+sequence = 1
+response = {"body":{"result":[{"rank":1,"snippet":"Ledger willow vale prairie coral prairie onyx spruce primer mesa onyx valley.","title":"Thistle Spruce Quill Tennis","url":"https://search.stub.invalid/doc/ea6debe5277df271"},{"rank":2,"snippet":"Canyon digest comet comet saffron maple survey yarrow vale willow hollow thistle.","title":"Umber Wren Nectar","url":"https://search.stub.invalid/doc/fd2f735d81857b88"},{"rank":3,"snippet":"Willow cipher harbor notes hollow ridge digest saffron zephyr lagoon quartz juniper.","title":"Orchid Canyon Ledger","url":"https://search.stub.invalid/doc/dfe1057d19f28752"},{"rank":4,"snippet":"Survey saffron summit orchid ridge maple nectar digest mesa guide ember juniper.","title":"Coral Canyon Umber Tennis","url":"https://search.stub.invalid/doc/a68905afebbaa9ec"},{"rank":5,"snippet":"Quill harbor maple ridge lantern reef report ledger fable valley reef jade.","title":"Hollow Guide Valley","url":"https://search.stub.invalid/doc/8993f7b02565521a"}]},"delay_ms":3500,"status":200}
+
+[case.ok]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":5,"q":"tennis"}
+expect = "ok"
+precondition = null
+request_hash = "sha256:c4b23b7d9fbb6230b3ed66d376756191481e3af803729d3bc0c7eda032f7949a"
+sequence = 1
+response = {"body":{"result":[{"rank":1,"snippet":"Ledger willow vale prairie coral prairie onyx spruce primer mesa onyx valley.","title":"Thistle Spruce Quill Tennis","url":"https://search.stub.invalid/doc/ea6debe5277df271"},{"rank":2,"snippet":"Canyon digest comet comet saffron maple survey yarrow vale willow hollow thistle.","title":"Umber Wren Nectar","url":"https://search.stub.invalid/doc/fd2f735d81857b88"},{"rank":3,"snippet":"Willow cipher harbor notes hollow ridge digest saffron zephyr lagoon quartz juniper.","title":"Orchid Canyon Ledger","url":"https://search.stub.invalid/doc/dfe1057d19f28752"},{"rank":4,"snippet":"Survey saffron summit orchid ridge maple nectar digest mesa guide ember juniper.","title":"Coral Canyon Umber Tennis","url":"https://search.stub.invalid/doc/a68905afebbaa9ec"},{"rank":5,"snippet":"Quill harbor maple ridge lantern reef report ledger fable valley reef jade.","title":"Hollow Guide Valley","url":"https://search.stub.invalid/doc/8993f7b02565521a"}]},"status":200}
+
+[case.ok_limit_1]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":1,"q":"tennis"}
+expect = "ok"
+precondition = null
+request_hash = "sha256:8b610a7c36a78a13cf8caed0c973169b0cf7fbe2891d2a097c29c82796e393ce"
+sequence = 1
+response = {"body":{"result":[{"rank":1,"snippet":"Ledger willow vale prairie coral prairie onyx spruce primer mesa onyx valley.","title":"Thistle Spruce Quill Tennis","url":"https://search.stub.invalid/doc/ea6debe5277df271"}]},"status":200}
+
+[case.ok_limit_0]
+world_time = 0
+state = {}
+prior = []
+params = {"limit":0,"q":"golf"}
+expect = "ok"
+precondition = null
+request_hash = "sha256:ada99c6c619819e5c78010623d50e45e4a01a49701e08443fa8d3454594b1fb1"
+sequence = 1
+response = {"body":{"result":[]},"status":200}

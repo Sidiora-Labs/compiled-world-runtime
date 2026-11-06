@@ -1,0 +1,15 @@
+{
+  "class": "change_in_no_release",
+  "clause": "3.6",
+  "description": "A change that belongs to no release.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 30,
+      "col": 1,
+      "kind": "changelog",
+      "code": null
+    }
+  ]
+}

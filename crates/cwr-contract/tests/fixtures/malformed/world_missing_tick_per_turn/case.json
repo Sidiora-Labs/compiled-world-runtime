@@ -1,0 +1,15 @@
+{
+  "class": "world_missing_tick_per_turn",
+  "clause": "3.4",
+  "description": "world.kvx omits clock.tick_per_turn.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 24,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

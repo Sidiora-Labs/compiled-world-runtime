@@ -1,0 +1,15 @@
+{
+  "class": "unknown_fixture_key",
+  "clause": "3.1",
+  "description": "A fixture case declares a key the grammar does not define.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/fs/delete.kvx",
+      "line": 25,
+      "col": 1,
+      "kind": "unknown_key",
+      "code": "CWR-C001"
+    }
+  ]
+}

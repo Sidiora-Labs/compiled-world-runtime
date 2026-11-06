@@ -1,0 +1,15 @@
+{
+  "class": "state_shape_missing_migration_key",
+  "clause": "3.6",
+  "description": "A state_shape change that omits the migration key.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "CHANGELOG.kvx",
+      "line": 23,
+      "col": 1,
+      "kind": "migration",
+      "code": "CWR-M001"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t043-archive-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t043-archive-twice"
+
+[fs]
+files = {"/archive/q1.txt": "q1 figures, draft\n", "/archive/q2.txt": "q2 figures, draft\n", "/data/d01.txt": "measurement 3\n", "/data/d02.txt": "measurement 6\n", "/data/d03.txt": "measurement 9\n", "/data/d04.txt": "measurement 12\n", "/data/d05.txt": "measurement 15\n", "/data/d06.txt": "measurement 18\n", "/data/d07.txt": "measurement 21\n", "/data/d08.txt": "measurement 24\n", "/data/d09.txt": "measurement 27\n", "/data/d10.txt": "measurement 30\n", "/data/d11.txt": "measurement 33\n", "/data/d12.txt": "measurement 36\n", "/inbox/q1.txt": "q1 figures, final\n", "/inbox/q2.txt": "q2 figures, final\n", "/inbox/q3.txt": "q3 figures, final\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

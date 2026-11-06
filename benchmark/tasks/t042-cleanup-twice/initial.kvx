@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t042-cleanup-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t042-cleanup-twice"
+
+[fs]
+files = {"/reports/raw/r01.txt": "row 1 col 0   \nrow 1 col 1   \nrow 1 col 2   \n", "/reports/raw/r02.txt": "row 2 col 0   \nrow 2 col 1   \nrow 2 col 2   \n", "/reports/raw/r03.txt": "row 3 col 0   \nrow 3 col 1   \nrow 3 col 2   \n", "/reports/raw/r04.txt": "row 4 col 0   \nrow 4 col 1   \nrow 4 col 2   \n", "/reports/raw/r05.txt": "row 5 col 0   \nrow 5 col 1   \nrow 5 col 2   \n", "/reports/raw/r06.txt": "row 6 col 0   \nrow 6 col 1   \nrow 6 col 2   \n", "/reports/raw/r07.txt": "row 7 col 0   \nrow 7 col 1   \nrow 7 col 2   \n", "/reports/raw/r08.txt": "row 8 col 0   \nrow 8 col 1   \nrow 8 col 2   \n", "/reports/raw/r09.txt": "row 9 col 0   \nrow 9 col 1   \nrow 9 col 2   \n", "/reports/raw/r10.txt": "row 10 col 0   \nrow 10 col 1   \nrow 10 col 2   \n", "/reports/raw/r11.txt": "row 11 col 0   \nrow 11 col 1   \nrow 11 col 2   \n", "/reports/raw/r12.txt": "row 12 col 0   \nrow 12 col 1   \nrow 12 col 2   \n", "/scratch/build.tmp": "build.tmp\n", "/scratch/cache.tmp": "cache.tmp\n", "/scratch/keep.txt": "keep.txt\n", "/scratch/session.tmp": "session.tmp\n"}
+locks = ["/scratch/build.tmp", "/scratch/cache.tmp", "/scratch/session.tmp"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

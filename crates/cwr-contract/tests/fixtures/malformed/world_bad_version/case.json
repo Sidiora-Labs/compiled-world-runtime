@@ -1,0 +1,15 @@
+{
+  "class": "world_bad_version",
+  "clause": "3.4",
+  "description": "world.version is not MAJOR.MINOR.PATCH.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 12,
+      "col": 11,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

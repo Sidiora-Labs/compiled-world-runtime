@@ -1,0 +1,18 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Manifest for t052-collect-twice. The instruction given to the model is task.md; this file is
+# harness metadata and is never rendered to the model.
+
+[meta]
+format = "cwr.task"
+schema_version = 1
+
+[task]
+id = "t052-collect-twice"
+title = "Collect nightly jobs around a conversion"
+bin = "long"
+rules = ["jobs.result[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"]
+rule_reuse = true
+reused_rule = "jobs.result[2]:CONFLICT"
+files = ["task.md", "initial.kvx", "success.py", "bin", "rules", "task.kvx"]
+solution = "benchmark/solutions/t052-collect-twice.py"

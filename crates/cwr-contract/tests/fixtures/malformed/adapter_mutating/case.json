@@ -1,0 +1,15 @@
+{
+  "class": "adapter_mutating",
+  "clause": "3.3",
+  "description": "An adapter whose side_effect is not external.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 11,
+      "col": 15,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

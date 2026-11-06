@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t009-cancel-unfinished. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t009-cancel-unfinished"
+
+[fs]
+files = {}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {"job-backup": {"kind": "backup", "n": 10, "submitted_at": -50}, "job-cleanup": {"kind": "cleanup", "n": 300, "submitted_at": -5}, "job-reindex": {"kind": "reindex", "n": 500, "submitted_at": 0}}

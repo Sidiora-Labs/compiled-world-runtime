@@ -1,0 +1,27 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Migration fixtures for migrations/0_2_0_kv_namespaces.py. Each [migration.<name>] gives a
+# 0.1.0 Instance state (before) and the required 0.2.0 state (after). Contract tests require
+# migrate(before) == after and migrate(after) == after (idempotence). Bytes are UTF-8 strings.
+
+[meta]
+format = "cwr.migration-fixture"
+schema_version = 1
+module = "kv"
+migration = "migrations/0_2_0_kv_namespaces.py"
+
+[migration.flat]
+before = {"kv": {"last_receipt": "p_0001", "golf-1": "p_0002"}, "fs": {"files": {}, "locks": []}}
+after = {"kv": {"namespaces": {"default": {"last_receipt": "p_0001", "golf-1": "p_0002"}}}, "fs": {"files": {}, "locks": []}}
+
+[migration.empty]
+before = {"kv": {}}
+after = {"kv": {"namespaces": {}}}
+
+[migration.flat_key_named_namespaces]
+before = {"kv": {"namespaces": "v"}}
+after = {"kv": {"namespaces": {"default": {"namespaces": "v"}}}}
+
+[migration.already_namespaced]
+before = {"kv": {"namespaces": {"default": {"a": "1"}}}}
+after = {"kv": {"namespaces": {"default": {"a": "1"}}}}

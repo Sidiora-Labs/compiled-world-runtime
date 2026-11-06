@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t016-finish-queue-item. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t016-finish-queue-item"
+
+[fs]
+files = {"/queue/job-17.txt": "job 17: resize images\n"}
+locks = ["/queue/job-17.txt"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

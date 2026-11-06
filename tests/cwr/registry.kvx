@@ -1,0 +1,417 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# CWR qualification registry (task 0.2; spec/cwr/verification.md sections 2 and 5).
+# One [case.CWR-NNN] block per stable case. Identity, tier, reqs and tasks mirror spec/cwr/spec.kvx; the
+# expected assertion inventory a1..aN is drawn from the case's required independent oracle. An assertion id
+# on the wire is "<case>.<key>", for example "CWR-019.a1".
+#
+# Keys per case:
+#   title, tier, reqs, tasks   identity, cross-checked against spec/cwr/spec.kvx by tests/cwr/qualify.py
+#   a1 .. aN                   the registered assertion inventory (consecutive from a1); a case without an
+#                              inventory can never be marked PASS
+#   subsets                    task id -> the registered component subset that task's driver reports; the
+#                              union covers the inventory; a task-scope PASS never changes the case status
+#   requires_build             true when a PASS must name a registered Build hash
+#   registered_builds          sha256:<64hex> Build hashes a PASS may use; empty until the Builds exist
+#   registered_seeds           seeds a PASS may use; empty means any seed recorded in the ledger header
+#   cassette_digest            registered cassette set digest or null; when set a PASS must match it
+#   status, evidence           UNRUN with evidence null, or the outcome of the latest checker-accepted
+#                              case-scope attempt record (in attempt-index order) and that record's repository
+#                              path; written only by tests/cwr/qualify.py
+# [meta] index_length and index_head pin the hash-chained append-only attempt index
+# tests/cwr/evidence/index.jsonl (number of entries and sha256 of the last line; null when empty). Only
+# tests/cwr/qualify.py appends to the index and re-pins the head, under one lock; a record that is not an
+# index entry, an indexed record that is missing and a rewritten entry are all detected by the checker.
+# Each assertion is recomputed by an independent oracle (built into tests/cwr/check_evidence.py for CWR-019,
+# tests/cwr/oracles/CWR_NNN.py for every other case, added by the task that owns the case); an assertion with
+# no oracle is UNVERIFIED and can never be PASS.
+# Campaign cases also carry matrix (hypothesis -> arms, task count, seeds per task) and
+# preregistration_digest (null until benchmark/preregistration.kvx is committed); a campaign PASS needs the
+# complete matrix and a matching pre-registration digest.
+# Every experimental arm is a CWR Build with one pillar ablated; nothing here names any other agent or harness.
+
+[meta]
+format = "cwr.registry"
+registry_version = 1
+schema_version = 1
+spec = "spec/cwr/spec.kvx"
+schema = "tests/cwr/evidence.schema.json"
+evidence_root = "tests/cwr/evidence"
+tiers = ["component", "integration", "campaign", "release"]
+outcomes = ["UNRUN", "PASS", "FAIL", "BLOCKED"]
+index = "tests/cwr/evidence/index.jsonl"
+index_length = 5
+index_head = "sha256:70b751dee32b1bb832c18c67da4078b766427d17cf18cfb2a3f9a0f011fcfafb"
+
+[case.CWR-001]
+title = "Contract grammar and closed failure envelope"
+tier = "component"
+reqs = ["2.3", "3.1", "3.2", "3.3", "3.4", "3.6"]
+tasks = ["0.3"]
+a1 = "Every malformed World Source input (adapter with effects, read_only primitive with effects, precondition with an unknown code, world file missing memory_mb, state_shape change without a migration, duplicate keys, non-JSON values) is rejected with file, section and line."
+a2 = "Valid World Source input round-trips through the typed model byte-for-byte."
+a3 = "No failure code outside the eleven-member envelope can be constructed in memory."
+a4 = "Deserialising a failure code outside the envelope from the wire fails."
+subsets = {"0.3": ["a1", "a2", "a3", "a4"]}
+requires_build = false
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-001/20261106T135828Z-1.json"
+
+[case.CWR-002]
+title = "Compiler closure and visibility lints"
+tier = "component"
+reqs = ["2.1", "2.2", "3.1", "3.5", "4.1"]
+tasks = ["1.1"]
+a1 = "The clean example source passes parse, resolve and lint."
+a2 = "A hidden precondition referencing a mutating primitive stops the pipeline at lint with the expected lint code."
+a3 = "A host import in lib/ stops the pipeline at the expected stage with the expected lint code."
+a4 = "An unknown key stops the pipeline at the expected stage with the expected lint code."
+a5 = "A duplicate primitive stops the pipeline at the expected stage with the expected lint code."
+a6 = "A missing module declaration stops the pipeline at the expected stage with the expected lint code."
+subsets = {"1.1": ["a1", "a2", "a3", "a4", "a5", "a6"]}
+requires_build = false
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-002/20261106T135903Z-1.json"
+
+[case.CWR-003]
+title = "Contract tests and rule determinism"
+tier = "component"
+reqs = ["1.6", "4.2"]
+tasks = ["1.2"]
+a1 = "Every declared precondition failure and effect of refworld is exercised in an ephemeral Instance."
+a2 = "A fixture that leaves a declared effect unmet fails the build naming the primitive."
+a3 = "A declared precondition failure with no reaching fixture fails the build naming the primitive."
+a4 = "A lib defect that emits an undeclared code fails the build naming the primitive."
+a5 = "Repeating each primitive under equal visible conditions yields equal status, result shape and side-effect class."
+subsets = {"1.2": ["a1", "a2", "a3", "a4", "a5"]}
+requires_build = false
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-004]
+title = "ContractDiff, changelog gate and version derivation"
+tier = "component"
+reqs = ["3.6", "4.3", "4.4", "5.5"]
+tasks = ["1.2"]
+a1 = "An independent recomputation of the ContractDiff from both contract sets matches the compiler's for every upgrade-pair fixture."
+a2 = "An undocumented stricter precondition is refused as an uncovered diff entry."
+a3 = "A documented stricter precondition passes the gate with the derived major bump."
+a4 = "A documentation-only change derives a patch bump."
+a5 = "A state_shape change without a named existing migration is refused."
+a6 = "An under-bumped version is refused on both sides of 1.0.0."
+subsets = {"1.2": ["a1", "a2", "a3", "a4", "a5", "a6"]}
+requires_build = false
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-005]
+title = "Immutable, deterministic Build artifacts and generated manual"
+tier = "component"
+reqs = ["1.4", "2.4", "2.5", "4.5", "4.6", "9.2"]
+tasks = ["1.3"]
+a1 = "Compiling refworld on two hosts with different working directories, locales and clock settings yields identical Build hashes."
+a2 = "Flipping one byte of a packaged file is detected when the Build is loaded."
+a3 = "Every primitive appears exactly once in the manual with ordered preconditions, codes, side-effect class and the content-not-guaranteed label where declared."
+a4 = "Every primitive's manual entry equals its compiled contract."
+subsets = {"1.3": ["a1", "a2", "a3", "a4"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-006]
+title = "Ledger, snapshot, world clock and RNG"
+tier = "component"
+reqs = ["1.5", "6.6", "8.1", "8.2", "9.4"]
+tasks = ["2.1"]
+a1 = "Restored state, ledger seq, world_time, rng state and K are identical to the snapshotted Instance."
+a2 = "Every ledger record is durable before its result returns."
+a3 = "No primitive reveals host time."
+a4 = "Two Instances with equal seed and equal ledger prefix draw equal randoms."
+a5 = "A truncated trailing ledger record is refused without explicit recovery."
+subsets = {"2.1": ["a1", "a2", "a3", "a4", "a5"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-007]
+title = "Sandbox closure and resource limits"
+tier = "component"
+reqs = ["1.1", "1.2", "6.1", "6.5"]
+tasks = ["2.2"]
+a1 = "Importing an unlisted module from a turn script is refused as a closure violation."
+a2 = "Calling an unlisted primitive is refused as a closure violation."
+a3 = "Opening a network connection from a turn script is refused as a closure violation."
+a4 = "Reading the host filesystem from a turn script is refused as a closure violation."
+a5 = "Reading the host clock from a turn script is refused as a closure violation."
+a6 = "Exceeding each of cpu_ms, wall_ms, memory_mb, primitive_calls and adapter_calls returns LIMIT naming the limit."
+a7 = "Editing the World Source while an Instance runs produces no observable rule change in that Instance."
+subsets = {"2.2": ["a1", "a2", "a3", "a4", "a5", "a6", "a7"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-008]
+title = "Atomic primitives, ordered preconditions and partial scripts"
+tier = "integration"
+reqs = ["1.3", "1.6", "2.2", "2.6", "6.2", "6.3", "6.4"]
+tasks = ["2.2"]
+a1 = "State after a failing first, second or last precondition equals state before the call."
+a2 = "The first failing precondition in declared order is reported with the primitive name and index."
+a3 = "A script that fails after one successful mutation applied exactly the successful mutations and returned status partial with the trace."
+a4 = "fs.write called twice under equal visible conditions yields equal outcomes."
+a5 = "A lib defect that passes preconditions and then emits an undeclared code is recorded as INVARIANT_VIOLATION."
+subsets = {"2.2": ["a1", "a2", "a3", "a4", "a5"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-009]
+title = "Adapter gateway normalisation, idempotency and cassette replay"
+tier = "integration"
+reqs = ["1.3", "7.1", "7.2", "7.3", "7.4", "7.5", "7.6"]
+tasks = ["2.3", "4.1"]
+a1 = "The stub servers observed exactly the requests the ledger records, with no retries."
+a2 = "A scheduled 503 maps to UNAVAILABLE."
+a3 = "A response stalled past timeout_ms maps to TIMEOUT."
+a4 = "A duplicate idempotency key with a different payload maps to DUPLICATE_KEY."
+a5 = "An identical replay of a keyed request returns the original receipt."
+a6 = "A malformed response body maps to INVALID."
+a7 = "world_time advanced by the declared tick regardless of host duration."
+a8 = "Replay mode with the network namespace unreachable produced identical outcomes and opened no connection."
+a9 = "A cassette miss in replay mode returned UNAVAILABLE."
+subsets = {"2.3": ["a2", "a3", "a4", "a5", "a6", "a7", "a9"], "4.1": ["a1", "a8"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-010]
+title = "Crash recovery and ledger replay"
+tier = "integration"
+reqs = ["6.6", "8.3", "8.4", "8.5"]
+tasks = ["2.4"]
+a1 = "After a kernel kill at each of the three boundaries the stub server saw exactly one request."
+a2 = "The ledger records the interrupted turn as status error with code UNAVAILABLE."
+a3 = "No external primitive re-executes after recovery."
+a4 = "Replaying a 40-turn Instance from seed, initial state, Build and cassettes yields a ledger identical except host_ts and duration_us."
+subsets = {"2.4": ["a1", "a2", "a3", "a4"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-011]
+title = "Controlled upgrade, migrations, recompile notice and outbox"
+tier = "integration"
+reqs = ["3.6", "5.1", "5.2", "5.3", "5.4", "5.5"]
+tasks = ["2.5", "4.3"]
+a1 = "Only cwr build creates Builds: the kernel, harness and SDK contain no write path into build/ or xbuild/."
+a2 = "Upgrades of live Instances across U1 through U6 are atomic."
+a3 = "A failing migration rolls back to the prior snapshot and Build with nothing partial visible."
+a4 = "Recompile notices match the frozen expectations and name every changed primitive the Instance used."
+a5 = "Repeated world.propose calls change nothing observable inside the world."
+a6 = "An upgrade to a lower version is refused."
+a7 = "An upgrade to a different world name is refused."
+subsets = {"2.5": ["a1", "a2", "a3", "a4", "a5", "a6", "a7"], "4.3": ["a2", "a4"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-012]
+title = "Context composition and turn protocol"
+tier = "integration"
+reqs = ["2.4", "2.5", "9.1", "9.2", "9.3", "9.4", "9.5"]
+tasks = ["3.1"]
+a1 = "The manual prefix is byte-identical across 50 turns and two Instances of one Build."
+a2 = "A turn with zero fenced blocks executes nothing and advances no tick."
+a3 = "A turn with two fenced blocks executes nothing and advances no tick."
+a4 = "The context contains only the manual, the notice, a ledger tail of K lines and the result envelope."
+a5 = "The rendered manual equals the Build's manual.md with the ten sections and every primitive entry present."
+subsets = {"3.1": ["a1", "a2", "a3", "a4", "a5"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-013]
+title = "Experimental ablation builds and kernel gate"
+tier = "integration"
+reqs = ["5.3", "10.1", "10.2", "10.3", "10.4", "10.5"]
+tasks = ["3.2"]
+a1 = "Each experimental Build's ContractDiff against control lists only flag-attributable entries."
+a2 = "Loading an experimental Build without --allow-experimental is refused."
+a3 = "The drift fires at turn 8 with a ledger record of kind drift."
+a4 = "The manual is byte-identical across the drift injection."
+a5 = "The changelog, version-only and silent notice renderings differ only as declared."
+a6 = "The second primitive call in the one-primitive arm returns LIMIT with primitive_calls=1."
+subsets = {"3.2": ["a1", "a2", "a3", "a4", "a5", "a6"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-014]
+title = "Reference world rules, stub servers and cassettes"
+tier = "integration"
+reqs = ["7.5", "11.1", "11.5"]
+tasks = ["4.1"]
+a1 = "Every declared failure of every refworld primitive and adapter is reached."
+a2 = "The stub servers emit only declared codes."
+a3 = "The cassette digest matches benchmark/suite.kvx."
+a4 = "The frozen cassette set replays without network."
+subsets = {"4.1": ["a1", "a2", "a3", "a4"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-015]
+title = "Task suite bins and success predicates"
+tier = "integration"
+reqs = ["11.2", "11.3"]
+tasks = ["4.2"]
+a1 = "Every reference solution satisfies its predicate in replay mode on two runs."
+a2 = "Bin membership follows the primitive counts recomputed from the ledgers."
+a3 = "Predicates are deterministic across runs."
+a4 = "Predicates import neither the kernel crate nor any text parser."
+subsets = {"4.2": ["a1", "a2", "a3", "a4"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-016]
+title = "Upgrade pairs U1 through U6"
+tier = "integration"
+reqs = ["5.2", "5.3", "11.4"]
+tasks = ["4.3"]
+a1 = "Each pair U1 through U6 compiles with the derived bump and the frozen ContractDiff."
+a2 = "The post-upgrade reference solution succeeds on each upgraded Instance."
+a3 = "The pre-upgrade reference solution fails with the documented code after the upgrade."
+a4 = "Recompile notices match the frozen expectations."
+subsets = {"4.3": ["a1", "a2", "a3", "a4"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-017]
+title = "Harness isolation and ledger-only metrics"
+tier = "integration"
+reqs = ["8.5", "12.1", "12.3", "12.4", "12.6"]
+tasks = ["5.1"]
+a1 = "The scan of benchmark/harness, arms, prompts and campaign files finds no reference to any other agent or harness."
+a2 = "Metrics recomputed from the ledgers alone equal the harness output for two seeds of one short task in replay mode."
+a3 = "The live-mode run is labelled and excluded from pooled results."
+subsets = {"5.1": ["a1", "a2", "a3"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-018]
+title = "Hypothesis campaigns H1 through H4"
+tier = "campaign"
+reqs = ["5.3", "10.2", "10.3", "10.4", "12.2", "12.5"]
+tasks = ["5.2", "5.3"]
+a1 = "The H1 matrix (frozen, drift-1, drift-3 on 60 tasks x 10 seeds) is complete with registered arms and seeds in every ledger header."
+a2 = "The H2 matrix (script, one-primitive on 60 tasks x 10 seeds) is complete with registered arms and seeds in every ledger header."
+a3 = "The H3 matrix (K=5, K=20, K=full on 60 tasks x 10 seeds) is complete with registered arms and seeds in every ledger header."
+a4 = "The H4 matrix (changelog, version-only, silent on 6 pairs x 10 seeds) is complete with registered arms and seeds in every ledger header."
+a5 = "Drift records appear at the scheduled turns."
+a6 = "The three H4 Builds differ only in notice rendering by ContractDiff."
+a7 = "Every report number equals the independent recomputation from the ledgers."
+a8 = "Pre-registration digests match the executed metric definitions."
+subsets = {"5.2": ["a1", "a2", "a5", "a7", "a8"], "5.3": ["a3", "a4", "a6", "a7", "a8"]}
+matrix = {"H1": {"arms": ["frozen", "drift-1", "drift-3"], "tasks": 60, "seeds": 10}, "H2": {"arms": ["script", "one-primitive"], "tasks": 60, "seeds": 10}, "H3": {"arms": ["K=5", "K=20", "K=full"], "tasks": 60, "seeds": 10}, "H4": {"arms": ["changelog", "version-only", "silent"], "tasks": 6, "seeds": 10}}
+preregistration_digest = null
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null
+
+[case.CWR-019]
+title = "Evidence registry and false-success traps"
+tier = "component"
+reqs = ["13.2", "13.3", "13.4"]
+tasks = ["0.2"]
+a1 = "An attempt record claiming PASS with no assertions fails nonzero at the checker, and a driver that exits 0 without assertions is never recorded as PASS."
+a2 = "An attempt record claiming PASS with a Build hash different from the registered Build fails nonzero at the checker."
+a3 = "An attempt record whose ledger was modified after recording fails nonzero at the checker."
+a4 = "An attempt record claiming PASS with a seed that does not match its ledger header fails nonzero at the checker."
+a5 = "The checker is a separate program from the compiler, kernel, SDK and runner and reads only attempt records, ledgers, final state and the registry."
+a6 = "A component PASS for a registered subset leaves the parent case UNRUN."
+a7 = "Every attempt is an immutable, append-only record carrying every evidence field; a record missing any field is rejected."
+a8 = "A case without a registered assertion inventory cannot be marked PASS."
+subsets = {"0.2": ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"]}
+requires_build = false
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "PASS"
+evidence = "tests/cwr/evidence/CWR-019/20261106T133347Z-1.json"
+
+[case.CWR-020]
+title = "Specification, documentation and release closure"
+tier = "release"
+reqs = ["13.1", "13.5", "14.1", "14.2", "14.3", "14.4"]
+tasks = ["0.1", "6.1", "6.2"]
+a1 = "Authoring validation passes without executing product code."
+a2 = "Authoring validation fails on a tampered case status."
+a3 = "Authoring validation fails on a tampered task status."
+a4 = "Every documented command runs against the packaged artifacts."
+a5 = "Every evidence link resolves."
+a6 = "Closure assembled with one case missing names the missing case and refuses the release claim."
+a7 = "Closure lists every case with an executed outcome and recorded owner acceptance."
+subsets = {"0.1": ["a1", "a2", "a3"], "6.1": ["a4", "a5"], "6.2": ["a6", "a7"]}
+requires_build = true
+registered_builds = []
+registered_seeds = []
+cassette_digest = null
+status = "UNRUN"
+evidence = null

@@ -1,0 +1,44 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# refworld World Source: identity, limits, clock and RNG visibility.
+# This is the real reference world, not a pack example: meta.example is absent, so `cwr build
+# examples/refworld` accepts it without --allow-example. Every limit is explicit; the compiler
+# substitutes no defaults (clause 3.4). Values are the proposed choices P13 and P07 in
+# spec/cwr/decisions.md, not measurements.
+#
+# Layout (spec/cwr/world-source.md section 2; nothing outside it lives in this directory, so the
+# directory compiles in place): contracts/{fs,kv,jobs,world}.kvx hold the 29 internal primitives of
+# spec/cwr/reference-world.md section 2; adapters/{search,publish}.kvx hold search.query,
+# publish.post, publish.status and publish.delete, all external, content_guaranteed false, with
+# stub:// endpoints served by benchmark/stubs/{search,publish}_server.py; adapters/*/live.py map the
+# stub wire protocol ({"result": ...} bodies, STATUS_CODES, retry_after in ticks) into the declared
+# shapes of manual/types.md; lib/*.py implement the primitives against the kernel state API
+# (f(state, *params)); fixtures/<module>/<primitive>.kvx reach every declared precondition failure in
+# order and every declared adapter failure (adapter responses captured from the real stubs);
+# migrations/0_2_0_kv_namespaces.py is the pure kv namespace migration of release 0.2.0.
+# Recorded adapter traffic for this world lives in benchmark/cassettes (task 4.1, case CWR-014).
+
+[meta]
+format = "cwr.world-source"
+schema_version = 1
+
+[world]
+name = "refworld"
+version = "0.2.0"
+language = "python"
+runtime = "3.12"
+modules = ["fs", "kv", "jobs", "search", "publish", "world"]
+
+[limits]
+cpu_ms = 5000
+wall_ms = 30000
+memory_mb = 256
+primitive_calls = 500
+adapter_calls = 50
+
+[clock]
+tick_per_primitive = 1
+tick_per_turn = 10
+
+[rng]
+seed_visible = true

@@ -1,0 +1,15 @@
+{
+  "class": "unknown_manual_file",
+  "clause": "3.1",
+  "description": "A manual prose file outside the four named sections.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "manual/extra.md",
+      "line": 1,
+      "col": 1,
+      "kind": "unknown_file",
+      "code": "CWR-C001"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t032-rotate-logs. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t032-rotate-logs"
+
+[fs]
+files = {"/logs/app.log": "app live\n", "/logs/app.log.1": "app gen 1\n", "/logs/app.log.2": "app gen 2\n", "/logs/app.log.3": "app gen 3\n", "/logs/db.log": "db live\n", "/logs/db.log.1": "db gen 1\n", "/logs/db.log.2": "db gen 2\n", "/logs/db.log.3": "db gen 3\n"}
+locks = ["/logs/app.log", "/logs/db.log"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

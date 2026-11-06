@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t002-remove-old-log. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t002-remove-old-log"
+
+[fs]
+files = {"/tmp/keep.log": "keep me\n", "/tmp/old.log": "rotated 2026-10-01\n", "/tmp/session.log": "session 42\n"}
+locks = ["/tmp/old.log"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

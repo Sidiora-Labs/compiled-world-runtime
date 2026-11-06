@@ -1,0 +1,15 @@
+{
+  "class": "world_bad_language",
+  "clause": "3.4",
+  "description": "world.language other than python.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 13,
+      "col": 12,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

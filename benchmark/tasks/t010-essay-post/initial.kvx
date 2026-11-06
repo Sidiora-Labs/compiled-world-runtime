@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t010-essay-post. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t010-essay-post"
+
+[fs]
+files = {"/posts/essay.txt": "On worlds and bodies: why a harness that stays still under the model's feet lets the model spend its context on the task instead of on rediscovering which tools exist today, which ones changed overnight, and which failures mean what\n\nA world is not a body.\n"}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

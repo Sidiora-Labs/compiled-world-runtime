@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t014-report-slot. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t014-report-slot"
+
+[fs]
+files = {}
+locks = []
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {"batch-1": {"kind": "batch", "n": 26, "submitted_at": -1}, "batch-2": {"kind": "batch", "n": 900, "submitted_at": -1}, "batch-3": {"kind": "batch", "n": 900, "submitted_at": -1}, "batch-4": {"kind": "batch", "n": 900, "submitted_at": -1}, "batch-5": {"kind": "batch", "n": 900, "submitted_at": -1}, "batch-6": {"kind": "batch", "n": 900, "submitted_at": -1}, "batch-7": {"kind": "batch", "n": 900, "submitted_at": -1}, "batch-8": {"kind": "batch", "n": 900, "submitted_at": -1}}

@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t053-purge-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t053-purge-twice"
+
+[fs]
+files = {"/queue/active.job": "active\n", "/queue/stale-1.job": "stale 1\n", "/queue/stale-2.job": "stale 2\n", "/queue/stale-3.job": "stale 3\n", "/queue/stale-4.job": "stale 4\n"}
+locks = ["/queue/stale-1.job", "/queue/stale-2.job", "/queue/stale-3.job", "/queue/stale-4.job"]
+
+[kv]
+namespaces = {"jobs-v1": {"job-1": "payload 1", "job-2": "payload 2", "job-3": "payload 3", "job-4": "payload 4", "job-5": "payload 5", "job-6": "payload 6", "job-7": "payload 7"}}
+
+[jobs]
+jobs = {}

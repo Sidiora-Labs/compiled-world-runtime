@@ -1,0 +1,2 @@
+world.random[stream]
+fs.write[1]:LOCKED

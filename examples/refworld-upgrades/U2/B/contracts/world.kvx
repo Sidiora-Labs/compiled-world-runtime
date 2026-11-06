@@ -1,0 +1,69 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Rule contracts for the world module: the world clock, Build identity, limits, the RNG stream,
+# the ledger view and the proposal outbox. No primitive reveals host time, host identity or
+# process identity. Catalogue: spec/cwr/reference-world.md section 2.5.
+# world.random and world.propose are mutating: random advances the RNG state captured in snapshots,
+# propose appends a proposal ledger record and an outbox line. Neither touches module state.
+# In effects, the name result denotes the primitive's returned value (a convention of this world: the effect grammar has no other name for the returned value).
+
+[meta]
+format = "cwr.contract"
+schema_version = 1
+module = "world"
+
+[primitive.world.now]
+side_effect = "read_only"
+params = {}
+returns = "int"
+preconditions = []
+effects = []
+doc = "Current world time in ticks. Never fails."
+
+[primitive.world.version]
+side_effect = "read_only"
+params = {}
+returns = "str"
+preconditions = []
+effects = []
+doc = "Semantic version of the Build this Instance is bound to. Never fails."
+
+[primitive.world.seed]
+side_effect = "read_only"
+params = {}
+returns = "int"
+preconditions = []
+effects = []
+doc = "The Instance seed. Present because rng.seed_visible is true in this Build. Never fails."
+
+[primitive.world.limits]
+side_effect = "read_only"
+params = {}
+returns = "Limits"
+preconditions = []
+effects = []
+doc = "Configured limits and clock values of this Build and the primitive and adapter calls remaining in this turn. Never fails."
+
+[primitive.world.random]
+side_effect = "mutating"
+params = {}
+returns = "int"
+preconditions = []
+effects = ["result >= 0", "result < 4294967296"]
+doc = "Next draw from the Instance random stream, an integer from 0 to 4294967295. Each call advances the stream by one draw; equal seeds and equal histories give equal draws."
+
+[primitive.world.history]
+side_effect = "read_only"
+params = {"n": "int"}
+returns = "list[LedgerRecord]"
+preconditions = [["n >= 0 and n <= 500", "INVALID"]]
+effects = []
+doc = "The last n ledger records of this Instance, oldest first, without host fields. Refused when n is outside 0 to 500."
+
+[primitive.world.propose]
+side_effect = "mutating"
+params = {"text": "str"}
+returns = "str"
+preconditions = [["len(text) <= 4096", "INVALID"]]
+effects = ["len(result) > 0"]
+doc = "Send text to the human owner and return a proposal id. A proposal is recorded in the ledger and changes nothing inside this Build. Refused when text exceeds 4096 characters."

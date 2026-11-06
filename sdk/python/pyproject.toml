@@ -1,0 +1,25 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Packaging of the CWR Python SDK runtime (task 6.1): the codec, RPC client, sandbox runner and
+# the templates the compiler renders each Build's generated SDK from. Standard library only; the
+# build requirements are pinned to the versions the release was packaged with (RELEASE.md).
+
+[build-system]
+requires = ["setuptools==68.1.2", "wheel==0.42.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cwr-sdk"
+version = "0.1.0"
+description = "Compiled World Runtime SDK runtime: codec, RPC client, sandbox runner and SDK templates."
+requires-python = ">=3.12"
+dependencies = []
+license = { text = "LicenseRef-Sidiora-DEV-OSS-1.0" }
+authors = [{ name = "Sidiora Labs Inc." }]
+
+[tool.setuptools]
+packages = ["cwr", "cwr.templates"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+"cwr.templates" = ["*.tmpl"]

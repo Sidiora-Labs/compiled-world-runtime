@@ -1,0 +1,6 @@
+# Two search batches around a filing run
+
+Do these steps in order. First run every query in /q/early.txt (one per line) with a limit of one
+result and write the title of each top hit, one per line in query order, to /out/early.md. Then move
+every file under /incoming to /sorted with the same name and lock it there. Finally do the same as
+the first step for /q/late.txt, writing /out/late.md.

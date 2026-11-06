@@ -1,0 +1,19 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Initial Instance state for t050-locked-pages-twice. Loaded by cwr instance create; identical for
+# every arm and seed. Sections follow the state view in benchmark/predicates/common.py.
+
+[meta]
+format = "cwr.initial-state"
+schema_version = 1
+task = "t050-locked-pages-twice"
+
+[fs]
+files = {"/docs/d01.txt": "yyyyyyyyyyy", "/docs/d02.txt": "yyyyyyyyyyyyyyyyyyyyyy", "/docs/d03.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d04.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d05.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d06.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d07.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d08.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d09.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/docs/d10.txt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy", "/drafts/about.html": "<p>about, revised</p>\n", "/drafts/contact.html": "<p>contact, revised</p>\n", "/drafts/home.html": "<p>home, revised</p>\n", "/site/about.html": "<p>about, old</p>\n", "/site/contact.html": "<p>contact, old</p>\n", "/site/home.html": "<p>home, old</p>\n"}
+locks = ["/site/about.html", "/site/contact.html", "/site/home.html"]
+
+[kv]
+namespaces = {}
+
+[jobs]
+jobs = {}

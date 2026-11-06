@@ -1,0 +1,3 @@
+fs.delete[2]:LOCKED
+kv.del[1]:NOT_FOUND
+kv.get[1]:NOT_FOUND

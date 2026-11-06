@@ -1,0 +1,15 @@
+{
+  "class": "read_only_with_effects",
+  "clause": "3.2",
+  "description": "A read_only primitive declares an effect.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 15,
+      "col": 11,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

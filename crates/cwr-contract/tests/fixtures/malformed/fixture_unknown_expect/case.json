@@ -1,0 +1,15 @@
+{
+  "class": "fixture_unknown_expect",
+  "clause": "2.3",
+  "description": "A fixture expects a code outside the envelope.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/fs/delete.kvx",
+      "line": 15,
+      "col": 10,
+      "kind": "envelope",
+      "code": "CWR-F001"
+    }
+  ]
+}

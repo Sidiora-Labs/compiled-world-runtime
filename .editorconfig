@@ -1,0 +1,21 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yaml,yml,json,toml,cff}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false

@@ -1,0 +1,107 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Contract-test fixtures for adapter publish.post, in cassette form. Each [case.<name>] runs the gateway in
+# replay mode: prior lists cassette entries consumed earlier in the same ephemeral Instance, response is
+# the recorded stub response for the call under test, or null when no request is sent (a precondition
+# failed, or a key adapter replays its stored outcome). Responses are {"status", "body"} plus
+# optional "delay_ms" (host time; past timeout_ms the gateway reports TIMEOUT). request_hash is the
+# canonical request hash of benchmark/cassettes/FORMAT.md section 3, sha256 over {"adapter", "params"}
+# as sorted-key compact JSON. expect, precondition: as for primitives.
+# Value codec: {"$repeat": [s, n]} is s repeated n times.
+# Every response below was captured from benchmark/stubs/publish_server.py (seed 1, default rules plus
+# the named schedule fault, allow_undeclared false), except a case named synthetic_*, whose status the
+# stubs never send; it pins the gateway's undeclared_status fallback.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "publish"
+primitive = "publish.post"
+
+[case.pre_1_invalid]
+world_time = 0
+state = {}
+prior = []
+params = {"body":"b","key":"k-1","title":{"$repeat":["t",201]}}
+expect = "INVALID"
+precondition = 1
+request_hash = null
+sequence = null
+response = null
+
+[case.duplicate_key]
+world_time = 1
+state = {}
+prior = [{"params":{"body":"first body","key":"golf-1","title":"Golf"},"request_hash":"sha256:b5a2ef3977da3395e93af6a8dc000c0d6621d4b9e25400df8a3dded8957e4793","response":{"body":{"result":{"accepted_at":0,"key":"golf-1","post_id":"post_c13ff69aedad4e40"}},"status":200},"sequence":1,"world_time":0}]
+params = {"body":"second body","key":"golf-1","title":"Golf"}
+expect = "DUPLICATE_KEY"
+precondition = null
+request_hash = "sha256:5b5f22ccf6b841e5a55240e3129d1a7d537d2df031a78dfe5704bc77b311f159"
+sequence = 1
+response = {"body":{"code":"DUPLICATE_KEY","detail":"key already used with a different payload","receipt":{"accepted_at":0,"key":"golf-1","post_id":"post_c13ff69aedad4e40"}},"status":409}
+
+[case.identical_replay]
+world_time = 1
+state = {}
+prior = [{"params":{"body":"first body","key":"golf-1","title":"Golf"},"request_hash":"sha256:b5a2ef3977da3395e93af6a8dc000c0d6621d4b9e25400df8a3dded8957e4793","response":{"body":{"result":{"accepted_at":0,"key":"golf-1","post_id":"post_c13ff69aedad4e40"}},"status":200},"sequence":1,"world_time":0}]
+params = {"body":"first body","key":"golf-1","title":"Golf"}
+expect = "ok"
+precondition = null
+request_hash = null
+sequence = null
+response = null
+
+[case.rate_limited]
+world_time = 3
+state = {}
+prior = [{"params":{"body":"b","key":"d-1","title":"Digest 1"},"request_hash":"sha256:466002fac949a3bfb7837796c02e45944b8a7788e618a6c970d46fe3f1684f0e","response":{"body":{"result":{"accepted_at":0,"key":"d-1","post_id":"post_492e5d39fc822cbd"}},"status":200},"sequence":1,"world_time":0},{"params":{"body":"b","key":"d-2","title":"Digest 2"},"request_hash":"sha256:b458c02dee852dbc8ae0564e660d13f2c061af0cf5dfedbc3d8cfcc6b3ffb3db","response":{"body":{"result":{"accepted_at":1,"key":"d-2","post_id":"post_982095547ce97702"}},"status":200},"sequence":1,"world_time":1},{"params":{"body":"b","key":"d-3","title":"Digest 3"},"request_hash":"sha256:8c9727c12e89382927908a8a5f4816ad3606cad6a10d7fe0e50a8f891fe3a916","response":{"body":{"result":{"accepted_at":2,"key":"d-3","post_id":"post_8992b4ac9ac1ceb7"}},"status":200},"sequence":1,"world_time":2}]
+params = {"body":"b","key":"d-4","title":"Digest 4"}
+expect = "RATE_LIMITED"
+precondition = null
+request_hash = "sha256:de78aced117a4d9f610f998ae58324e07c8d42d86209d2890a81c8d2466fb31a"
+sequence = 1
+response = {"body":{"code":"RATE_LIMITED","detail":"3 accepted posts per 100 ticks","retry_after":97},"status":429}
+
+[case.unavailable]
+world_time = 0
+state = {}
+prior = []
+params = {"body":"b","key":"k-1","title":"Title"}
+expect = "UNAVAILABLE"
+precondition = null
+request_hash = "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9"
+sequence = 1
+response = {"body":{"code":"UNAVAILABLE","detail":"stub schedule UNAVAILABLE"},"status":503}
+
+[case.malformed]
+world_time = 0
+state = {}
+prior = []
+params = {"body":"b","key":"k-1","title":"Title"}
+expect = "INVALID"
+precondition = null
+request_hash = "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9"
+sequence = 1
+response = {"body":{"detail":"stub schedule MALFORMED","malformed":true},"status":200}
+
+[case.timeout]
+world_time = 0
+state = {}
+prior = []
+params = {"body":"b","key":"k-1","title":"Title"}
+expect = "TIMEOUT"
+precondition = null
+request_hash = "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9"
+sequence = 1
+response = {"body":{"result":{"accepted_at":0,"key":"k-1","post_id":"post_a32ef1a89199caf1"}},"delay_ms":6000,"status":200}
+
+[case.ok]
+world_time = 0
+state = {}
+prior = []
+params = {"body":"b","key":"k-1","title":"Title"}
+expect = "ok"
+precondition = null
+request_hash = "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9"
+sequence = 1
+response = {"body":{"result":{"accepted_at":0,"key":"k-1","post_id":"post_a32ef1a89199caf1"}},"status":200}

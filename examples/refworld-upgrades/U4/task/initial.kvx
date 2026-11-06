@@ -1,0 +1,15 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Starting Instance state for the post-upgrade task of pair U4, loaded on Build A (refworld 0.2.0, kv value limit 1024 bytes).
+# Layout as benchmark/tasks/*/initial.kvx: one section per module, keys are that module's state fields.
+# File contents and kv values are UTF-8 text.
+
+[meta]
+format = "cwr.task-state"
+schema_version = 1
+pair = "U4"
+side = "A"
+
+[fs]
+files = {"/receipts/r1.txt": "receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; receipt one; r", "/receipts/r2.txt": "receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two; receipt two", "/receipts/r3.txt": "receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; receipt three; "}
+locks = []

@@ -1,0 +1,15 @@
+{
+  "class": "empty_doc",
+  "clause": "3.2",
+  "description": "A primitive with an empty doc string.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/kv.kvx",
+      "line": 24,
+      "col": 7,
+      "kind": "doc",
+      "code": "CWR-D001"
+    }
+  ]
+}

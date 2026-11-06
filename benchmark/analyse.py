@@ -14,34 +14,58 @@ Refusals (non-zero exit, no report written):
   3  metrics.py or arms.kvx digest differs from the registered digest
   2  the registration is a draft (null campaign inputs) and --draft-ok was not given
   4  integrity failure: a ledger header disagrees with its cell (arm, seed, model, tail, Build hash,
-     experimental stamp), a cell is unregistered, a ledger is malformed, or replay ledgers with
-     different cassette digests would be pooled
+     experimental stamp), a cell is unregistered, a ledger is malformed, replay ledgers with
+     different cassette digests would be pooled, the task suite's recomputed digest is not the
+     registered one, an attempt was run under other registration digests than the current ones,
+     or a campaign file (benchmark/campaigns/h<N>.kvx) registered other digests than the current
+     pre-registration
   5  --require-complete and the arm matrix has a missing cell
   1  --check FILE and the recomputed report differs from FILE
 
 Excluded and reported (never pooled): live-mode attempts, unregistered attempts, Instances with an
-INVARIANT_VIOLATION record, and attempts that ended with a model or kernel error. Live runs under
+INVARIANT_VIOLATION record, Instances with a record stamped language_guard=false (a turn run with
+part of the sandbox switched off), and attempts that ended with a model or kernel error. Live runs under
 benchmark/results/live are analysed only with --live, into a separately labelled report.
 
-Inputs: benchmark/results/h<N>/<arm>/<task>/<seed>/{ledger.jsonl, final_state.kvx, attempt.kvx, states/},
+Inputs: benchmark/results/h<N>/<arm>/<task>/<seed>/{ledger.jsonl, final_state.kvx, attempt.kvx},
 benchmark/preregistration.kvx, benchmark/harness/arms.kvx, benchmark/suite.kvx (bins, rule-reuse rules),
-benchmark/upgrades.kvx (pair tasks, changed primitives, misuse codes) and each task's success.py.
+benchmark/upgrades.kvx (pair tasks, changed primitives, misuse codes), each task's success.py and the
+campaign registrations benchmark/campaigns/h<N>.kvx: the per-task drift Builds of H1 (h1.kvx
+[task.<id>].<arm>_build) and the Build A and per-arm Build B of each H4 pair (h4.kvx [pair.<id>]),
+against which every per_task and pair_b ledger is checked.
 Harness-recorded token counts are read from attempt records and reported only in a separately labelled
 block. Every included Instance's recomputed values are listed under `instances`, so a report can be
 compared cell by cell with the values the runner recorded in each attempt's [metrics] section. The
-runner's [metrics] are never read here: every number is recomputed from the ledger and states.
+runner's [metrics] are never read here: every number is recomputed from the ledger and final state.
+
+Turns to success (experiments.md section 4) replays state per turn from the ledger. For an Instance
+whose final state satisfies its predicate, a fresh Instance is created through the real `cwr` CLI
+from the ledger header (Build, seed, tail size, arm, model, cassette digest, initial state), the turn
+messages the runner submitted (messages/turn_NNNN.md) are re-submitted in order with the gateway in
+replay mode, every upgrade record is re-applied where the ledger has it, and after every action the
+replayed ledger must equal the recorded ledger record for record, ignoring only the fields in
+REPLAY_IGNORED (host fields, the Instance id, and the snapshot address and hash chain that depend
+on it). The predicate is evaluated over the replayed state after each turn and the first true turn
+is the value. A message is only a replay input: any message that would produce a different state
+produces a different ledger, which is refused (exit 4) as an integrity failure, so no file other than
+the ledger and final state can change a reported number. A cell without recorded messages, created
+from a snapshot or holding a recovery record falls back to registered convention C7 (the stop rule),
+and the method used is reported per Instance. Failed Instances need no replay: the value is undefined.
 The output is deterministic: no timestamps, sorted keys, seeded resampling.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import contextlib
 import hashlib
 import json
 import math
 import random
 import re
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +97,19 @@ from benchmark.harness.prereg import (
 
 SCHEMA = "cwr.analysis/1"
 BINS = ("short", "medium", "long")
+# Fields a faithful replay cannot reproduce. host_ts and duration_us are host measurements and instance
+# is the new Instance's id. An upgrade record's snapshot is the content address of the kernel's
+# pre-upgrade snapshot file, which embeds the Instance id, so it differs between the original and the
+# replay Instance; the hash chain covers that field and therefore differs from the upgrade record on.
+# Every other field of every record is still compared, which already pins what the chain pins.
+REPLAY_IGNORED = ("host_ts", "duration_us", "instance", "snapshot", "chain")
+MESSAGES_DIR = "messages"
+LEDGER_REPLAY = "ledger_replay"
+UNDEFINED_ON_FAILURE = "undefined_on_failure"
+EMPTY_CASSETTE = (
+    '{"format":"cwr.cassette","label":"analyse-replay","request_hash":"sha256-cwr-canonical-json-v1",'
+    '"schema_version":1}\n'
+)
 RULE_ID = re.compile(r"(?P<primitive>[a-z]+\.[a-z_]+)(?:\[[A-Za-z0-9_]+\])?(?::(?P<code>[A-Z_]+))?")
 EXCLUDED_EXITS = ("model_error", "kernel_error")
 
@@ -163,6 +200,8 @@ class Context:
     tasks_dir: Path
     draft: bool
     predicates: dict[str, Callable] = field(default_factory=dict)
+    campaigns: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    digests: dict[str, str] = field(default_factory=dict)
 
     @property
     def campaign(self) -> dict[str, Any]:
@@ -191,6 +230,17 @@ class Context:
     def task_info(self, task: str) -> dict[str, Any]:
         return self.suite.get(f"task.{task}", {})
 
+    def drift_section(self, hypothesis: str, task: str) -> dict[str, Any] | None:
+        """[task.<id>] of the hypothesis's campaign file (per-task drift Builds), if registered."""
+        return self.campaigns.get(hypothesis, {}).get(f"task.{task}")
+
+    def pair_section(self, hypothesis: str, task: str) -> dict[str, Any] | None:
+        """The [pair.<id>] of the hypothesis's campaign file whose task is `task`, if registered."""
+        for name, body in self.campaigns.get(hypothesis, {}).items():
+            if name.startswith("pair.") and body.get("task") == task:
+                return body
+        return None
+
     def reuse_rule(self, task: str) -> dict[str, str] | None:
         """The reused rule of a rule-reuse task as {primitive, code}, from suite.kvx [task.<id>].reused_rule.
 
@@ -212,7 +262,8 @@ class Context:
 
 
 def load_pairs(path: Path) -> dict[str, dict[str, Any]]:
-    """Map post-upgrade task id to {pair, changed_primitives, misuse_code, predicate?} from upgrades.kvx."""
+    """Map post-upgrade task id to {pair, changed_primitives, misuse_code, misuse_scope, predicate?}
+    from upgrades.kvx; misuse_scope "not_computable" (U2, U5) makes the misuse rate None."""
     if not path.exists():
         return {}
     pairs = {}
@@ -223,6 +274,7 @@ def load_pairs(path: Path) -> dict[str, dict[str, Any]]:
                 "pair": pair,
                 "changed_primitives": list(body.get("changed_primitives", [])),
                 "misuse_code": body.get("misuse_code"),
+                "misuse_scope": body.get("misuse_scope", "call"),
                 "predicate": body.get("predicate"),
             }
     return pairs
@@ -238,10 +290,11 @@ class Cell:
     attempt: dict[str, Any]
     ledger: list[dict[str, Any]]
     final_state: dict[str, Any]
-    states: dict[int, Any] | None
     group: str
     values: dict[str, Any] = field(default_factory=dict)
     excluded: str | None = None
+    states: dict[int, Any] | None = None
+    method: str = UNDEFINED_ON_FAILURE
 
 
 def _norm(stamp: Any) -> Any:
@@ -257,13 +310,6 @@ def read_cell(ctx: Context, hypothesis: str, arm: Arm, task: str, seed_dir: Path
         ledger = read_ledger(seed_dir / "ledger.jsonl")
         final_state = state_view(read_kvx(seed_dir / "final_state.kvx"))
         attempt = read_kvx(seed_dir / "attempt.kvx").get("attempt", {})
-        states = None
-        state_dir = seed_dir / "states"
-        if state_dir.is_dir() and any(state_dir.iterdir()):
-            states = {
-                int(p.stem.split("_")[1]): state_view(read_kvx(p))
-                for p in sorted(state_dir.glob("turn_*.kvx"))
-            }
         metrics.validate_ledger(ledger)
     except (
         OSError,
@@ -283,7 +329,7 @@ def read_cell(ctx: Context, hypothesis: str, arm: Arm, task: str, seed_dir: Path
         group = ctx.task_info(task).get("bin")
         if group not in BINS:
             raise Refused(4, f"{seed_dir}: task {task} has no registered bin in suite.kvx")
-    return Cell(hypothesis, arm, task, seed, seed_dir, attempt, ledger, final_state, states, group)
+    return Cell(hypothesis, arm, task, seed, seed_dir, attempt, ledger, final_state, group)
 
 
 def integrity_errors(ctx: Context, cell: Cell) -> list[str]:
@@ -304,18 +350,15 @@ def integrity_errors(ctx: Context, cell: Cell) -> list[str]:
     model = ctx.campaign.get("model")
     if model and head.get("model") != model:
         errors.append(f"{where}: header model {head.get('model')!r} is not the registered model")
-    build = resolve_build(cell.arm, ctx.control)
-    if build and head.get("build") != build:
-        errors.append(
-            f"{where}: header build {head.get('build')} is not the registered Build {build}"
-        )
     upgrade = next((r for r in cell.ledger if r["kind"] == "upgrade"), None)
+    errors.extend(build_errors(ctx, cell, where, upgrade))
+    errors.extend(digest_errors(ctx, cell, where))
     for record in cell.ledger:
         stamp = _norm(record.get("experimental"))
         if cell.arm.build_binding == "pair_b":
             expected = (
                 None
-                if upgrade is None or record["seq"] <= upgrade["seq"]
+                if upgrade is None or record["seq"] < upgrade["seq"]
                 else cell.arm.experimental_stamp
             )
         else:
@@ -325,7 +368,15 @@ def integrity_errors(ctx: Context, cell: Cell) -> list[str]:
                 f"{where}: seq {record['seq']} experimental stamp {stamp!r} is not {expected!r}"
             )
             break
+    if cell.attempt.get("mode") != "replay":
+        return errors  # a live run has no cassette set
     digest = head.get("cassette_digest", cell.attempt.get("cassette_digest"))
+    recorded = cell.attempt.get("cassette_digest")
+    if "cassette_digest" in head and recorded and recorded != head["cassette_digest"]:
+        errors.append(
+            f"{where}: ledger header cassette digest {head['cassette_digest']} is not the "
+            f"attempt's {recorded}"
+        )
     # A hypothesis whose tasks are outside the suite cassette set (H4's upgrade-pair tasks) registers
     # its own set digest in [hypothesis.<H>].cassette_digest; every other hypothesis uses the campaign's.
     registered = ctx.prereg.get(f"hypothesis.{cell.hypothesis}", {}).get(
@@ -336,6 +387,98 @@ def integrity_errors(ctx: Context, cell: Cell) -> list[str]:
     return errors
 
 
+def build_errors(ctx: Context, cell: Cell, where: str, upgrade: dict[str, Any] | None) -> list[str]:
+    """The ledger's Builds against the registration of the arm's build_binding.
+
+    control and flag arms: the header Build is the one arms.kvx registers. per_task arms (H1 drift):
+    the header Build is campaigns/h<N>.kvx [task.<id>].<arm>_build. pair_b arms (H4): the header
+    Build is the pair's build_a and the upgrade record's new_build is build_b[<arm>].
+    """
+    head = cell.ledger[0]
+    binding = cell.arm.build_binding
+    if binding in ("control", "flag"):
+        build = resolve_build(cell.arm, ctx.control)
+        if build and head.get("build") != build:
+            return [
+                f"{where}: header build {head.get('build')} is not the registered Build {build}"
+            ]
+        return []
+    campaign = f"benchmark/campaigns/{cell.hypothesis.lower()}.kvx"
+    if binding == "per_task":
+        section = ctx.drift_section(cell.hypothesis, cell.task)
+        key = f"{cell.arm.key.replace('-', '_')}_build"
+        build = (section or {}).get(key)
+        if not build:
+            return [f"{where}: {campaign} registers no [task.{cell.task}].{key}"]
+        if head.get("build") != build:
+            return [
+                f"{where}: header build {head.get('build')} is not the registered Build {build}"
+            ]
+        return []
+    pair = ctx.pair_section(cell.hypothesis, cell.task)
+    if pair is None:
+        return [f"{where}: {campaign} registers no pair for task {cell.task}"]
+    errors = []
+    build_a = pair.get("build_a")
+    build_b = (pair.get("build_b") or {}).get(cell.arm.key)
+    if not build_a or not build_b:
+        return [f"{where}: {campaign} registers no build_a or build_b[{cell.arm.key}]"]
+    if head.get("build") != build_a:
+        errors.append(
+            f"{where}: header build {head.get('build')} is not the registered Build A {build_a}"
+        )
+    if upgrade is not None and upgrade.get("new_build") != build_b:
+        errors.append(
+            f"{where}: upgrade to {upgrade.get('new_build')} is not the registered Build B "
+            f"{build_b}"
+        )
+    return errors
+
+
+DIGEST_STAMPS = ("preregistration", "metrics_py", "arms_kvx")
+
+
+def digest_errors(ctx: Context, cell: Cell, where: str) -> list[str]:
+    """An attempt stamped with registration digests must have run under the current ones."""
+    stamped = cell.attempt.get("registration_digests")
+    if stamped is None:
+        return []
+    if not isinstance(stamped, dict):
+        return [f"{where}: attempt registration_digests is not an object"]
+    return [
+        f"{where}: attempt ran under {name} {stamped.get(name)}, not the current {ctx.digests[name]}"
+        for name in DIGEST_STAMPS
+        if name in ctx.digests and stamped.get(name) != ctx.digests[name]
+    ]
+
+
+CAMPAIGN_DIGESTS = {
+    "metrics_py": ("metrics_py",),
+    "arms_kvx": ("arms_kvx", "arms_kvx_at_registration"),
+}
+
+
+def campaign_errors(ctx: Context, hypothesis: str) -> list[str]:
+    """campaigns/h<N>.kvx [registration] digests against the current pre-registration digests.
+
+    A campaign registered under another metrics.py or arms.kvx is a different pre-registration;
+    its attempts are never analysed under this one.
+    """
+    registration = ctx.campaigns.get(hypothesis, {}).get("registration")
+    if registration is None:
+        return []
+    errors = []
+    for name, keys in CAMPAIGN_DIGESTS.items():
+        key = next((k for k in keys if k in registration), None)
+        current = ctx.prereg["digests"].get(name)
+        if key is not None and registration[key] != current:
+            errors.append(
+                f"benchmark/campaigns/{hypothesis.lower()}.kvx registered {name} "
+                f"{registration[key]}, not the current registration's {current}"
+            )
+    return errors
+
+
 def exclusion(ctx: Context, cell: Cell, mode: str) -> str | None:
     if cell.attempt.get("mode") != mode:
         return f"mode {cell.attempt.get('mode')!r} is not {mode!r}"
@@ -343,9 +486,222 @@ def exclusion(ctx: Context, cell: Cell, mode: str) -> str | None:
         return "attempt not run under a complete registration"
     if metrics.has_invariant_violation(cell.ledger):
         return "INVARIANT_VIOLATION recorded: Build defect"
+    if any(r.get("language_guard") is False for r in cell.ledger):
+        return "a turn ran with the sandbox language guard switched off (operator diagnostic)"
     if cell.attempt.get("exit_status") in EXCLUDED_EXITS:
         return f"attempt ended with {cell.attempt['exit_status']}"
     return None
+
+
+# ---------------------------------------------------------------------------------------------
+# Turns to success: state per turn replayed from the ledger
+
+
+class ReplayDivergenceError(Exception):
+    """Re-submitting the recorded turn messages through the kernel does not reproduce the ledger."""
+
+
+def record_divergence(original: list[dict[str, Any]], replayed: list[dict[str, Any]]) -> str | None:
+    """The first difference between the replayed records and the recorded ledger, ignoring host fields.
+
+    The replayed ledger must be a prefix of the recorded one: every replayed record equals the
+    recorded record of the same seq in every field except those in REPLAY_IGNORED. Fields
+    are compared in sorted order with the hash chain last, so the report names the field that moved.
+    """
+    if len(replayed) > len(original):
+        return f"the replay wrote {len(replayed)} records; the ledger holds {len(original)}"
+    for recorded, again in zip(original, replayed, strict=False):
+        keys = sorted(
+            (set(recorded) | set(again)) - set(REPLAY_IGNORED), key=lambda k: (k == "chain", k)
+        )
+        for key in keys:
+            if recorded.get(key, "<absent>") != again.get(key, "<absent>"):
+                return (
+                    f"seq {recorded.get('seq')} field {key!r}: ledger "
+                    f"{json.dumps(recorded.get(key, '<absent>'), sort_keys=True)[:120]}, replay "
+                    f"{json.dumps(again.get(key, '<absent>'), sort_keys=True)[:120]}"
+                )
+    return None
+
+
+def cli_kernel(binary: Path | None) -> Callable[[Path, list[Path]], Any]:
+    """Factory of the real kernel binding (benchmark/harness/run.py CwrCliKernel) in replay mode."""
+
+    def make(home: Path, roots: list[Path]) -> Any:
+        from benchmark.harness.run import CwrCliKernel
+
+        return CwrCliKernel(gateway_mode="replay", binary=binary, home=home, builds=roots)
+
+    return make
+
+
+@dataclass
+class Replayer:
+    """Replays an Instance turn by turn from its ledger and returns the state after each turn.
+
+    make_kernel(home, build_roots) returns a KernelAdapter (benchmark/harness/run.py). The replay
+    Instance lives in a temporary store that is deleted afterwards; nothing under the results tree
+    is written.
+    """
+
+    make_kernel: Callable[[Path, list[Path]], Any]
+    builds: list[Path]
+    cassettes: Path | None
+    tasks_dir: Path
+
+    def _cassette(self, cell: Cell) -> Path | None:
+        if self.cassettes is not None:
+            path = self.cassettes / cell.task / f"seed-{cell.seed}.jsonl"
+            return path if path.is_file() else None
+        recorded = cell.attempt.get("cassette")
+        return Path(recorded) if recorded and Path(recorded).is_file() else None
+
+    def _initial(self, cell: Cell) -> Path | None:
+        recorded = cell.attempt.get("initial_state")
+        if recorded and Path(recorded).is_file():
+            return Path(recorded)
+        default = self.tasks_dir / cell.task / "initial.kvx"
+        return default if default.is_file() else None
+
+    def _roots(self, cell: Cell) -> list[Path]:
+        candidates = [*self.builds, *map(Path, cell.attempt.get("build_roots") or [])]
+        candidates += [REPO / "build", REPO / "xbuild"]
+        roots: list[Path] = []
+        for root in candidates:
+            if root.is_dir() and root not in roots:
+                roots.append(root)
+        return roots
+
+    def states(self, cell: Cell, predicate: Callable) -> tuple[dict[int, Any] | None, str]:
+        """(state after each turn up to the first satisfying one, "ledger_replay"), or (None, the
+        reason the C7 stop rule applies). Raises ReplayDivergenceError when the replay departs from the
+        ledger or never satisfies the predicate that the final state satisfies."""
+        ledger, head = cell.ledger, cell.ledger[0]
+        messages = cell.path / MESSAGES_DIR
+        if not messages.is_dir():
+            return None, "stop_rule: no recorded turn messages"
+        if head.get("created_from") is not None:
+            return None, "stop_rule: the Instance was created from a snapshot"
+        if any(r.get("kind") == "recovery" for r in ledger):
+            return None, "stop_rule: the ledger records a kernel recovery"
+        files = sorted(messages.glob("turn_*.md"))
+        numbers = [p.stem.removeprefix("turn_") for p in files]
+        if numbers != [f"{n:04d}" for n in range(1, len(files) + 1)]:
+            raise ReplayDivergenceError(
+                f"recorded messages are not turn_0001 to turn_{len(files):04d}"
+            )
+        cassette = self._cassette(cell)
+        if cassette is None and any(r.get("kind") == "adapter" for r in ledger):
+            return None, "stop_rule: adapter traffic and no cassette to replay it"
+        with tempfile.TemporaryDirectory(prefix="cwr-analyse-replay-") as tmp:
+            if cassette is None:
+                cassette = Path(tmp) / "no-adapter-traffic.jsonl"
+                cassette.write_text(EMPTY_CASSETTE, encoding="utf-8")
+            kernel = self.make_kernel(Path(tmp) / "home", self._roots(cell))
+            try:
+                instance = kernel.create_instance(
+                    build=head["build"],
+                    seed=head["seed"],
+                    tail=head["tail_size"],
+                    arm=head["arm"],
+                    model=head["model"],
+                    allow_experimental=head.get("experimental") is not None,
+                    initial_state=self._initial(cell),
+                    cassette_digest=head.get("cassette_digest"),
+                )
+            except Exception as error:
+                raise ReplayDivergenceError(
+                    f"the replay Instance cannot be created: {error}"
+                ) from None
+            try:
+                return self._turns(cell, kernel, instance, cassette, files, predicate)
+            except ReplayDivergenceError:
+                raise
+            except Exception as error:
+                raise ReplayDivergenceError(f"the kernel refused the replay: {error}") from None
+            finally:
+                with contextlib.suppress(Exception):  # the temporary store is removed anyway
+                    kernel.destroy(instance)
+
+    def _turns(
+        self,
+        cell: Cell,
+        kernel: Any,
+        instance: str,
+        cassette: Path,
+        files: list[Path],
+        predicate: Callable,
+    ) -> tuple[dict[int, Any], str]:
+        ledger = cell.ledger
+        kernel.bind_cassette(instance, cassette)
+
+        def advance(before: int) -> list[dict[str, Any]]:
+            replayed = kernel.ledger(instance)
+            diff = record_divergence(ledger, replayed)
+            if diff:
+                raise ReplayDivergenceError(f"replay diverges from the ledger at {diff}")
+            if len(replayed) < before:
+                raise ReplayDivergenceError("the replay ledger lost records")
+            return replayed
+
+        replayed = advance(0)
+        states: dict[int, Any] = {}
+        for path in files:
+            while len(replayed) < len(ledger) and ledger[len(replayed)].get("kind") == "upgrade":
+                before = len(replayed)
+                upgrade = ledger[before]
+                kernel.upgrade(
+                    instance, upgrade["new_build"], allow_experimental=cell.arm.experimental
+                )
+                replayed = advance(before)
+                if len(replayed) == before:
+                    raise ReplayDivergenceError(f"seq {before}: the upgrade wrote no record")
+            before = len(replayed)
+            kernel.context(instance)
+            kernel.turn(instance, path.read_bytes().decode("utf-8"))
+            replayed = advance(before)
+            last = replayed[-1]
+            if len(replayed) == before or last.get("kind") != "turn":
+                continue
+            state = state_view(kernel.state(instance))
+            states[last["turn"]] = state
+            if predicate(state, list(ledger[: len(replayed)])) is True:
+                return states, LEDGER_REPLAY
+        raise ReplayDivergenceError(
+            "the final state satisfies the predicate but no replayed turn state does"
+        )
+
+
+def replay_cells(
+    ctx: Context, replayer: Replayer | None, cells: list[Cell], jobs: int
+) -> list[str]:
+    """Fill cell.states and cell.method for every cell; returns integrity errors (divergences)."""
+    todo = []
+    for cell in cells:
+        predicate = ctx.predicate(cell.task)
+        try:
+            satisfied = predicate(cell.final_state, list(cell.ledger)) is True
+        except Exception as error:
+            raise Refused(4, f"{cell.path}: success predicate failed: {error!r}") from None
+        if not satisfied:
+            cell.method = UNDEFINED_ON_FAILURE
+        elif replayer is None:
+            cell.method = "stop_rule: replay disabled"
+        else:
+            todo.append((cell, predicate))
+
+    def one(item: tuple[Cell, Callable]) -> str | None:
+        cell, predicate = item
+        try:
+            cell.states, cell.method = replayer.states(cell, predicate)
+        except ReplayDivergenceError as error:
+            where = str(cell.path.relative_to(cell.path.parents[3]))
+            return f"{where}: turns to success cannot be replayed from the ledger: {error}"
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        outcomes = list(pool.map(one, todo))
+    return [o for o in outcomes if o]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -370,6 +726,12 @@ def summarise(values: list[Any], ctx: Context, *key: Any) -> dict[str, Any]:
 
 
 def verdict(expect: str, ci: list[float] | None) -> str:
+    """The registered label of a delta interval (preregistration.kvx [analysis].direction_labels).
+
+    consistent when the interval lies wholly on the expected side, inconsistent when wholly on the
+    other side, else inconclusive. For a>=b the expected side is [0, inf) and the other side
+    (-inf, 0); a<=b mirrors it. a=b is consistent when the interval contains 0.
+    """
     if expect == "undetermined":
         return "reported_only"
     if ci is None:
@@ -380,13 +742,19 @@ def verdict(expect: str, ci: list[float] | None) -> str:
     if expect == "a<b":
         return "consistent" if high < 0 else "inconsistent" if low > 0 else "inconclusive"
     if expect == "a>=b":
-        return "inconsistent" if high < 0 else "consistent"
+        return "consistent" if low >= 0 else "inconsistent" if high < 0 else "inconclusive"
     if expect == "a<=b":
-        return "inconsistent" if low > 0 else "consistent"
+        return "consistent" if high <= 0 else "inconsistent" if low > 0 else "inconclusive"
     return "consistent" if low <= 0 <= high else "inconsistent"  # a=b
 
 
-def analyse(ctx: Context, results: Path, mode: str = "replay") -> dict[str, Any]:
+def analyse(
+    ctx: Context,
+    results: Path,
+    mode: str = "replay",
+    replayer: Replayer | None = None,
+    jobs: int = 1,
+) -> dict[str, Any]:
     hyps = {k.split(".", 1)[1]: v for k, v in ctx.prereg.items() if k.startswith("hypothesis.")}
     names = metrics.metric_names()
     excluded: list[dict[str, str]] = []
@@ -405,7 +773,10 @@ def analyse(ctx: Context, results: Path, mode: str = "replay") -> dict[str, Any]
                     (p for p in task_dir.iterdir() if p.is_dir()), key=lambda p: p.name
                 ):
                     cell = read_cell(ctx, hypothesis, arm, task_dir.name, seed_dir)
-                    errors.extend(integrity_errors(ctx, cell))
+                    # A cell of the other gateway mode is excluded before anything else: it is
+                    # never pooled, and its own report (--live or not) checks its integrity.
+                    if cell.attempt.get("mode") == mode:
+                        errors.extend(integrity_errors(ctx, cell))
                     cell.excluded = exclusion(ctx, cell, mode)
                     if cell.excluded:
                         excluded.append(
@@ -415,18 +786,29 @@ def analyse(ctx: Context, results: Path, mode: str = "replay") -> dict[str, Any]
                             }
                         )
                         continue
-                    pair = ctx.pairs_by_task.get(cell.task) if hypothesis == "H4" else None
-                    cell.values = metrics.instance_metrics(
-                        cell.ledger,
-                        cell.final_state,
-                        ctx.predicate(cell.task),
-                        reuse_rule=ctx.reuse_rule(cell.task),
-                        upgrade_pair=pair,
-                        states_after_turn=cell.states,
-                    )
                     cells[hypothesis].append(cell)
+    for hypothesis in sorted(h for h, cs in cells.items() if cs):
+        errors.extend(campaign_errors(ctx, hypothesis))
     if errors:
         raise Refused(4, "integrity failures:\n  " + "\n  ".join(errors))
+    included = [c for h in sorted(cells) for c in cells[h]]
+    errors = replay_cells(ctx, replayer, included, jobs)
+    if errors:
+        raise Refused(4, "integrity failures:\n  " + "\n  ".join(errors))
+    for cell in included:
+        pair = ctx.pairs_by_task.get(cell.task) if cell.hypothesis == "H4" else None
+        try:
+            cell.values = metrics.instance_metrics(
+                cell.ledger,
+                cell.final_state,
+                ctx.predicate(cell.task),
+                reuse_rule=ctx.reuse_rule(cell.task),
+                upgrade_pair=pair,
+                states_after_turn=cell.states,
+            )
+        except (metrics.MetricInputError, ValueError, KeyError, TypeError) as error:
+            raise Refused(4, f"{cell.path}: metrics cannot be computed: {error}") from None
+        cell.values["turns_to_success_method"] = cell.method
     by_hypothesis = {
         h: sorted(
             {str(c.ledger[0].get("cassette_digest", c.attempt.get("cassette_digest"))) for c in cs}
@@ -501,9 +883,16 @@ def analyse(ctx: Context, results: Path, mode: str = "replay") -> dict[str, Any]
             if arm_obj.flag != "--x-drift":
                 continue
             specs: dict[str, list[Cell]] = {}
+            spec_key = f"{arm.replace('-', '_')}_spec"
             for c in cells[hypothesis]:
-                if c.arm.key == arm and c.attempt.get("drift_spec"):
-                    specs.setdefault(c.attempt["drift_spec"], []).append(c)
+                if c.arm.key != arm:
+                    continue
+                # The registered spec of the task's drift Build, whose hash the header carries;
+                # the attempt's own label only where no campaign file registers one.
+                label = (ctx.drift_section(hypothesis, c.task) or {}).get(spec_key)
+                label = label or c.attempt.get("drift_spec")
+                if label:
+                    specs.setdefault(label, []).append(c)
             per_spec[arm] = {
                 spec: {
                     "instances": len(cs),
@@ -625,12 +1014,19 @@ def analyse(ctx: Context, results: Path, mode: str = "replay") -> dict[str, Any]
         "registration": "draft" if ctx.draft else "registered",
         "analysis": {k: ctx.analysis[k] for k in sorted(ctx.analysis)},
         "cassette_digests": digests,
+        "turns_to_success": {
+            "method": "state per turn replayed from the ledger through the kernel; the predicate is "
+            "evaluated after each turn and the first true turn is the value",
+            "instances_by_method": {
+                m: sum(1 for c in included if c.method == m)
+                for m in sorted({c.method for c in included})
+            },
+        },
         "excluded": excluded,
         "hypotheses": report_h,
-        "checks_not_performed": [
-            "Build hashes of per_task (drift) and pair_b arms are checked against "
-            "benchmark/campaigns/h1.kvx and h4.kvx by the task 5.2 and 5.3 drivers"
-        ],
+        "attempts_without_registration_digests": sum(
+            1 for c in included if c.attempt.get("registration_digests") is None
+        ),
     }
 
 
@@ -650,11 +1046,7 @@ def build_context(args: argparse.Namespace) -> Context:
     missing = missing_fields(prereg, arms, meta["control"])
     if missing and not args.draft_ok:
         raise Refused(2, "pre-registration is a draft; missing: " + ", ".join(missing))
-    suite = read_kvx(args.suite) if Path(args.suite).exists() else {}
-    declared = suite.get("meta", {}).get("suite_digest")
-    registered = prereg["campaign"].get("suite_digest")
-    if registered and declared and declared != registered:
-        raise Refused(4, f"suite digest {declared} is not the registered {registered}")
+    suite = check_suite(prereg, Path(args.suite), Path(args.tasks_dir))
     return Context(
         prereg=prereg,
         arms=arms,
@@ -663,7 +1055,65 @@ def build_context(args: argparse.Namespace) -> Context:
         pairs_by_task=load_pairs(Path(args.upgrades)),
         tasks_dir=Path(args.tasks_dir),
         draft=bool(missing),
+        campaigns=load_campaigns(Path(args.campaigns)),
+        digests={
+            "preregistration": sha256_file(args.prereg),
+            "metrics_py": sha256_file(args.metrics),
+            "arms_kvx": sha256_file(args.arms),
+        },
     )
+
+
+def recompute_suite_digest(tasks_dir: Path) -> str:
+    """The suite digest over tasks_dir, computed by benchmark/predicates/common.py suite_digest
+    (suite.kvx [suite].suite_digest_scope)."""
+    predicates = str(REPO / "benchmark" / "predicates")
+    if predicates not in sys.path:
+        sys.path.insert(0, predicates)
+    import common  # type: ignore[import-not-found]
+
+    return common.suite_digest(tasks_dir)
+
+
+def check_suite(prereg: dict[str, dict[str, Any]], suite_path: Path, tasks_dir: Path) -> dict:
+    """The suite sections, after the recomputed task-suite digest equals the registered one.
+
+    Refuses (exit 4) when a digest is registered and the suite file or the task directory is
+    missing, or when the digest recomputed from the task files differs from the registration. The
+    suite's own declared digest is never trusted: an edited task with a stale declaration fails.
+    """
+    registered = prereg["campaign"].get("suite_digest")
+    if not suite_path.exists():
+        if registered:
+            raise Refused(4, f"suite digest {registered} is registered but {suite_path} is missing")
+        return {}
+    try:
+        suite = read_kvx(suite_path)
+    except InvalidKVX as error:
+        raise Refused(4, f"suite unreadable: {error}") from None
+    if registered:
+        if not tasks_dir.is_dir():
+            raise Refused(4, f"suite digest {registered} is registered but {tasks_dir} is missing")
+        actual = recompute_suite_digest(tasks_dir)
+        if actual != registered:
+            raise Refused(
+                4,
+                f"suite digest {actual} recomputed from {tasks_dir} is not the registered {registered}",
+            )
+    return suite
+
+
+def load_campaigns(root: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """Every campaigns/h<N>.kvx present under root, keyed by hypothesis."""
+    out = {}
+    for hypothesis in ("H1", "H2", "H3", "H4"):
+        path = root / f"{hypothesis.lower()}.kvx"
+        if path.is_file():
+            try:
+                out[hypothesis] = read_kvx(path)
+            except InvalidKVX as error:
+                raise Refused(4, f"campaign registration unreadable: {error}") from None
+    return out
 
 
 def first_difference(a: Any, b: Any, path: str = "$") -> str | None:
@@ -688,7 +1138,11 @@ def first_difference(a: Any, b: Any, path: str = "$") -> str | None:
     return None if a == b else path
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    make_kernel: Callable[[Path, list[Path]], Any] | None = None,
+) -> int:
+    """Command line. make_kernel(home, build_roots) overrides the kernel binding used for replay."""
     bench = REPO / "benchmark"
     parser = argparse.ArgumentParser(
         description="Recompute CWR campaign metrics from ledgers and final state."
@@ -700,6 +1154,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suite", default=str(bench / "suite.kvx"))
     parser.add_argument("--upgrades", default=str(bench / "upgrades.kvx"))
     parser.add_argument("--tasks-dir", default=str(bench / "tasks"))
+    parser.add_argument(
+        "--campaigns",
+        default=str(bench / "campaigns"),
+        help="campaign registrations h<N>.kvx holding the per-task and per-pair Build hashes",
+    )
     parser.add_argument(
         "--out", help="report path (default <results>/analysis.json, or analysis-live.json)"
     )
@@ -722,6 +1181,24 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 5 when any arm matrix has a missing cell",
     )
     parser.add_argument(
+        "--cwr",
+        help="cwr binary used to replay turns (default $CWR_BIN, else <CARGO_TARGET_DIR or target>)",
+    )
+    parser.add_argument(
+        "--builds",
+        action="append",
+        default=[],
+        help="Build root to resolve ledger Build hashes in (repeatable); the roots each attempt "
+        "recorded and build/, xbuild/ are searched after these",
+    )
+    parser.add_argument(
+        "--cassettes",
+        help="cassette set directory <task>/seed-<n>.jsonl for replay (default: each attempt's cassette)",
+    )
+    parser.add_argument(
+        "--jobs", type=int, default=4, help="Instances replayed in parallel (default 4)"
+    )
+    parser.add_argument(
         "--print-digests",
         action="store_true",
         help="print the current sha256 of metrics.py and arms.kvx",
@@ -738,7 +1215,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ctx = build_context(args)
         results = Path(args.results) / "live" if args.live else Path(args.results)
-        report = clean(analyse(ctx, results, "live" if args.live else "replay"))
+        replayer = Replayer(
+            make_kernel=make_kernel or cli_kernel(Path(args.cwr) if args.cwr else None),
+            builds=[Path(b) for b in args.builds],
+            cassettes=Path(args.cassettes) if args.cassettes else None,
+            tasks_dir=Path(args.tasks_dir),
+        )
+        report = clean(
+            analyse(ctx, results, "live" if args.live else "replay", replayer, args.jobs)
+        )
         report["inputs"] = {
             "preregistration": sha256_file(args.prereg),
             "metrics_py": sha256_file(args.metrics),

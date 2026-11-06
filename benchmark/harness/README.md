@@ -19,8 +19,8 @@ references or runs any system outside CWR. Its contract is
 | `metrics.py` | The normative metric definitions plus registered conventions C1 to C7. Pure functions with no I/O. Its sha256 is pre-registered. |
 | `arms.kvx`, `arms.py` | The eleven arms of H1 to H4, and a validator that refuses any arm that is not a CWR Build with exactly its flag's pillar ablated. The sha256 of `arms.kvx` is pre-registered. |
 | `prereg.py` | Loads `benchmark/preregistration.kvx`, checks the `metrics.py` and `arms.kvx` digests and lists campaign inputs that are still unset. |
-| `run.py` | The episode loop for one cell. It creates the Instance, composes the context, submits each model reply as one turn, upgrades at the midpoint for H4, applies the stop rule and writes the run layout below. |
-| `model.py` | The model client. It reads its endpoint and credentials from the environment, retries with deterministic backoff and never prints, logs or returns a credential. It also provides a deterministic offline model that replays a task's reference solution and opens no socket. |
+| `run.py` | The shared pre-flight and the episode loop for one cell. It checks the cell against the registration, creates the Instance, composes the context, submits each model reply as one turn, upgrades at the midpoint for H4, applies the stop rule and writes the run layout below. |
+| `model.py` | The model client. It reads its endpoint, model identity and keys from the process environment, requires https, never follows a redirect, sends each key once, retries with jittered backoff, quarantines refused keys and never prints, logs or returns a credential, the endpoint or a server message. It also provides a deterministic offline model that replays a task's reference solution and opens no socket. |
 | `ledgerio.py` | Strict KVX and ledger readers and writers, and predicate loading through `benchmark/predicates/common.py`. |
 | `../analyse.py` | Means and 95% percentile bootstrap intervals per arm and bin (per pair for H4), direction labels, arm-matrix completeness and every refusal gate. |
 | `tests/` | Unit tests over synthetic ledgers, an in-memory kernel and a local scripted HTTP server. |
@@ -32,10 +32,27 @@ python3 benchmark/harness/run.py --help
 ```
 
 `run.py` binds to the `cwr` CLI. It resolves the binary from `$CWR_BIN`, else from
-`$CARGO_TARGET_DIR` (default `target/`) under `release/` or `debug/`. It refuses a Build whose
-manifest flag is not exactly the arm's flag. It also refuses to run while the pre-registration has
-unset inputs, or for a seed that is not registered, unless `--allow-unregistered` is given. Such an
-attempt is marked unregistered, and the analysis excludes it.
+`$CARGO_TARGET_DIR` (default `target/`) under `release/` or `debug/`. The gateway model reads
+`MESSAGES_URL`, `MODEL` and `CLUSTER_<n>_GATEWAY_API_KEY` from the environment of the process.
+
+Every entry point (`run.py`, `benchmark/campaigns/h1h2.py` and the task 5.3 driver) runs the same
+pre-flight, `run.preflight`. It refuses a cell when:
+
+- `metrics.py` or `arms.kvx` differs from its registered digest (exit 3);
+- the pre-registration has unset inputs, the seed is not registered or the configured model is not
+  the registered one, unless `--allow-unregistered` is given, which marks the attempt unregistered;
+- the task is not a suite task (or, for H4, a registered upgrade-pair task);
+- `--build` differs from the registered Build of the cell: `arms.kvx` for control and flag arms,
+  `benchmark/campaigns/h1.kvx` for the per-task drift arms, Build A and the arm's Build B in
+  `benchmark/campaigns/h4.kvx` for H4;
+- a Build is not on disk or does not carry exactly the arm's flag;
+- the cassette set digest or, for H4, the `upgrades.kvx` digest differs from the registration;
+- the cell already holds a finished attempt and `--rerun` is not given.
+
+Refusals exit 2 and write nothing. A failed episode exits 4. `run.py --help` lists the codes.
+
+The reported model identity must match the configured one under `[campaign].model_reported_rule`;
+any other identity ends the run as `model_error`, and the attempt records only a match flag.
 
 Each cell writes:
 
@@ -43,9 +60,25 @@ Each cell writes:
 benchmark/results/h<N>/<arm>/<task>/<seed>/
   ledger.jsonl              the exported ledger, byte for byte as the World Kernel wrote it
   final_state.kvx           the final state, in the predicate state view
-  states/turn_NNNN.kvx      the state after each turn, used for turns to success
+  messages/turn_NNNN.md     the model message submitted as turn N, byte for byte
+  kernel.log                the kernel's stderr of every turn
   attempt.kvx               the attempt record, with the harness's own metrics in [metrics]
 ```
+
+A cell is assembled under `benchmark/results/_staging/` and moved into place only when complete.
+An existing cell is never deleted. A cell that ended in `model_error`, `kernel_error`,
+`metrics_error` or `predicate_error`, or that has no attempt record, is moved to
+`benchmark/results/_replaced/` before a new run takes its place. So is a finished cell rerun with
+`--rerun`. A model error is recorded by category and status only.
+
+The runner reads the final state only through `cwr instance state`, `cwr instance keys` and the
+ledger. The ledger header records the seed, model identity, arm, tail size, Build hash and cassette
+set digest. `analyse.py` computes turns to success by replaying the state after each turn from the
+ledger: it creates a fresh Instance from the ledger header, re-submits the recorded messages with
+the adapter gateway in replay mode, and requires every replayed record to equal the ledger except
+`host_ts`, `duration_us` and `instance`. A message that would change a state changes the ledger, so
+the cell is refused with exit 4. No file other than the ledger and the final state can change a
+reported number.
 
 Live-mode runs go under `benchmark/results/live/` and are never pooled with replay runs.
 

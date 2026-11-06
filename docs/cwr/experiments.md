@@ -389,10 +389,10 @@ python3 tests/cwr/qualify.py --check-registry
 The checker also runs on its own and reports the recorded status of a case:
 
 ```sh
-python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019
+python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019 || echo "CWR-019 has no accepted attempt: exit $?"
 ```
 
-> **Verified (CWR-019).** The evidence registry and its false-success traps hold an accepted attempt: [20261106T143532Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T143532Z-1.json).
+> **Implemented, not yet qualified (CWR-019).** The runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) and the checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) are in the tree. The registry lists [20261106T143532Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T143532Z-1.json) as the latest CWR-019 record, but it was written under evidence schema version 1 and the checker now reports it stale, so CWR-019 has no accepted attempt until it is re-qualified.
 
 A hypothesis result needs the complete arm matrix with the pre-registered metric definitions; a
 component attempt never implies one, and a run containing `INVARIANT_VIOLATION` is excluded.

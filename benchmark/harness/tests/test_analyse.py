@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from benchmark import analyse
-from benchmark.harness.ledgerio import read_ledger, write_ledger
+from benchmark.harness.ledgerio import read_kvx, read_ledger, sha256_file, write_kvx, write_ledger
 from benchmark.harness.tests.synth import LedgerBuilder
 from benchmark.harness.tests.workspace import Workspace
 
@@ -65,6 +65,17 @@ class Statistics(unittest.TestCase):
         self.assertEqual(analyse.verdict("undetermined", [0.1, 0.2]), "reported_only")
         self.assertEqual(analyse.verdict("a>b", None), "insufficient_data")
 
+    def test_verdict_non_strict_expectations_follow_the_registered_rule(self):
+        # direction_labels: consistent only when the interval lies wholly on the expected side.
+        self.assertEqual(analyse.verdict("a>=b", [-0.9, 0.01]), "inconclusive")
+        self.assertEqual(analyse.verdict("a>=b", [0.0, 0.4]), "consistent")
+        self.assertEqual(analyse.verdict("a>=b", [0.1, 0.4]), "consistent")
+        self.assertEqual(analyse.verdict("a>=b", [-0.4, -0.1]), "inconsistent")
+        self.assertEqual(analyse.verdict("a<=b", [-0.01, 0.9]), "inconclusive")
+        self.assertEqual(analyse.verdict("a<=b", [-0.4, 0.0]), "consistent")
+        self.assertEqual(analyse.verdict("a<=b", [-0.4, -0.1]), "consistent")
+        self.assertEqual(analyse.verdict("a<=b", [0.1, 0.4]), "inconsistent")
+
 
 class EndToEnd(unittest.TestCase):
     def setUp(self):
@@ -101,7 +112,7 @@ class EndToEnd(unittest.TestCase):
         directions = {(d["id"], d["group"]): d for d in report["hypotheses"]["H1"]["directions"]}
         self.assertEqual(directions[("H1.success.frozen-vs-drift-1", "short")]["estimate"], 0.5)
         self.assertEqual(directions[("H1.success.drift-1-vs-drift-3", "long")]["estimate"], 0.5)
-        self.assertIn("t-long-spec", report["hypotheses"]["H1"]["per_drift_spec"]["drift-1"])
+        self.assertIn("t003-long-spec", report["hypotheses"]["H1"]["per_drift_spec"]["drift-1"])
         self.assertIn(
             "harness-recorded", report["hypotheses"]["H1"]["harness_recorded_tokens"]["label"]
         )
@@ -192,14 +203,14 @@ class EndToEnd(unittest.TestCase):
         write_ledger(cell_path / "ledger.jsonl", ledger)
 
     def test_header_seed_mismatch_refused(self):
-        cell = self.ws.results / "h1" / "frozen" / "t-short" / "1"
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
         self.tamper(cell, lambda ledger: ledger[0].update(seed=2))
         code, _, err = run(self.ws.argv("--out", str(self.out)))
         self.assertEqual(code, 4)
         self.assertIn("header seed", err)
 
     def test_header_arm_and_model_mismatch_refused(self):
-        cell = self.ws.results / "h1" / "frozen" / "t-short" / "1"
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
         self.tamper(cell, lambda ledger: ledger[0].update(arm="H1/drift-1", model="other"))
         code, _, err = run(self.ws.argv("--out", str(self.out)))
         self.assertEqual(code, 4)
@@ -207,21 +218,21 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("header model", err)
 
     def test_missing_experimental_stamp_refused(self):
-        cell = self.ws.results / "h1" / "drift-1" / "t-short" / "1"
+        cell = self.ws.results / "h1" / "drift-1" / "t001-short" / "1"
         self.tamper(cell, lambda ledger: [r.update(experimental=None) for r in ledger])
         code, _, err = run(self.ws.argv("--out", str(self.out)))
         self.assertEqual(code, 4)
         self.assertIn("experimental stamp", err)
 
     def test_control_build_mismatch_refused(self):
-        cell = self.ws.results / "h1" / "frozen" / "t-short" / "1"
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
         self.tamper(cell, lambda ledger: ledger[0].update(build="sha256:" + "9" * 64))
         code, _, err = run(self.ws.argv("--out", str(self.out)))
         self.assertEqual(code, 4)
         self.assertIn("registered Build", err)
 
     def test_cassette_digest_mismatch_refused(self):
-        cell = self.ws.results / "h1" / "frozen" / "t-short" / "1"
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
         self.tamper(cell, lambda ledger: ledger[0].update(cassette_digest="sha256:" + "0" * 64))
         code, _, _err = run(self.ws.argv("--out", str(self.out)))
         self.assertEqual(code, 4)
@@ -233,17 +244,28 @@ class EndToEnd(unittest.TestCase):
         )
         ws.prereg.write_text(text)
         ws.populate_h1()
-        cell = ws.results / "h1" / "frozen" / "t-short" / "1"
-        self.tamper(cell, lambda ledger: ledger[0].update(cassette_digest="sha256:" + "0" * 64))
+        cell = ws.results / "h1" / "frozen" / "t001-short" / "1"
+        other = "sha256:" + "0" * 64
+        self.tamper(cell, lambda ledger: ledger[0].update(cassette_digest=other))
+        attempt = cell / "attempt.kvx"
+        attempt.write_text(attempt.read_text().replace("c" * 64, "0" * 64))
         code, _, err = run(ws.argv("--out", str(self.out), "--draft-ok"))
         self.assertEqual(code, 4)
         self.assertIn("different cassette digests", err)
+
+    def test_header_and_attempt_cassette_digests_must_agree(self):
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
+        attempt = cell / "attempt.kvx"
+        attempt.write_text(attempt.read_text().replace("c" * 64, "0" * 64))
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("is not the attempt's", err)
 
     def test_unregistered_seed_refused(self):
         self.ws.write_cell(
             "H1",
             "frozen",
-            "t-short",
+            "t001-short",
             3,
             LedgerBuilder(arm="H1/frozen", seed=3).call("fs.exists").turn().build_ledger(),
             {"task": {"done": 1}},
@@ -253,16 +275,16 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("not registered", err)
 
     def test_live_runs_are_excluded_and_analysed_separately(self):
-        cell = self.ws.results / "h1" / "frozen" / "t-short" / "1"
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
         attempt = (cell / "attempt.kvx").read_text().replace('mode = "replay"', 'mode = "live"')
         (cell / "attempt.kvx").write_text(attempt)
         live_ledger = LedgerBuilder(arm="H1/frozen", seed=1).call("fs.exists").turn().build_ledger()
         self.ws.write_cell(
-            "H1", "frozen", "t-short", 1, live_ledger, {"task": {"done": 1}}, live=True
+            "H1", "frozen", "t001-short", 1, live_ledger, {"task": {"done": 1}}, live=True
         )
         report = self.analyse_ok()
         self.assertIn(
-            {"cell": "h1/frozen/t-short/1", "reason": "mode 'live' is not 'replay'"},
+            {"cell": "h1/frozen/t001-short/1", "reason": "mode 'live' is not 'replay'"},
             report["excluded"],
         )
         self.assertEqual(report["hypotheses"]["H1"]["cells"]["frozen"]["short"]["instances"], 1)
@@ -278,8 +300,10 @@ class EndToEnd(unittest.TestCase):
             .call("fs.write", "INVARIANT_VIOLATION", "mutating")
             .turn("error")
         )
-        self.ws.write_cell("H1", "frozen", "t-short", 2, bad.build_ledger(), {"task": {"done": 0}})
-        cell = self.ws.results / "h1" / "frozen" / "t-medium" / "2"
+        self.ws.write_cell(
+            "H1", "frozen", "t001-short", 2, bad.build_ledger(), {"task": {"done": 0}}
+        )
+        cell = self.ws.results / "h1" / "frozen" / "t002-medium" / "2"
         attempt = (
             (cell / "attempt.kvx")
             .read_text()
@@ -288,12 +312,93 @@ class EndToEnd(unittest.TestCase):
         (cell / "attempt.kvx").write_text(attempt)
         report = self.analyse_ok()
         reasons = {e["cell"]: e["reason"] for e in report["excluded"]}
-        self.assertIn("INVARIANT_VIOLATION", reasons["h1/frozen/t-short/2"])
-        self.assertIn("model_error", reasons["h1/frozen/t-medium/2"])
+        self.assertIn("INVARIANT_VIOLATION", reasons["h1/frozen/t001-short/2"])
+        self.assertIn("model_error", reasons["h1/frozen/t002-medium/2"])
         self.assertEqual(report["hypotheses"]["H1"]["matrix"]["missing_count"], 2)
 
+    def test_edited_task_file_refused_by_recomputed_suite_digest(self):
+        self.analyse_ok()
+        # The suite's own declared digest stays stale; only the recomputation can catch the edit.
+        (self.ws.tasks / "t001-short" / "success.py").write_text(
+            "def success(state, ledger):\n    return True\n"
+        )
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("suite digest", err)
+        self.assertIn("recomputed", err)
+
+    def test_registered_suite_digest_without_suite_file_refused(self):
+        self.ws.suite.unlink()
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("is missing", err)
+
+    def test_drift_ledger_from_another_tasks_drift_build_refused(self):
+        from benchmark.harness.tests.workspace import DRIFT_BUILDS
+
+        cell = self.ws.results / "h1" / "drift-1" / "t001-short" / "1"
+        other = DRIFT_BUILDS[("t002-medium", "drift-1")]
+        self.tamper(cell, lambda ledger: [r.update(build=other) for r in ledger])
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("h1/drift-1/t001-short/1: header build", err)
+
+    def test_drift_arm_without_campaign_registration_refused(self):
+        (self.ws.campaigns / "h1.kvx").unlink()
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("registers no [task.t001-short].drift_1_build", err)
+
+    def test_h4_build_a_and_build_b_checked_against_campaign(self):
+        cell = self.ws.results / "h4" / "silent" / "u1-task" / "1"
+        self.tamper(cell, lambda ledger: ledger[0].update(build="sha256:" + "9" * 64))
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("is not the registered Build A", err)
+
+        from benchmark.harness.tests.workspace import PAIR_BUILDS_B, Workspace
+
+        ws = Workspace(self.tmp / "b-side")
+        ws.populate_h4()
+        cell = ws.results / "h4" / "silent" / "u1-task" / "1"
+
+        def wrong_b(ledger):
+            for record in ledger:
+                if record["kind"] == "upgrade":
+                    record["new_build"] = PAIR_BUILDS_B["changelog"]
+
+        self.tamper(cell, wrong_b)
+        code, _, err = run(ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("is not the registered Build B", err)
+
+    def test_attempt_stamped_with_other_digests_refused(self):
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
+        attempt = read_kvx(cell / "attempt.kvx")
+        attempt["attempt"]["registration_digests"] = {
+            "preregistration": sha256_file(self.ws.prereg),
+            "metrics_py": sha256_file(self.ws.metrics),
+            "arms_kvx": "sha256:" + "0" * 64,
+        }
+        write_kvx(cell / "attempt.kvx", attempt)
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("attempt ran under arms_kvx", err)
+        attempt["attempt"]["registration_digests"]["arms_kvx"] = sha256_file(self.ws.arms)
+        write_kvx(cell / "attempt.kvx", attempt)
+        report = self.analyse_ok()
+        # 18 H1 and 12 H4 Instances are included; only this one carries the stamp.
+        self.assertEqual(report["attempts_without_registration_digests"], 29)
+
+    def test_campaign_registered_under_other_arms_refused(self):
+        self.ws.write_campaigns(arms_kvx="sha256:" + "0" * 64)
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("campaigns/h1.kvx registered arms_kvx", err)
+        self.assertIn("campaigns/h4.kvx registered arms_kvx", err)
+
     def test_truncated_ledger_refused(self):
-        path = self.ws.results / "h1" / "frozen" / "t-short" / "1" / "ledger.jsonl"
+        path = self.ws.results / "h1" / "frozen" / "t001-short" / "1" / "ledger.jsonl"
         path.write_bytes(path.read_bytes()[:-5])
         code, _, err = run(self.ws.argv("--out", str(self.out)))
         self.assertEqual(code, 4)
@@ -308,10 +413,22 @@ class RepositoryRegistration(unittest.TestCase):
 
         check_digests(load_prereg())
 
-    def test_committed_registration_is_a_draft_and_analyse_refuses(self):
-        code, _, err = run(["--results", tempfile.mkdtemp()])
-        self.assertEqual(code, 2)
-        self.assertIn("draft", err)
+    def test_analyse_refuses_the_committed_registration_only_while_it_is_a_draft(self):
+        from benchmark.harness.arms import load_arms
+        from benchmark.harness.prereg import load_prereg, missing_fields
+
+        meta, arms = load_arms()
+        draft = bool(missing_fields(load_prereg(), arms, meta["control"]))
+        empty = tempfile.mkdtemp()
+        try:
+            code, _, err = run(["--results", empty, "--out", str(Path(empty) / "a.json")])
+        finally:
+            shutil.rmtree(empty)
+        if draft:
+            self.assertEqual(code, 2)
+            self.assertIn("draft", err)
+        else:
+            self.assertEqual(code, 0, err)
 
 
 if __name__ == "__main__":

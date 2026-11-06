@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,7 @@ from benchmark.harness.ledgerio import REPO, read_kvx, sha256_file, write_kvx, w
 from benchmark.harness.tests.synth import BUILD, CASSETTE, MODEL, LedgerBuilder
 
 ONE_PRIMITIVE_BUILD = "sha256:" + "d" * 64
-SUITE_DIGEST = "sha256:" + "e" * 64
-TASKS = {"t-short": "short", "t-medium": "medium", "t-long": "long"}
+TASKS = {"t001-short": "short", "t002-medium": "medium", "t003-long": "long"}
 PAIRS = {"U1": ("u1-task", ["fs.delete"], "LOCKED"), "U6": ("u6-task", ["fs.write"], None)}
 PREDICATE = 'def success(state, ledger):\n    return state.get("task", {}).get("done") == 1\n'
 H1_SUCCESS = {
@@ -29,6 +29,28 @@ STAMPS = {
     "version-only": "x-version-only",
     "silent": "x-silent-change",
 }
+# Per-task drift Builds (campaigns/h1.kvx) and per-arm B sides of each pair (campaigns/h4.kvx).
+DRIFT_BUILDS = {
+    (task, arm): "sha256:" + f"{n:x}" * 64
+    for n, (task, arm) in enumerate(
+        ((t, a) for t in TASKS for a in ("drift-1", "drift-3")), start=1
+    )
+}
+PAIR_BUILDS_B = {
+    "changelog": "sha256:" + "b" * 64,
+    "version-only": "sha256:" + "7" * 64,
+    "silent": "sha256:" + "8" * 64,
+}
+
+
+def suite_digest(tasks: Path) -> str:
+    """The suite digest as benchmark/predicates/common.py computes it (suite_digest_scope)."""
+    predicates = str(REPO / "benchmark" / "predicates")
+    if predicates not in sys.path:
+        sys.path.insert(0, predicates)
+    import common  # type: ignore[import-not-found]
+
+    return common.suite_digest(tasks)
 
 
 def _set(text: str, section: str, key: str, value: str) -> str:
@@ -60,14 +82,19 @@ class Workspace:
         arms = _set(arms, "control", "build", f'"{BUILD}"')
         arms = _set(arms, "arm.h2.one-primitive", "build", f'"{ONE_PRIMITIVE_BUILD}"')
         self.arms.write_text(arms)
+        for task in [*TASKS, *(t for t, _, _ in PAIRS.values())]:
+            (self.tasks / task).mkdir(parents=True, exist_ok=True)
+            (self.tasks / task / "success.py").write_text(PREDICATE)
+        self.suite_digest = suite_digest(self.tasks)
         prereg = (REPO / "benchmark" / "preregistration.kvx").read_text()
         for section, key, value in [
             ("meta", "status", f'"{status}"'),
             ("campaign", "model", f'"{MODEL}"'),
             ("campaign", "sampling", "{}"),
             ("campaign", "seeds", "[1, 2]"),
-            ("campaign", "suite_digest", f'"{SUITE_DIGEST}"'),
+            ("campaign", "suite_digest", f'"{self.suite_digest}"'),
             ("campaign", "cassette_digest", f'"{CASSETTE}"'),
+            ("hypothesis.H4", "cassette_digest", f'"{CASSETTE}"'),
             ("campaign", "upgrades_digest", '"sha256:' + "f" * 64 + '"'),
             ("analysis", "resamples", str(resamples)),
             ("digests", "metrics_py", f'"{sha256_file(self.metrics)}"'),
@@ -75,8 +102,10 @@ class Workspace:
         ]:
             prereg = _set(prereg, section, key, value)
         self.prereg.write_text(prereg)
+        # The committed suite layout: the digest lives in [suite], never in [meta].
         suite: dict[str, dict[str, Any]] = {
-            "meta": {"format": "cwr.suite", "suite_digest": SUITE_DIGEST}
+            "meta": {"format": "cwr.suite", "schema_version": 1},
+            "suite": {"task_count": len(TASKS), "suite_digest": self.suite_digest},
         }
         for task, bin_name in TASKS.items():
             reuse = bin_name == "long"
@@ -93,9 +122,32 @@ class Workspace:
                 for p, (t, c, code) in PAIRS.items()
             },
         )
-        for task in [*TASKS, *(t for t, _, _ in PAIRS.values())]:
-            (self.tasks / task).mkdir(parents=True, exist_ok=True)
-            (self.tasks / task / "success.py").write_text(PREDICATE)
+        self.campaigns = root / "campaigns"
+        self.write_campaigns()
+
+    def write_campaigns(self, **digests: str) -> None:
+        """campaigns/h1.kvx and h4.kvx as the campaign drivers register them."""
+        registration = {
+            "metrics_py": digests.get("metrics_py", sha256_file(self.metrics)),
+            "arms_kvx": digests.get("arms_kvx", sha256_file(self.arms)),
+        }
+        h1: dict[str, dict[str, Any]] = {
+            "meta": {"format": "cwr.campaign", "hypothesis": "H1"},
+            "registration": dict(registration),
+        }
+        for task in TASKS:
+            h1[f"task.{task}"] = {
+                f"{arm.replace('-', '_')}_build": DRIFT_BUILDS[(task, arm)]
+                for arm in ("drift-1", "drift-3")
+            }
+        write_kvx(self.campaigns / "h1.kvx", h1)
+        h4: dict[str, dict[str, Any]] = {
+            "meta": {"format": "cwr.campaign", "hypothesis": "H4"},
+            "registration": dict(registration),
+        }
+        for pair, (task, _, _) in PAIRS.items():
+            h4[f"pair.{pair}"] = {"task": task, "build_a": BUILD, "build_b": PAIR_BUILDS_B}
+        write_kvx(self.campaigns / "h4.kvx", h4)
 
     def argv(self, *extra: str) -> list[str]:
         return [
@@ -113,6 +165,8 @@ class Workspace:
             str(self.upgrades),
             "--tasks-dir",
             str(self.tasks),
+            "--campaigns",
+            str(self.campaigns),
             *extra,
         ]
 
@@ -150,7 +204,8 @@ class Workspace:
     # -- synthetic campaigns ---------------------------------------------------------------------
 
     def h1_ledger(self, arm: str, task: str, seed: int, success: bool) -> list:
-        b = LedgerBuilder(arm=f"H1/{arm}", seed=seed, stamp=STAMPS.get(arm))
+        build = DRIFT_BUILDS.get((task, arm), BUILD)
+        b = LedgerBuilder(arm=f"H1/{arm}", seed=seed, stamp=STAMPS.get(arm), build=build)
         if TASKS[task] == "long":
             b.call("jobs.result", "CONFLICT").call("jobs.result").turn("error")
             b.calls("fs.write", 10, "mutating").turn()
@@ -186,7 +241,7 @@ class Workspace:
         _task, changed, code = PAIRS[pair]
         b = LedgerBuilder(arm=f"H4/{arm}", seed=seed)
         b.call("fs.write", side_effect="mutating").turn()
-        b.upgrade(stamp=STAMPS.get(arm))
+        b.upgrade(new_build=PAIR_BUILDS_B[arm], stamp=STAMPS.get(arm))
         for turn in range(2):
             if code and turn < H4_MISUSE_TURNS[arm]:
                 b.call(changed[0], code, "mutating").turn("error")

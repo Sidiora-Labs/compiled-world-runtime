@@ -6,6 +6,11 @@ KVX is the repository's section format: `[section]` headers and `key = <one JSON
 `#` comments, no duplicate sections or keys. Ledgers are append-only JSONL files written by the
 kernel (kernel.md section 8). Nothing here interprets metric semantics; that is metrics.py.
 Standard library only.
+
+Both formats are line formats whose only line terminator is LF. Readers split on b"\n" and nothing
+else, so a JSON string holding U+0085, U+2028, U+2029 or another character `str.splitlines()`
+treats as a break stays inside its line. The KVX writer also escapes those three characters, so
+every file it writes reads back under any line splitter.
 """
 
 from __future__ import annotations
@@ -24,14 +29,16 @@ REPO = Path(__file__).resolve().parents[2]
 _SECTION = re.compile(r"\[([A-Za-z0-9_.-]+)\]")
 _ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(.+)")
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+# Characters str.splitlines() breaks on that json.dumps(ensure_ascii=False) leaves raw.
+_LINE_BREAK_ESCAPES = {"\x85": "\\u0085", "\u2028": "\\u2028", "\u2029": "\\u2029"}
 
 
 class InvalidKVX(ValueError):  # noqa: N818 - public name used by callers
-    pass
+    """A KVX text violates the grammar; the message starts with `origin:line:`."""
 
 
 class InvalidLedger(ValueError):  # noqa: N818 - public name used by callers
-    pass
+    """A ledger file is truncated, unparsable or out of sequence; the message names file and line."""
 
 
 def _strict_json(text: str) -> Any:
@@ -50,11 +57,14 @@ def _strict_json(text: str) -> Any:
 
 
 def parse_kvx(text: str, origin: str = "<kvx>") -> dict[str, dict[str, Any]]:
-    """Strictly parse KVX text into {section: {key: value}}."""
+    """Strictly parse KVX text into {section: {key: value}}.
+
+    Lines end at LF only (a CR before it is tolerated); see the module docstring.
+    """
     sections: dict[str, dict[str, Any]] = {}
     current: dict[str, Any] | None = None
-    for number, original in enumerate(text.splitlines(), 1):
-        line = original.strip()
+    for number, original in enumerate(text.split("\n"), 1):
+        line = original.removesuffix("\r").strip(" \t")
         if not line or line.startswith("#"):
             continue
         header = _SECTION.fullmatch(line)
@@ -80,6 +90,7 @@ def parse_kvx(text: str, origin: str = "<kvx>") -> dict[str, dict[str, Any]]:
 
 
 def read_kvx(path: Path | str) -> dict[str, dict[str, Any]]:
+    """Read and strictly parse a UTF-8 KVX file; errors carry the path and line."""
     path = Path(path)
     return parse_kvx(path.read_text(encoding="utf-8"), str(path))
 
@@ -87,7 +98,7 @@ def read_kvx(path: Path | str) -> dict[str, dict[str, Any]]:
 def dump_kvx(sections: dict[str, dict[str, Any]], header: str = "") -> str:
     """Serialise sections deterministically (section and key order preserved, compact JSON)."""
     lines: list[str] = []
-    for comment in header.splitlines():
+    for comment in header.split("\n") if header else []:
         lines.append(f"# {comment}".rstrip())
     for name, body in sections.items():
         if not _SECTION.fullmatch(f"[{name}]"):
@@ -98,13 +109,22 @@ def dump_kvx(sections: dict[str, dict[str, Any]], header: str = "") -> str:
         for key, value in body.items():
             if not _KEY.fullmatch(key):
                 raise InvalidKVX(f"invalid key {key!r} in [{name}]")
-            lines.append(
-                f"{key} = {json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(', ', ': '), allow_nan=False)}"
-            )
+            lines.append(f"{key} = {_literal(value)}")
     return "\n".join(lines) + "\n"
 
 
+def _literal(value: Any) -> str:
+    """One-line JSON literal: sorted keys, literal non-ASCII except the escaped line breaks."""
+    text = json.dumps(
+        value, sort_keys=True, ensure_ascii=False, separators=(", ", ": "), allow_nan=False
+    )
+    for raw, escaped in _LINE_BREAK_ESCAPES.items():
+        text = text.replace(raw, escaped)
+    return text
+
+
 def write_kvx(path: Path | str, sections: dict[str, dict[str, Any]], header: str = "") -> None:
+    """Write sections as KVX after checking that the text parses back; raises InvalidKVX otherwise."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     text = dump_kvx(sections, header)
@@ -121,8 +141,13 @@ def read_ledger(path: Path | str) -> list[dict[str, Any]]:
     data = path.read_bytes()
     if data and not data.endswith(b"\n"):
         raise InvalidLedger(f"{path}: final record is truncated (no trailing newline)")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InvalidLedger(f"{path}: not UTF-8: {error}") from error
+    lines = text.split("\n")[:-1] if text else []
     records: list[dict[str, Any]] = []
-    for number, raw in enumerate(data.decode("utf-8").splitlines(), 1):
+    for number, raw in enumerate(lines, 1):
         if not raw.strip():
             raise InvalidLedger(f"{path}:{number}: blank line in ledger")
         try:
@@ -144,6 +169,7 @@ def read_ledger(path: Path | str) -> list[dict[str, Any]]:
 
 
 def write_ledger(path: Path | str, records: list[dict[str, Any]]) -> None:
+    """Write records as JSONL, one compact sorted-key object per LF-terminated line."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -152,6 +178,7 @@ def write_ledger(path: Path | str, records: list[dict[str, Any]]) -> None:
 
 
 def sha256_file(path: Path | str) -> str:
+    """`sha256:<hex>` of the file's bytes."""
     return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 

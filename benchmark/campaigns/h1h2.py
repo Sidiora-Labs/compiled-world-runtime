@@ -61,7 +61,13 @@ from benchmark.harness.ledgerio import (  # noqa: E402
 CAMPAIGNS = REPO / "benchmark" / "campaigns"
 RESULTS = REPO / "benchmark" / "results"
 RESEARCH = REPO / "research"
-SUITE = REPO / "benchmark" / "suite.kvx"
+# The campaign runs on a frozen copy of the task suite and the suite cassette set, taken when the
+# campaign was registered (experiments.md section 5: a campaign freezes its suite and cassette
+# digests). The copies are byte-identical to the repository files they were taken from; their
+# digests are registered in benchmark/campaigns/h1.kvx and h2.kvx and in preregistration.kvx.
+FROZEN = REPO / ".cwr" / "campaign-1" / "frozen" / "benchmark"
+SUITE = FROZEN / "suite.kvx"
+TASKS = FROZEN / "tasks"
 PREREG = REPO / "benchmark" / "preregistration.kvx"
 ARMS = REPO / "benchmark" / "harness" / "arms.kvx"
 METRICS = REPO / "benchmark" / "harness" / "metrics.py"
@@ -74,13 +80,13 @@ BUILD_ROOT = Path(
 )
 XBUILD_ROOT = BUILD_ROOT.parent / "xbuild"
 HOME = BUILD_ROOT.parent / "home"
-CASSETTES = Path(os.environ.get("CWR_CASSETTE_SET") or REPO / "benchmark" / "cassettes" / "suite")
+CASSETTES = Path(os.environ.get("CWR_CASSETTE_SET") or FROZEN / "cassettes" / "suite")
 CAMPAIGN_FILE = {"H1": CAMPAIGNS / "h1.kvx", "H2": CAMPAIGNS / "h2.kvx"}
 ARM_KEYS = {"H1": ("frozen", "drift-1", "drift-3"), "H2": ("script", "one-primitive")}
 CONTROL_ARM = {"H1": "frozen", "H2": "script"}
 REPORT = {"H1": RESEARCH / "h1-stability.md", "H2": RESEARCH / "h2-direct-action.md"}
 SEEDS = list(range(1, 11))
-RETRY_EXITS = ("model_error", "kernel_error")
+RETRY_EXITS = ("model_error", "kernel_error", "metrics_error", "predicate_error")
 
 # Drift templates per primitive or adapter: (template id, expression, failure code). Each expression
 # references only parameters and read_only primitives of refworld (world-source.md section 5), so a drift
@@ -163,6 +169,11 @@ TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
         ("A", "len(title) <= 16", "INVALID"),
         ("B", "len(body) <= 256", "LIMIT"),
         ("C", "len(key) <= 8", "INVALID"),
+    ],
+    "world.random": [
+        ("A", "world.now() >= 20", "LIMIT"),
+        ("B", "jobs.active() == 0", "CONFLICT"),
+        ("C", "world.now() >= 40", "LIMIT"),
     ],
     "search.query": [
         ("A", "limit <= 3", "LIMIT"),
@@ -406,6 +417,9 @@ def register(args: argparse.Namespace) -> int:
         "cassette_digest": prereg["campaign"].get("cassette_digest"),
         "control_build": control["hash"],
         "build_roots": [str(BUILD_ROOT.relative_to(REPO)), str(XBUILD_ROOT.relative_to(REPO))],
+        "suite_path": str(SUITE.relative_to(REPO)),
+        "tasks_dir": str(TASKS.relative_to(REPO)),
+        "cassette_set": str(CASSETTES.relative_to(REPO)),
         "cwr_binary_sha256": sha256_file(binary),
         "metrics_py": prereg["digests"]["metrics_py"],
         "arms_kvx_at_registration": prereg["digests"]["arms_kvx"],
@@ -513,18 +527,37 @@ def _set_key(text: str, section: str, key: str, value: Any) -> str:
     raise CampaignError(f"[{section}] {key} not found")
 
 
+def registration_blockers() -> list[str]:
+    """Why the registration may no longer change; empty when complete-registration may run.
+
+    Any attempt record under benchmark/results/h1 to h4 freezes the registration of every
+    hypothesis (experiments.md section 5: a change after execution is a new pre-registration and a
+    new campaign), and a registration already marked registered is never rewritten.
+    """
+    blockers = [
+        f"{hypothesis} results exist under {(RESULTS / hypothesis.lower()).relative_to(REPO)}"
+        for hypothesis in ("H1", "H2", "H3", "H4")
+        if any_results(hypothesis)
+    ]
+    if read_kvx(PREREG)["meta"].get("status") == "registered":
+        blockers.append("benchmark/preregistration.kvx is already registered")
+    return blockers
+
+
 def complete_registration(args: argparse.Namespace) -> int:
     """Fill the null campaign inputs of arms.kvx and preregistration.kvx and mark it registered.
 
-    Only null inputs are filled; a non-null input that differs from the value H1 and H2 need is a
-    refusal, never an overwrite. The digests are recomputed last, after arms.kvx is final.
+    Refused once any H1 to H4 attempt exists or the registration is already registered. Only null
+    inputs are filled; a non-null input that differs from the value the campaign needs (the
+    upgrades digest included) is a refusal, never an overwrite. Every check runs before the first
+    write, and the digests are recomputed last, after arms.kvx is final.
     """
-    from benchmark.harness.model import GatewayClient
+    from benchmark.harness.model import GatewayClient, ModelError
     from benchmark.harness.run import cassette_set_digest
 
-    for hypothesis in ("H1", "H2"):
-        if any_results(hypothesis):
-            raise CampaignError(f"{hypothesis} results exist; the registration is frozen")
+    blockers = registration_blockers()
+    if blockers:
+        raise CampaignError("the registration is frozen: " + "; ".join(blockers))
     h1, h2 = load_campaign("H1"), load_campaign("H2")
     control = h1["registration"]["control_build"]
     one = h2["registration"]["builds"]["one-primitive"]
@@ -536,11 +569,14 @@ def complete_registration(args: argparse.Namespace) -> int:
             raise CampaignError(f"arms.kvx [{section}] build {current} is not {value}")
         arms_text = _set_key(arms_text, section, "build", value)
     parse_kvx(arms_text, str(ARMS))
-    ARMS.write_text(arms_text, encoding="utf-8")
     if not CASSETTES.is_dir():
         raise CampaignError(f"cassette set {CASSETTES} does not exist")
+    try:
+        model = GatewayClient.from_env().model
+    except ModelError as error:
+        raise CampaignError(str(error)) from None
     wanted = {
-        "model": GatewayClient.from_env().model,
+        "model": model,
         "sampling": {},
         "suite_digest": read_kvx(SUITE)["suite"]["suite_digest"],
         "cassette_digest": cassette_set_digest(CASSETTES),
@@ -551,8 +587,9 @@ def complete_registration(args: argparse.Namespace) -> int:
     for key, value in wanted.items():
         if campaign.get(key) is None:
             text = _set_key(text, "campaign", key, value)
-        elif campaign[key] != value and key != "upgrades_digest":
+        elif campaign[key] != value:
             raise CampaignError(f"preregistration [campaign] {key} is registered as another value")
+    ARMS.write_text(arms_text, encoding="utf-8")
     text = _set_key(text, "digests", "metrics_py", sha256_file(METRICS))
     text = _set_key(text, "digests", "arms_kvx", sha256_file(ARMS))
     text = _set_key(text, "meta", "status", "registered")
@@ -641,94 +678,98 @@ class _Progress:
             )
 
 
+_SLOTS = {"lock": threading.Lock(), "next": 0}
+
+
+def gateway_client(client_class: Any) -> tuple[int, Any]:
+    """A model client for this worker on one of the gateway slots named in $CWR_GATEWAYS.
+
+    Slot 1 is $MESSAGES_URL and slot k is $GATEWAY_<k>_MESSAGES_URL; every slot serves the one
+    configured $MODEL with the same keys and no sampling parameter. The operator exports these
+    variables from .env into the runner's environment. Workers take slots round-robin. No URL or
+    key value leaves the client; only the slot number is recorded (gateway.json per cell).
+    """
+    from benchmark.harness.model import KEY_NAMES
+
+    slots = [int(x) for x in (os.environ.get("CWR_GATEWAYS") or "1").split(",")]
+    with _SLOTS["lock"]:
+        slot = slots[_SLOTS["next"] % len(slots)]
+        _SLOTS["next"] += 1
+    url = os.environ.get("MESSAGES_URL" if slot == 1 else f"GATEWAY_{slot}_MESSAGES_URL", "")
+    keys = [os.environ.get(name, "") for name in KEY_NAMES]
+    return slot, client_class(url, os.environ.get("MODEL", ""), keys)
+
+
 def run_cell(
     hypothesis: str,
     arm_key: str,
     task: str,
     seed: int,
-    campaigns: dict[str, dict[str, dict[str, Any]]],
     clients: threading.local,
     results_root: Path = RESULTS,
     allow_unregistered: bool = False,
+    rerun: bool = False,
 ) -> dict[str, Any]:
-    """Run one Instance exactly as benchmark/harness/run.py main does, plus the drift spec label."""
+    """Run one Instance through benchmark/harness/run.py: its preflight resolves and checks the cell
+    against the registration (arms.kvx, campaigns/h1.kvx per-task drift Builds and specs, the cassette
+    set) and its episode loop runs it; this function only chooses the gateway slot and home."""
     from benchmark.harness import run as runner
-    from benchmark.harness.arms import load_arms
     from benchmark.harness.model import GatewayClient
-    from benchmark.harness.prereg import load_prereg, missing_fields
 
-    campaign = campaigns[hypothesis]
-    prereg = load_prereg(PREREG)
-    meta, arms = load_arms(ARMS)
-    arm = arms[(hypothesis, arm_key)]
-    missing = missing_fields(prereg, arms, meta["control"])
-    if missing and not allow_unregistered:
-        raise CampaignError("pre-registration incomplete: " + ", ".join(missing))
-    info = suite_tasks()[task]
-    camp = prereg["campaign"]
     if not hasattr(clients, "model"):
-        clients.model = GatewayClient.from_env()
-    if camp.get("model") and clients.model.model != camp["model"] and not allow_unregistered:
-        raise CampaignError("the configured model identity differs from the registered one")
-    build = cell_build(campaign, hypothesis, arm_key, task)
-    path = build_dir(build)
-    if path is None:
-        raise CampaignError(f"Build {build} is not on disk")
-    refusal = runner.check_arm_build(arm, path)
-    if refusal:
-        raise CampaignError(refusal)
-    cassette = CASSETTES / task / f"seed-{seed}.jsonl"
-    if not cassette.is_file():
-        raise CampaignError(f"no cassette {cassette}")
-    cassette_digest = runner.cassette_set_digest(CASSETTES)
-    if camp.get("cassette_digest") and cassette_digest != camp["cassette_digest"]:
-        raise CampaignError("the cassette set digest differs from the registered one")
-    task_dir = REPO / "benchmark" / "tasks" / task
-    drift_spec = None
-    if arm.flag == "--x-drift":
-        drift_spec = campaign[f"task.{task}"][f"{arm_key.replace('-', '_')}_spec"]
-    spec = runner.EpisodeSpec(
-        hypothesis=hypothesis,
-        arm=arm,
-        task=task,
-        seed=seed,
-        build=build,
-        predicate_path=task_dir / "success.py",
-        initial_state=task_dir / "initial.kvx",
-        turn_limit=runner._turn_limit(camp, info["bin"]),
-        bin=info["bin"],
-        max_tokens_per_turn=camp.get("max_tokens_per_turn", 16000),
-        token_budget=camp.get("token_budget_per_instance"),
-        model_params=camp.get("sampling") or {},
-        registered=not missing,
-        cassette_digest=cassette_digest,
-        suite_digest=camp.get("suite_digest"),
-        results_root=results_root,
-        cassette=cassette,
-        instruction=(task_dir / "task.md").read_text("utf-8"),
-        reuse_rule=runner._reuse_rule(info),
-        drift_spec=drift_spec,
-    )
-    if not hasattr(clients, "home"):
+        clients.slot, clients.model = gateway_client(GatewayClient)
         # One Instance store per worker: concurrent Instances of one task never share a file.
-        clients.home = HOME / f"worker-{threading.get_ident()}"
-    kernel = runner.CwrCliKernel(
-        gateway_mode="replay",
-        home=clients.home,
-        builds=[BUILD_ROOT, XBUILD_ROOT, REPO / "build", REPO / "xbuild"],
-    )
+        clients.home = HOME / f"worker-{os.getpid()}-{threading.get_ident()}"
+    roots = [BUILD_ROOT, XBUILD_ROOT, REPO / "build", REPO / "xbuild"]
     try:
-        return runner.run_episode(spec, kernel, clients.model)
+        cell = runner.preflight(
+            hypothesis,
+            arm_key,
+            task,
+            seed,
+            model_identity=clients.model.model,
+            build_roots=roots,
+            cassettes=CASSETTES,
+            allow_unregistered=allow_unregistered,
+            suite_path=SUITE,
+            tasks_dir=TASKS,
+        )
+    except runner.PreflightRefused as error:
+        raise CampaignError(str(error)) from None
+    spec = cell.episode(results_root=results_root, rerun=rerun)
+    kernel = runner.CwrCliKernel(gateway_mode="replay", home=clients.home, builds=roots)
+    sidecar = results_root / hypothesis.lower() / arm_key / task / str(seed) / "gateway.json"
+    try:
+        attempt = runner.run_episode(spec, kernel, clients.model)
+        sidecar.write_text(json.dumps({"gateway_slot": clients.slot}) + "\n", encoding="utf-8")
+        return attempt
     except (RuntimeError, OSError, ValueError) as error:
-        attempt = results_root / hypothesis.lower() / arm_key / task / str(seed) / "attempt.kvx"
-        if attempt.exists():
-            return read_kvx(attempt)["attempt"]
+        attempt_path = sidecar.parent / "attempt.kvx"
+        if attempt_path.exists():
+            sidecar.write_text(json.dumps({"gateway_slot": clients.slot}) + "\n", encoding="utf-8")
+            return read_kvx(attempt_path)["attempt"]
         return {"exit_status": "kernel_error", "turns": 0, "detail": str(error)[:300]}
+
+
+def harness_digests() -> dict[str, str]:
+    """sha256 of every harness source a runner process loads, recorded when the process starts."""
+    files = sorted((REPO / "benchmark" / "harness").glob("*.py"))
+    files += [REPO / "benchmark" / "predicates" / "common.py"]
+    return {str(p.relative_to(REPO)): sha256_file(p) for p in files if p.exists()}
 
 
 def run(args: argparse.Namespace) -> int:
     hypotheses = args.hypothesis or ["H1", "H2"]
-    campaigns = {h: load_campaign(h) for h in hypotheses}
+    for hypothesis in hypotheses:
+        load_campaign(hypothesis)
+    from benchmark.harness import model as _model  # noqa: F401  (loaded once, at start)
+    from benchmark.harness import run as _run  # noqa: F401
+
+    loaded = harness_digests()
+    log = BUILD_ROOT.parent / "runners.jsonl"
+    with log.open("a", encoding="utf-8") as handle:
+        entry = {"pid": os.getpid(), "started": _now(), "harness": loaded}
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
     seeds = [int(s) for s in args.seeds.split(",")] if args.seeds else SEEDS
     tasks = args.tasks.split(",") if args.tasks else None
     arms = args.arms.split(",") if args.arms else None
@@ -743,15 +784,30 @@ def run(args: argparse.Namespace) -> int:
     clients = threading.local()
     print(f"{len(todo)} cells to run with {args.workers} workers", flush=True)
 
+    locks = BUILD_ROOT.parent / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+
     def job(cell: tuple[str, str, str, int]) -> None:
         if deadline is not None and time.monotonic() > deadline:
             progress.record("/".join(map(str, cell)), "skipped_deadline", 0)
             return
+        path = root / cell[0].lower() / cell[1] / cell[2] / str(cell[3])
+        if cell_state(path) == "done" and not args.rerun:
+            progress.record("/".join(map(str, cell)), "already_done", 0)
+            return
+        lock = locks / f"{cell[0]}.{cell[1]}.{cell[2]}.{cell[3]}"
         try:
-            attempt = run_cell(*cell, campaigns, clients, root, args.allow_unregistered)
+            lock.touch(exist_ok=False)
+        except FileExistsError:
+            progress.record("/".join(map(str, cell)), "running_elsewhere", 0)
+            return
+        try:
+            attempt = run_cell(*cell, clients, root, args.allow_unregistered, args.rerun)
         except CampaignError as error:
             progress.record("/".join(map(str, cell)), f"refused: {error}", 0)
             return
+        finally:
+            lock.unlink(missing_ok=True)
         status = str(attempt.get("exit_status"))
         if status in RETRY_EXITS:
             status += f" [{str(attempt.get('detail'))[:200]}]"
@@ -787,6 +843,7 @@ def analyse_hypothesis(hypothesis: str, out: Path, *, check: bool = False) -> in
         view = Path(tmp) / hypothesis.lower()
         view.symlink_to(RESULTS / hypothesis.lower(), target_is_directory=True)
         cmd = [sys.executable, "-I", str(REPO / "benchmark" / "analyse.py"), "--results", tmp]
+        cmd += ["--suite", str(SUITE), "--tasks-dir", str(TASKS)]
         cmd += ["--check", str(out)] if check else ["--out", str(out)]
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=REPO)
     sys.stdout.write(proc.stdout)
@@ -1050,11 +1107,85 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
 
 
 def deviations_for(hypothesis: str) -> list[str]:
-    """Deviations from pre-registration recorded after execution in results/h<N>/deviations.json."""
-    path = RESULTS / hypothesis.lower() / "deviations.json"
-    if not path.exists():
-        return []
-    return list(json.loads(path.read_text(encoding="utf-8"))["deviations"])
+    """Deviations and registered interpretations, with every count computed from the inputs."""
+    tasks = suite_tasks()
+    common = [
+        "Build root: the campaign compiles refworld into .cwr/campaign-1/build (experimental Builds "
+        "into the xbuild/ beside it) rather than build/, because build/ already held other "
+        "refworld Builds of the same version, which the changelog gate refuses as a previous Build. "
+        "The control Build therefore takes the first-Build path and its hash depends only on the "
+        "World Source and the compiler.",
+        "Harness defect fixed before registration: the pilot showed that benchmark/harness/run.py "
+        "built the predicate state view with kv values still in the kernel's bytes encoding, so "
+        "no kv-based success predicate could hold. Task 5.2 decoded kv values exactly as file "
+        "contents are decoded before any registered run. Each runner process loaded the harness "
+        "once at start and used that one version throughout; later edits to benchmark/harness by "
+        "task 5.1 are not part of this campaign.",
+        "Throughput: the pilot and the first minutes of the campaign saturated the first gateway "
+        "endpoint, so a second runner process spread its workers over the second and third "
+        "endpoints of .env, which serve the same configured model identity with the same keys and "
+        "no sampling parameter. A cell's endpoint slot is recorded in its gateway.json; a cell "
+        "without one ran on slot 1.",
+        "Instance stores: each worker thread uses its own Instance store under "
+        ".cwr/campaign-1/home, because concurrent Instances of one task otherwise share the "
+        "initial-state file the binding writes before `cwr instance create`.",
+        "Registration inputs: upgrades_digest, required for a complete registration although H1 "
+        "and H2 do not read it, was registered as the sha256 of benchmark/upgrades.kvx. The model "
+        "identity is the configured one; the gateway reports its own identity string, which every "
+        "attempt record keeps as model_reported.",
+        "Replay condition (a threat, not a deviation): a model request that differs from the "
+        "reference solution's recorded request is a cassette miss and returns UNAVAILABLE, in "
+        "every arm alike.",
+        "The control arm of H1 (frozen) and of H2 (script) are the same Build and K; they are run "
+        "and reported separately, as registered.",
+    ]
+    interrupted = BUILD_ROOT.parent / "interrupted" / hypothesis.lower()
+    restarted = len([p for p in interrupted.glob("*/*/*") if p.is_dir()])
+    if restarted:
+        common.append(
+            f"Restarts: {restarted} {hypothesis} cells were interrupted when the operator restarted "
+            "the runner to raise the worker count; each was re-run from a fresh Instance, and the "
+            "interrupted partial runs are kept outside the results tree under "
+            ".cwr/campaign-1/interrupted and never analysed."
+        )
+    if hypothesis == "H1":
+        lens = [int(info["turns"]) for info in tasks.values()]
+        ones = sum(1 for n in lens if n == 1)
+        early = sum(1 for n in lens if max(1, n // 2) == 1)
+        return [
+            "len basis: experiments.md 3.1 defines len as the reference solution's turn count. It "
+            "was registered from benchmark/suite.kvx before any run, not re-measured from a "
+            f"frozen-arm run. {ones} of {len(lens)} tasks have len 1 and {early} have their "
+            "drift-1 injection at turn 1, so for them the drifted rule holds from the first turn: "
+            "an undocumented rule rather than a mid-task change. Turns are max(1, floor(...)) "
+            "because injections happen before a turn's script and turns start at 1.",
+            "Drift specs: every injection is precondition_added from the fixed template table in "
+            "benchmark/campaigns/h1h2.py, drawn per task by the registered seeded rule from the "
+            "task's rules file. Some templates cannot be satisfied for some tasks, which turns the "
+            "drift into an impossible task; results are therefore also reported per spec.",
+            "Drift visibility: the drift grammar has no visibility key and the kernel writes every "
+            "drift record with visible false, so the model's first evidence of a drift is a "
+            "failure the manual does not predict.",
+            *common,
+        ]
+    over = sum(
+        1
+        for info in tasks.values()
+        if int(info["primitive_count"]) > {"short": 15, "medium": 40, "long": 120}[info["bin"]]
+    )
+    limit_note = (
+        f"{over} tasks have a reference primitive count above their bin's limit, so they cannot "
+        "succeed under one primitive per turn; turns to success is undefined there."
+        if over
+        else "Every task's reference primitive count is within its bin's limit, but under one "
+        "primitive per turn a task needs at least one turn per primitive plus any turns spent "
+        "waiting on jobs, so the margin is narrow for the longest tasks."
+    )
+    return [
+        "Turn limits: the one-primitive arm keeps the registered per-bin turn limits (15, 40, "
+        f"120). {limit_note}",
+        *common,
+    ]
 
 
 def report_cmd(args: argparse.Namespace) -> int:

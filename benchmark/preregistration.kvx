@@ -17,19 +17,24 @@ format = "cwr.preregistration"
 schema_version = 1
 feature = "cwr"
 campaign = "cwr-campaign-1"
-status = "draft"
+status = "registered"
 registered_on = "2026-11-06"
 supersedes = null
 spec = "spec/cwr/spec.kvx 0.1.0-draft; spec/cwr/experiments.md"
 
 [digests]
-metrics_py = "sha256:b45bafadc6d46a708bb437f07951e73dff2d7ac338b12d358c820f17de468918"
-arms_kvx = "sha256:ca9bc28ac671962f0b68529a7f799fd41831b6119b3717b1446180e86d94f50b"
+# Amended 2026-11-06 by task 5.2 before any H1 or H2 result: metrics.py gained the H4 misuse_scope
+# (post_upgrade_misuse_rate only) after registration; every H1 and H2 definition is unchanged.
+metrics_py = "sha256:2d1ce9d785c0b85fbe7f4d1a86751f495bd50015d04adf956e91d104a18b486a"
+arms_kvx = "sha256:a34dd6a8f0e1ebd5a8d7f4125f64eea071793266fd03288a0c7b6c7ea9ab81ec"
 
 [campaign]
 world = "refworld"
-model = null
-sampling = null
+model = "cx/gpt-6.1-sol(high)"
+# The gateway reports the registered identity without its routing prefix (the text up to and
+# including the first "/"); any other reported identity fails the turn as model_error.
+model_reported_rule = "routing_prefix"
+sampling = {}
 seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 seeds_per_task = 10
 gateway_mode = "replay"
@@ -40,9 +45,9 @@ turn_limit_by_bin = {"short": 15, "medium": 40, "long": 120}
 turn_limit_max = 200
 max_tokens_per_turn = 16000
 token_budget_per_instance = null
-suite_digest = null
-cassette_digest = null
-upgrades_digest = null
+suite_digest = "sha256:390026249d91d96f6ffa4ee833a153c5c3e43a88daa8a3a2f8f16c89a1547e20"
+cassette_digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
+upgrades_digest = "sha256:98b134b79674229a553fae5e798e82d5fcfb13a8adde7f308882dc4771305500"
 stop_rule = "stop after the first turn whose success predicate holds over the exported state and ledger, at the turn limit, on budget exhaustion, on a model error or on INVARIANT_VIOLATION"
 note = "Turn limits per bin follow verification.md section 3; turn_limit_max is the 200-turn cap of experiments.md section 2. No sampling parameter is sent unless [campaign].sampling names it."
 
@@ -68,7 +73,7 @@ c3 = "A rate with a zero denominator is undefined and excluded from that metric'
 c4 = "Rule reuse scores 0 on an Instance with no ok record of the reused primitive or no second encounter at least ten call records later."
 c5 = "The last quarter is the call-record indices k with 4k >= 3N, N the Instance's call-record count."
 c6 = "A changed-primitive entry without a dot names a whole module."
-c7 = "Turns to success evaluates the predicate on the per-turn states written by the runner; without them it uses the registered stop rule, under which the final turn of a successful Instance is its first satisfying turn."
+c7 = "Turns to success evaluates the predicate on the state after each turn, replayed from the ledger by analyse.py through the kernel: the runner's recorded turn messages are re-submitted and every replayed record must equal the ledger, else the cell is refused. A cell without recorded messages uses the registered stop rule, under which the final turn of a successful Instance is its first satisfying turn; the method is reported per Instance."
 
 [metric.task_success]
 function = "metrics.task_success"
@@ -110,7 +115,7 @@ definition = "First ok record of the reused primitive, then the first record of 
 function = "metrics.post_upgrade_misuse_rate"
 kind = "rate"
 applies = "upgrade-pair tasks (H4)"
-definition = "After the upgrade record, turns containing a call record of a primitive named in the pair's ContractDiff failing with the code Build B's new rule raises on an old-style call, divided by post-upgrade turns."
+definition = "After the upgrade record, misuse turns divided by post-upgrade turns, under the pair's misuse_scope frozen in benchmark/upgrades.kvx. call: a turn containing a call record of a primitive named in the pair's ContractDiff failing with the code Build B's new rule raises on an old-style call. uncaught_turn (U3): a turn whose turn record ends in error with that code and whose last call record is such a failing call, because catching the new code is correct use. not_computable (U2, U5): undefined, because the old-style call is refused in the sandbox and no ledger record names the primitive; those pairs are excluded from the pooled estimate, never counted as 0."
 
 [metric.partial_rate]
 function = "metrics.partial_rate"
@@ -178,6 +183,9 @@ note = "The K sweep runs on the full suite (verification.md section 3), a supers
 claim = "After a versioned recompilation with a changelog the model adopts the changed rule in fewer turns and with fewer old-rule errors than after a silent change, and the changelog carries more of the effect than the version signal alone."
 arms = ["changelog", "version-only", "silent"]
 control = "changelog"
+# The upgrade-pair tasks are outside the suite cassette set; H4 replays its own set (task 5.3,
+# benchmark/campaigns/h4.kvx), and analyse.py checks H4 ledgers against this digest.
+cassette_digest = "sha256:a438d5cded5112954b167b32dbd91e09600c6603add7fd1dcdc78a13138cd09f"
 task_set = "upgrades:all"
 grouping = "pair"
 pool_exclude = ["U6"]

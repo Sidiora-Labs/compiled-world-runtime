@@ -3,6 +3,7 @@
 """Gateway client tests against a local scripted HTTP server. No real gateway is contacted."""
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -14,6 +15,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from benchmark.harness import model as mm
+
+# The machine-wide in-flight bound is shared with live campaigns; these local servers bypass it.
+os.environ[mm.INFLIGHT_ENV] = "0"
 
 KEYS = ["key-one-SECRET-1111", "key-two-SECRET-2222", "key-three-SECRET-3333"]
 
@@ -75,8 +79,11 @@ class Server:
 
 
 def client(url, keys=KEYS, **kw):
+    """A loopback test client: plain http allowed, no jitter, round-robin from slot 1."""
     sleeps = []
-    c = mm.GatewayClient(url, "configured-model", keys, sleep=sleeps.append, timeout_s=5, **kw)
+    options = {"jitter": lambda delay: delay, "start_slot": 0, "allow_insecure_loopback": True}
+    options.update(kw)
+    c = mm.GatewayClient(url, "configured-model", keys, sleep=sleeps.append, timeout_s=5, **options)
     return c, sleeps
 
 
@@ -90,8 +97,9 @@ class Headers(unittest.TestCase):
             c, _ = client(server.url)
             reply = c.complete([{"role": "user", "content": "hi"}], max_tokens=20)
         request = server.seen[0]
-        self.assertEqual(request["headers"]["authorization"], f"Bearer {KEYS[0]}")
+        self.assertNotIn("authorization", request["headers"])
         self.assertEqual(request["headers"]["x-api-key"], KEYS[0])
+        self.assertEqual(sum(KEYS[0] in v for v in request["headers"].values()), 1)
         self.assertEqual(request["headers"]["anthropic-version"], "2023-06-01")
         self.assertEqual(request["headers"]["content-type"], "application/json")
         self.assertEqual(
@@ -145,15 +153,18 @@ class Retries(unittest.TestCase):
                 c.complete([{"role": "user", "content": "x"}], max_tokens=5)
         self.assertEqual([key_used(r) for r in server.seen], [KEYS[0], KEYS[1], KEYS[2], KEYS[0]])
 
-    def test_400_fails_without_retry_and_redacts_echoed_key(self):
-        with Server([(400, {"error": f"bad request for {KEYS[0]}"}, {})]) as server:
+    def test_400_fails_without_retry_and_never_echoes_the_body(self):
+        body = {"error": {"type": "invalid_request_error", "message": f"bad request for {KEYS[0]}"}}
+        with Server([(400, body, {})]) as server:
             c, sleeps = client(server.url)
             with self.assertRaises(mm.ModelError) as caught:
                 c.complete([{"role": "user", "content": "x"}], max_tokens=5)
         self.assertEqual(len(server.seen), 1)
         self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(caught.exception.category, "http_status")
+        self.assertEqual(str(caught.exception), "http_status: HTTP 400 invalid_request_error")
         self.assertNotIn(KEYS[0], str(caught.exception))
-        self.assertIn("[redacted]", str(caught.exception))
+        self.assertNotIn("bad request", str(caught.exception))
         self.assertEqual(sleeps, [])
 
     def test_auth_failure_moves_to_next_key_then_gives_up(self):
@@ -163,6 +174,42 @@ class Retries(unittest.TestCase):
                 c.complete([{"role": "user", "content": "x"}], max_tokens=5)
         self.assertEqual([key_used(r) for r in server.seen], KEYS)
         self.assertEqual(caught.exception.status, 401)
+
+    def test_refused_key_is_quarantined_for_the_client_lifetime(self):
+        with Server([(401, {"error": "no"}, {})]) as server:
+            c, _ = client(server.url)
+            c.complete([{"role": "user", "content": "x"}], max_tokens=5)
+            for _ in range(3):
+                c.complete([{"role": "user", "content": "x"}], max_tokens=5)
+        self.assertEqual(c.quarantined_slots, [1])
+        used = [key_used(r) for r in server.seen]
+        self.assertEqual(used[0], KEYS[0])
+        self.assertNotIn(KEYS[0], used[1:])
+
+    def test_full_jitter_stays_within_the_capped_backoff(self):
+        c = mm.GatewayClient(
+            "https://gateway.invalid/", "m", ["k"], backoff_base_s=1.0, backoff_cap_s=8.0
+        )
+        for attempt in range(6):
+            delays = [c._backoff(attempt, None) for _ in range(200)]
+            self.assertTrue(all(0.0 <= d <= min(8.0, 2**attempt) for d in delays))
+            self.assertGreater(len(set(delays)), 1)
+        self.assertGreaterEqual(c._backoff(0, "5"), 5.0)
+
+    def test_clients_start_on_different_slots_and_share_safely(self):
+        starts = {mm.GatewayClient("https://gateway.invalid/", "m", KEYS)._next for _ in range(3)}
+        self.assertEqual(starts, {0, 1, 2})
+        c = mm.GatewayClient("https://gateway.invalid/", "m", KEYS, start_slot=0)
+        taken = []
+        threads = [
+            threading.Thread(target=lambda: taken.extend(c._take_slot() for _ in range(300)))
+            for _ in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(taken.count(slot) for slot in range(3)), [400, 400, 400])
 
     def test_auth_failure_recovers_on_another_key(self):
         with Server([(403, {"error": "no"}, {}), (200, ok_body(), {})]) as server:
@@ -182,7 +229,8 @@ class Retries(unittest.TestCase):
         c, sleeps = client("http://127.0.0.1:9/v1/messages", max_attempts=2)
         with self.assertRaises(mm.ModelError) as caught:
             c.complete([{"role": "user", "content": "x"}], max_tokens=5)
-        self.assertIn("transport error", str(caught.exception))
+        self.assertEqual(caught.exception.category, "transport")
+        self.assertNotIn("127.0.0.1", str(caught.exception))
         self.assertEqual(len(sleeps), 1)
 
     def test_non_messages_body_is_an_error(self):
@@ -199,19 +247,86 @@ class Secrets(unittest.TestCase):
             for key in KEYS:
                 self.assertNotIn(key, text)
 
-    def test_env_file_parsing_and_from_env(self):
+    def test_from_env_reads_the_process_environment(self):
+        environ = {
+            "MESSAGES_URL": "https://gateway.invalid/v1/messages",
+            "MODEL": "m-0",
+            "CLUSTER_2_GATEWAY_API_KEY": "k2",
+        }
+        c = mm.GatewayClient.from_env(environ=environ)
+        self.assertEqual((c.model, c.key_count), ("m-0", 1))
+        with self.assertRaises(mm.ModelError) as caught:
+            mm.GatewayClient.from_env(environ={"MODEL": "m-0", "UNRELATED": "secret-value"})
+        self.assertEqual(caught.exception.category, "config")
+        self.assertIn("MESSAGES_URL", str(caught.exception))
+        self.assertIn("CLUSTER_<n>_GATEWAY_API_KEY", str(caught.exception))
+        self.assertNotIn("secret-value", str(caught.exception))
+
+    def test_explicit_env_file_outside_the_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = Path(tmp) / ".env"
+            env = Path(tmp) / "gateway.env"
             env.write_text(
-                "# comment\nMESSAGES_URL=http://127.0.0.1:9/v1/messages\nexport MODEL='m-1'\n"
+                "# comment\nMESSAGES_URL=https://gateway.invalid/v1/messages\n"
+                "export MODEL='m-1'\n"
                 'CLUSTER_1_GATEWAY_API_KEY="k1"\nCLUSTER_3_GATEWAY_API_KEY=k3\nOTHER=x\n'
             )
-            values = mm.read_env(env)
+            values = mm.read_env_file(env)
             self.assertEqual(values["MODEL"], "m-1")
             self.assertEqual(values["CLUSTER_1_GATEWAY_API_KEY"], "k1")
-            c = mm.GatewayClient.from_env(env)
-        self.assertEqual(c.model, "m-1")
+            c = mm.GatewayClient.from_env(env, environ={"MODEL": "from-environment"})
+        self.assertEqual(c.model, "from-environment")
         self.assertEqual(c.key_count, 2)
+
+    def test_credentials_file_inside_the_repository_refused(self):
+        with self.assertRaises(mm.ModelError) as caught:
+            mm.GatewayClient.from_env(mm.REPO / ".env", environ={})
+        self.assertIn("inside the repository", str(caught.exception))
+        self.assertFalse(hasattr(mm, "DEFAULT_ENV"))
+
+    def test_http_endpoint_refused_unless_loopback_test_server(self):
+        for url in ("http://gateway.invalid/v1/messages", "ftp://gateway.invalid/x"):
+            with self.assertRaises(mm.ModelError) as caught:
+                mm.GatewayClient(url, "m", ["k"])
+            self.assertIn("https", str(caught.exception))
+        with self.assertRaises(mm.ModelError):
+            mm.GatewayClient("http://127.0.0.1:9/", "m", ["k"])
+        with self.assertRaises(mm.ModelError):
+            mm.GatewayClient("http://gateway.invalid/", "m", ["k"], allow_insecure_loopback=True)
+        mm.GatewayClient("http://127.0.0.1:9/", "m", ["k"], allow_insecure_loopback=True)
+
+    def test_redirect_is_never_followed_and_the_key_never_reaches_the_target(self):
+        target = Server([])
+        origin = Server([(307, {"moved": True}, {"location": target.url})])
+        with target, origin:
+            c, sleeps = client(origin.url)
+            with self.assertRaises(mm.ModelError) as caught:
+                c.complete([{"role": "user", "content": "x"}], max_tokens=5)
+        self.assertEqual(caught.exception.category, "redirect")
+        self.assertEqual(caught.exception.status, 307)
+        self.assertEqual(len(origin.seen), 1)
+        self.assertEqual(target.seen, [])
+        self.assertEqual(sleeps, [])
+
+    def test_errors_never_carry_the_endpoint_host_or_body(self):
+        host = "gateway.invalid"
+
+        def failing_opener(request, timeout):
+            raise mm.urllib.error.URLError(OSError(f"cannot reach {request.full_url} ({host})"))
+
+        c, _ = client(f"https://{host}/v1/messages", opener=failing_opener, max_attempts=2)
+        with self.assertRaises(mm.ModelError) as caught:
+            c.complete([{"role": "user", "content": "x"}], max_tokens=5)
+        self.assertEqual(caught.exception.category, "transport")
+        self.assertNotIn(host, str(caught.exception))
+        body = {"error": {"type": "api_error", "message": f"upstream {host} account acct-7"}}
+        with Server([(500, body, {})] * 2) as server:
+            c, _ = client(server.url, max_attempts=2)
+            with self.assertRaises(mm.ModelError) as caught:
+                c.complete([{"role": "user", "content": "x"}], max_tokens=5)
+        text = str(caught.exception)
+        for leaked in (host, "acct-7", "127.0.0.1", server.url):
+            self.assertNotIn(leaked, text)
+        self.assertIn("HTTP 500 api_error", text)
 
     def test_incomplete_configuration_refused(self):
         with self.assertRaises(mm.ModelError):

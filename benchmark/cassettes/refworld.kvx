@@ -12,17 +12,17 @@ recorded_with = "cwr instance turn --gateway record"
 stub_schedules = "allow_undeclared false"
 
 [set.refworld-adapters]
-build = "sha256:d47829329736a8d503dc3e5f47865352de86f263433b32a111c7ff4f19718deb"
+build = "sha256:6541bedab375b38fda1137b40239e057227e54947e1e1155961f89757e2f3b2b"
 cassettes = 5
 digest = "sha256:8483cc4ac6b674c21391dc9b995f9e273749781e54249e8eaae750f5562ed6a3"
 runs_incomplete = []
 turns = 39
 
 [set.suite]
-build = "sha256:d47829329736a8d503dc3e5f47865352de86f263433b32a111c7ff4f19718deb"
+build = "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e"
 cassettes = 600
-digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
+digest = "sha256:c4d99f432d3f4fe76a04e5b3d8fc3d2db0d50785d3acfdaaaa9d2013234418e9"
 runs_incomplete = []
-solutions_digest = "sha256:a4ab86d1f78887a59431344303b79d428ffa852e3a47a61fb86979b78e4ea8e2"
-tasks_digest = "sha256:00bb1b15dc52d875bf24ea412c8ed612062f975e3c4dff447a0a564c9c8001d8"
-turns = 1680
+solutions_digest = "sha256:4e15b5bb2ba8de165275e0338825fc99aeadbdd4bdfd528150e44b821b70aa04"
+tasks_digest = "sha256:6d96339fdf0294da0ad2990da7e06601062cb709cd2061e724a97d358f25a955"
+turns = 1780

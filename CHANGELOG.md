@@ -56,3 +56,14 @@ describe what the tree contains.
 - Documentation: the [README](README.md), the guides in [docs/cwr](docs/cwr/README.md), the
   [release procedure](RELEASE.md), the [security policy](SECURITY.md) and the
   [contribution](CONTRIBUTING.md) and [governance](GOVERNANCE.md) documents.
+
+### Changed
+
+- Revisions and campaign result digests in [benchmark/release.kvx](benchmark/release.kvx) cover
+  the published files only. In a repository checkout these are the files the bundler selects; in an
+  unpacked bundle, every file. Ignored output such as wheel build directories and run logs no
+  longer changes a pin, and a checkout and its bundle compute the same digests.
+- The SDK RPC client `sdk/python/cwr/_rpc.py` is back at the revision every registered campaign
+  ran with. Each Build carries a byte copy of this file, so a later edit had changed every
+  refworld Build hash, and the released tree no longer reproduced the Builds the H1 to H4
+  campaigns measured. A broken frame exchange still fails the call through the response id check.

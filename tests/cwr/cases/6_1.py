@@ -676,14 +676,16 @@ def drive(results: Results, target: Path, scratch: Path) -> int:
 
     base_env = {k: v for k, v in os.environ.items() if k not in {"CWR_HOME", "PYTHONPATH"}}
     base_env["CARGO_TARGET_DIR"] = str(target)
-    # The release CLI is built as RELEASE.md packages it: locked dependencies and the two
-    # --remap-path-prefix flags, so the bundle's bin/cwr is the binary artifact.cli.sha256 pins.
+    # The release CLI is built as RELEASE.md packages it: locked dependencies and the three
+    # --remap-path-prefix flags, so the bundle's bin/cwr is the binary artifact.cli.sha256 pins
+    # whether cargo reads crates from the registry or from vendor/cargo.
     build_env = dict(base_env)
     cargo_home = os.environ.get("CARGO_HOME") or str(
         Path(os.environ.get("HOME", "/root")) / ".cargo"
     )
     build_env["RUSTFLAGS"] = (
-        f"--remap-path-prefix={cargo_home}=/cargo --remap-path-prefix={REPO}=/cwr"
+        f"--remap-path-prefix={cargo_home}=/cargo --remap-path-prefix={REPO}=/cwr "
+        f"--remap-path-prefix={REPO}/vendor/cargo=/cargo/registry/src/index.crates.io-1949cf8c6b5b557f"
     )
     code, out, err = run(
         ["cargo", "build", "--release", "--locked", "-p", "cwr-cli"], REPO, build_env, 3600

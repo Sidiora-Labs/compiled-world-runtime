@@ -410,10 +410,10 @@ python3 tests/cwr/qualify.py --check-registry
 The checker also runs on its own and reports the recorded status of a case:
 
 ```sh
-python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019 || echo "CWR-019 has no accepted attempt: exit $?"
+python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019
 ```
 
-> **Verified (CWR-019).** The independent checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) accepts the registry's latest CWR-019 record, [20261106T162259Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T162259Z-1.json), written by the runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) under evidence schema version 2. Earlier records of the case were written under version 1, and the checker lists them as stale.
+> **Verified (CWR-019).** The independent checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) accepts the registry's latest CWR-019 record, [20261106T192125Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T192125Z-1.json), written by the runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) under evidence schema version 2. The checker lists the records written under version 1 as stale.
 
 A hypothesis result needs the complete arm matrix with the pre-registered metric definitions; a
 component attempt never implies one, and a run containing `INVARIANT_VIOLATION` is excluded.

@@ -115,24 +115,27 @@ exits 1 when it refuses and 2 on a usage error. It refuses, listing every reason
 ## Packaging the CLI and SDK
 
 Two artifacts are pinned besides the bundle. The CLI is the release `cwr` binary built with the
-locked dependencies of `Cargo.lock`. Built as below, with the same toolchain, the same sources and
-the same dependency source (crates.io registry or `vendor/cargo`), it is byte-reproducible whatever
-the cargo target directory, `CARGO_HOME` or checkout path: the two `--remap-path-prefix` flags
-replace the only host paths the compiler would otherwise embed. `python3 tools/cli_repro.py`
+locked dependencies of `Cargo.lock`. Built as below, with the same toolchain and the same sources,
+it is byte-reproducible whatever the cargo target directory, `CARGO_HOME`, checkout path or
+dependency source (crates.io registry or `vendor/cargo`). The first two `--remap-path-prefix` flags
+replace the only host paths the compiler would otherwise embed. The third maps `vendor/cargo` onto
+the registry path, so a vendored build embeds the same paths as a registry build. `python3 tools/cli_repro.py`
 proves it on one host by building twice, under two `CARGO_HOME` values, two checkout paths and two
 target directories, and comparing the hashes. The SDK is the `cwr-sdk` wheel built from
 [sdk/python/pyproject.toml](sdk/python/pyproject.toml) with the pinned build backend
 (setuptools 68.1.2 and wheel 0.42.0, used offline without build isolation) and a fixed
-`SOURCE_DATE_EPOCH`, which makes it byte-reproducible too. Run from the repository root or from an
-unpacked bundle:
+`SOURCE_DATE_EPOCH`, which makes it byte-reproducible too. The last `rm` removes what the wheel
+build leaves under `sdk/python`, which an unpacked bundle would otherwise count in
+`pin.sdk.revision`. Run from the repository root or from an unpacked bundle:
 
 ```sh
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-RUSTFLAGS="--remap-path-prefix=$CARGO_HOME=/cargo --remap-path-prefix=$PWD=/cwr" cargo build --release --locked -p cwr-cli
+RUSTFLAGS="--remap-path-prefix=$CARGO_HOME=/cargo --remap-path-prefix=$PWD=/cwr --remap-path-prefix=$PWD/vendor/cargo=/cargo/registry/src/index.crates.io-1949cf8c6b5b557f" cargo build --release --locked -p cwr-cli
 mkdir -p artifacts
 cp "${CARGO_TARGET_DIR:-target}/release/cwr" artifacts/cwr-0.1.0-x86_64-linux-gnu
 rm -rf sdk/python/build sdk/python/cwr_sdk.egg-info
 SOURCE_DATE_EPOCH=315532800 python3 -m pip wheel --quiet --no-deps --no-build-isolation --no-index --wheel-dir artifacts ./sdk/python
+rm -rf sdk/python/build sdk/python/cwr_sdk.egg-info
 sha256sum artifacts/cwr-0.1.0-x86_64-linux-gnu artifacts/cwr_sdk-0.1.0-py3-none-any.whl
 ```
 
@@ -165,7 +168,10 @@ exits 2 naming CWR-R015 while either is missing.
 
 `cwr release check` needs the `cwr` binary and Python 3.12 or newer as `python3` on `PATH`; the
 World Compiler runs each world's contract tests with Python. It recomputes every revision, digest,
-Build hash and checksum from the unpacked tree and prints one line per pin. It exits 0 when every
+Build hash and checksum from the unpacked tree and prints one line per pin. A revision or campaign
+result digest covers the published files only: in a repository checkout, the files the bundler
+selects; in an unpacked bundle, every file. Ignored output such as build directories and run
+logs never changes a pin. It exits 0 when every
 pin matches, 2 with one named diagnostic for each pin that does not, and 1 on a usage error or an
 unreadable release file. `--claim` also requires closure and owner acceptance. `--json` prints the
 same report as JSON.

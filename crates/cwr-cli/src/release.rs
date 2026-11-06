@@ -31,12 +31,13 @@
 //! `tests/cwr/closure.py --json`) must say `ACCEPTED` with no blocking item and recorded owner
 //! acceptance, and the owner-acceptance file must record `owner_acceptance = true` with an owner.
 //!
-//! A revision is the `sha256:` tree digest of the component's directory, exactly
+//! A revision is the `sha256:` tree digest of the component's directory in the layout of
 //! `benchmark/predicates/common.py::tree_digest`: relative POSIX path, NUL, decimal length, NUL,
-//! bytes, per file, sorted by path bytes; every regular file and every symbolic link to a regular
-//! file (read through the link) is included; only `__pycache__` directories are skipped, and
-//! symbolic links to directories are not entered. The tree has no version-control history, so a
-//! content digest is the revision.
+//! bytes, per file, sorted by path bytes. A campaign result digest uses the same layout. Both
+//! cover the published files only (see [`published_digest`]): in a git checkout the files the release
+//! bundler selects, in an unpacked bundle every regular file and every symbolic link to one,
+//! `__pycache__` skipped and symbolic links to directories not entered. A content digest is the
+//! revision, so the live tree and its bundle agree on it.
 //!
 //! Exit codes: 0 every pin recorded and verified (`check`) or computed (`pin`); 2 at least one
 //! diagnostic; 1 usage error or an unreadable release file.
@@ -484,14 +485,24 @@ fn compute_one(
     spec: &PinSpec,
     builds: &BuildResults,
 ) -> Result<Value, String> {
-    let dir_of =
-        |section: &str, default: &str| root.join(get_str(sections, section, "path", default));
     match spec.code {
-        "CWR-R001" => revision(&dir_of("pin.compiler", "crates/cwr-compiler")),
-        "CWR-R002" => revision(&dir_of("pin.kernel", "crates/cwr-kernel")),
-        "CWR-R003" => revision(&dir_of("pin.sdk", "sdk/python")),
-        "CWR-R004" => revision(&dir_of("pin.cli", "crates/cwr-cli")),
-        "CWR-R016" => revision(&dir_of("pin.contract", "crates/cwr-contract")),
+        "CWR-R001" => revision(
+            root,
+            &get_str(sections, "pin.compiler", "path", "crates/cwr-compiler"),
+        ),
+        "CWR-R002" => revision(
+            root,
+            &get_str(sections, "pin.kernel", "path", "crates/cwr-kernel"),
+        ),
+        "CWR-R003" => revision(root, &get_str(sections, "pin.sdk", "path", "sdk/python")),
+        "CWR-R004" => revision(
+            root,
+            &get_str(sections, "pin.cli", "path", "crates/cwr-cli"),
+        ),
+        "CWR-R016" => revision(
+            root,
+            &get_str(sections, "pin.contract", "path", "crates/cwr-contract"),
+        ),
         "CWR-R017" => file_digest(&root.join("Cargo.lock")),
         "CWR-R020" => file_digest(&root.join("spec/cwr/spec.kvx")),
         "CWR-R021" => file_digest(&root.join(get_str(
@@ -606,8 +617,80 @@ pub fn tree_digest(dir: &Path) -> Result<String, String> {
     Ok(format!("sha256:{}", hex(&hasher.finalize())))
 }
 
-fn revision(dir: &Path) -> Result<Value, String> {
-    tree_digest(dir).map(Value::String)
+/// The published files under `rel` in the git checkout `root`, as (path relative to `rel`,
+/// path): the selection `tools/release.py` puts in a release bundle, that is `git ls-files
+/// --cached --others --exclude-standard` minus `__pycache__`, hidden path components and paths
+/// that are not regular files. Ignored output (build directories, logs, unpublished campaign
+/// files) is never selected.
+fn git_published(root: &Path, rel: &str) -> Result<Vec<(String, PathBuf)>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+        ])
+        .arg(rel)
+        .output()
+        .map_err(|e| format!("git ls-files {rel}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git ls-files {rel} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let prefix = format!("{}/", rel.trim_end_matches('/'));
+    let mut out = Vec::new();
+    for entry in output.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+        let listed = std::str::from_utf8(entry)
+            .map_err(|_| format!("git ls-files {rel} listed a path that is not UTF-8"))?;
+        let Some(inner) = listed.strip_prefix(&prefix) else {
+            continue;
+        };
+        let hidden = listed
+            .split('/')
+            .any(|part| part == SKIPPED_DIR || part.starts_with('.'));
+        let path = root.join(listed);
+        if hidden || !fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            continue;
+        }
+        out.push((inner.to_string(), path));
+    }
+    out.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    out.dedup_by(|a, b| a.0 == b.0);
+    Ok(out)
+}
+
+/// `sha256:` digest of the published files under `rel`, in the [`tree_digest`] layout. In a git
+/// checkout (`root/.git` exists) the files are the [`git_published`] selection; in an unpacked
+/// bundle, which holds only that selection, they are every file [`tree_digest`] reads. The live
+/// tree and its bundle therefore compute the same digest.
+fn published_digest(root: &Path, rel: &str) -> Result<String, String> {
+    let dir = root.join(rel);
+    if !dir.is_dir() {
+        return Err(format!("{} is not a directory", dir.display()));
+    }
+    if !root.join(".git").exists() {
+        return tree_digest(&dir);
+    }
+    let files = git_published(root, rel)?;
+    if files.is_empty() {
+        return Err(format!(
+            "{} holds no published file",
+            root.join(rel).display()
+        ));
+    }
+    let mut hasher = Sha256::new();
+    feed_tree(&mut hasher, &files)?;
+    Ok(format!("sha256:{}", hex(&hasher.finalize())))
+}
+
+fn revision(root: &Path, rel: &str) -> Result<Value, String> {
+    published_digest(root, rel).map(Value::String)
 }
 
 /// `^t[0-9]{3}-[a-z0-9-]+$`, the task directory pattern of `benchmark/predicates/common.py`.
@@ -755,7 +838,7 @@ fn results_pin(root: &Path, sections: &Sections) -> Result<Value, String> {
             problems.push(format!("{label}: path is not a string"));
             continue;
         };
-        match tree_digest(&root.join(rel)) {
+        match published_digest(root, rel) {
             Ok(d) => {
                 digests.insert(label.clone(), Value::String(d));
             }
@@ -1648,6 +1731,41 @@ mod tests {
         h.update(b"src/f.txt\x003\x00src");
         assert_eq!(rust, format!("sha256:{}", hex(&h.finalize())));
         fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn published_digest_skips_ignored_files_in_a_checkout_and_equals_the_bundle() {
+        let repo = tmp("published-git");
+        let bundle = tmp("published-bundle");
+        for root in [&repo, &bundle] {
+            fs::create_dir_all(root.join("res/cell")).unwrap();
+            fs::write(root.join("res/cell/ledger.jsonl"), "{}\n").unwrap();
+            fs::write(root.join("res/analysis.json"), "[]").unwrap();
+        }
+        fs::write(repo.join(".gitignore"), "*.log\n/res/_pilot/\n").unwrap();
+        fs::create_dir_all(repo.join("res/_pilot")).unwrap();
+        fs::write(repo.join("res/_pilot/x.json"), "pilot").unwrap();
+        fs::write(repo.join("res/cell/kernel.log"), "noise").unwrap();
+        fs::write(repo.join("res/.hidden"), "hidden").unwrap();
+        let init = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-q"])
+            .status();
+        if !init.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let checkout = published_digest(&repo, "res").unwrap();
+        let unpacked = published_digest(&bundle, "res").unwrap();
+        assert_eq!(checkout, unpacked);
+        assert_eq!(unpacked, tree_digest(&bundle.join("res")).unwrap());
+        fs::write(repo.join("res/cell/kernel.log"), "more noise").unwrap();
+        assert_eq!(published_digest(&repo, "res").unwrap(), checkout);
+        fs::write(repo.join("res/analysis.json"), "[1]").unwrap();
+        assert_ne!(published_digest(&repo, "res").unwrap(), checkout);
+        assert!(published_digest(&repo, "missing").is_err());
+        fs::remove_dir_all(&repo).unwrap();
+        fs::remove_dir_all(&bundle).unwrap();
     }
 
     #[test]

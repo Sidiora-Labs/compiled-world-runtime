@@ -185,7 +185,7 @@ specification disagree, the specification wins.
 | `tools/` | Repository tooling: source headers, code map and release checks |
 | `research/` | One report per hypothesis, H1 to H4 |
 | `scripts/` | Operator scripts: host setup, campaigns and release |
-| `vendor/` | Target of `make vendor`. Builds read it only after the source replacement in [vendor/README.md](vendor/README.md) is added. |
+| `vendor/` | Vendored crate sources that `.cargo/config.toml` builds from, so the workspace builds offline. See [vendor/README.md](vendor/README.md). |
 | `artifacts/` | Release bundles written by `make release` |
 
 ## Status
@@ -200,7 +200,7 @@ every case and the owner's acceptance. No hypothesis has a result yet.
 Read the recorded outcome of any case with:
 
 ```sh
-python3 tests/cwr/check_evidence.py --status CWR-019 || echo "CWR-019 has no accepted attempt: exit $?"
+python3 tests/cwr/check_evidence.py --status CWR-019
 ```
 
 The checker prints the derived status of the case, its deciding record and every stale or rejected

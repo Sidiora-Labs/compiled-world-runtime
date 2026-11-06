@@ -17,7 +17,7 @@
 //!
 //! | File class | Permitted top-level modules |
 //! |---|---|
-//! | `lib/<module>.py` | `cwr_state`, the generated SDK `cwr`, `typing`, `dataclasses`, `json`, `re`, `math`, `collections`, `itertools` |
+//! | `lib/<module>.py` | `cwr_state`, `typing`, `dataclasses`, `json`, `re`, `math`, `collections`, `itertools` |
 //! | `adapters/<module>/live.py` | the same as `lib/` |
 //! | `migrations/<name>.py` | the same without `cwr_state` (no clock, RNG, adapters or ledger) |
 //!
@@ -42,7 +42,9 @@
 //! * [`BANNED_ATTRS`]: attribute names (and `from X import <name>` names) through which a
 //!   permitted module re-exports a module outside the list (`typing.sys`, `json.codecs`,
 //!   `dataclasses.inspect`, `re.enum.bltns`, ...), host-facility names, CPython frame
-//!   attributes and the generated SDK's private transport modules.
+//!   attributes, the generated SDK's private transport modules, and `format` /
+//!   `format_map`: a `str.format` field name (`"{0.__globals__[os]}"`) walks attributes and
+//!   keys from inside a string literal, where no code-token list can see it.
 //!
 //! The same closed-list discipline covers the further routes:
 //!
@@ -87,7 +89,8 @@ pub const STDLIB_ALLOWED: [&str; 7] = [
 /// The kernel state API module (lib/ and live.py only, never migrations).
 pub const STATE_API: &str = "cwr_state";
 
-/// The generated SDK package.
+/// The generated SDK package: the turn scripts' interface, never importable by World Source
+/// Python (world-source.md sections 8 and 12).
 pub const SDK: &str = "cwr";
 
 /// Host facilities named explicitly by world-source.md section 8. They are also outside the
@@ -194,8 +197,10 @@ pub const DUNDER_ALLOWED: [&str; 27] = [
 /// that a permitted module re-exports (`typing.sys`, `json.codecs`, `dataclasses.inspect`,
 /// `re.enum.bltns`, `collections._sys`, `typing.operator.attrgetter`, ...), the host
 /// facilities by name, CPython frame and generator attributes, and the generated SDK's
-/// private transport modules (`cwr._rpc`, `cwr._runner`).
-pub const BANNED_ATTRS: [&str; 59] = [
+/// private transport modules (`cwr._rpc`, `cwr._runner`), and `str.format` /
+/// `str.format_map`, whose field names (`"{0.__globals__[os]}"`) walk attributes and keys
+/// from inside a string literal.
+pub const BANNED_ATTRS: [&str; 61] = [
     // host facilities and interpreter modules
     "sys",
     "_sys",
@@ -259,6 +264,9 @@ pub const BANNED_ATTRS: [&str; 59] = [
     // the generated SDK's private transport
     "_rpc",
     "_runner",
+    // attribute and key walks hidden inside a format string
+    "format",
+    "format_map",
 ];
 
 /// Marker prefix of an [`Import`] that records a banned builtin used as a bare name.
@@ -402,8 +410,13 @@ pub fn refusal(policy: Policy, import: &Import) -> Option<String> {
             "import of the private submodule {private} of {top} is outside the closed import list"
         ));
     }
-    if STDLIB_ALLOWED.contains(&top) || top == SDK {
+    if STDLIB_ALLOWED.contains(&top) {
         return None;
+    }
+    if top == SDK {
+        return Some(format!(
+            "import of the generated SDK {SDK} is outside the closed import list: the SDK is the turn scripts' interface, and World Source code runs beside the kernel, not in the sandbox"
+        ));
     }
     if top == STATE_API {
         return match policy {
@@ -417,7 +430,7 @@ pub fn refusal(policy: Policy, import: &Import) -> Option<String> {
         return Some(format!("import of host facility {top} is forbidden; use the kernel state API (cwr_state) instead"));
     }
     Some(format!(
-        "import of {top} is outside the closed import list (cwr_state, cwr, {})",
+        "import of {top} is outside the closed import list (cwr_state, {})",
         STDLIB_ALLOWED.join(", ")
     ))
 }
@@ -514,13 +527,14 @@ fn logical_lines(src: &str) -> Vec<Logical> {
             let word: String = chars[i..j].iter().collect();
             if j < chars.len() && (chars[j] == '"' || chars[j] == '\'') && is_string_prefix(&word) {
                 // A prefixed string literal: lex it as a string from the quote.
-                let is_f = word.to_ascii_lowercase().contains('f');
+                let lower = word.to_ascii_lowercase();
                 advance!(j - i);
-                let body = lex_string(&chars, &mut i, &mut line, &mut col);
-                if is_f {
+                if lower.contains('f') {
                     // The `{...}` expressions of an f-string are code: lex them as such, every
                     // token located at the string's start.
-                    for mut l in logical_lines(&fstring_exprs(&body)) {
+                    let code =
+                        lex_fstring(&chars, &mut i, &mut line, &mut col, lower.contains('r'));
+                    for mut l in logical_lines(&code) {
                         for t in &mut l.toks {
                             t.line = tl;
                             t.col = tc;
@@ -528,6 +542,8 @@ fn logical_lines(src: &str) -> Vec<Logical> {
                         l.indent = 0;
                         fstring_code.push(l);
                     }
+                } else {
+                    lex_string(&chars, &mut i, &mut line, &mut col);
                 }
                 cur.push(Tok {
                     kind: Kind::Str,
@@ -602,85 +618,232 @@ fn logical_lines(src: &str) -> Vec<Logical> {
     out
 }
 
-/// The `{...}` replacement-field expressions of an f-string body (`{{` and `}}` are literal
-/// braces), one per line; a format spec after a top-level `:` or `!` is kept, since it can
-/// itself hold nested `{...}` expressions and is otherwise harmless text.
-fn fstring_exprs(body: &str) -> String {
-    let chars: Vec<char> = body.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '{' {
-            if chars.get(i + 1) == Some(&'{') {
-                i += 2;
-                continue;
-            }
-            let mut depth = 1usize;
-            let mut j = i + 1;
-            while j < chars.len() && depth > 0 {
-                match chars[j] {
-                    '{' => depth += 1,
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-                j += 1;
-            }
-            let end = if depth == 0 { j - 1 } else { j };
-            out.extend(&chars[i + 1..end]);
-            out.push('\n');
-            i = j;
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-/// Lexes one string literal starting at the opening quote; returns its body.
-fn lex_string(chars: &[char], i: &mut usize, line: &mut usize, col: &mut usize) -> String {
-    let q = chars[*i];
-    let triple = chars.get(*i + 1) == Some(&q) && chars.get(*i + 2) == Some(&q);
-    let step = |i: &mut usize, line: &mut usize, col: &mut usize| {
-        if chars[*i] == '\n' {
+/// Advances one character, keeping the one-based line and column.
+fn step(chars: &[char], i: &mut usize, line: &mut usize, col: &mut usize) {
+    if let Some(&c) = chars.get(*i) {
+        if c == '\n' {
             *line += 1;
             *col = 1;
         } else {
             *col += 1;
         }
         *i += 1;
-    };
-    let open = if triple { 3 } else { 1 };
-    for _ in 0..open {
-        step(i, line, col);
     }
-    let mut body = String::new();
-    while *i < chars.len() {
-        let c = chars[*i];
+}
+
+/// Whether a closing quote (`q`, tripled when `triple`) starts at `i`.
+fn closes_at(chars: &[char], i: usize, q: char, triple: bool) -> bool {
+    let n = if triple { 3 } else { 1 };
+    (0..n).all(|d| chars.get(i + d) == Some(&q))
+}
+
+/// Lexes one plain (not f-) string literal starting at the opening quote.
+fn lex_string(chars: &[char], i: &mut usize, line: &mut usize, col: &mut usize) {
+    let Some(&q) = chars.get(*i) else {
+        return;
+    };
+    let triple = closes_at(chars, *i, q, true);
+    for _ in 0..if triple { 3 } else { 1 } {
+        step(chars, i, line, col);
+    }
+    while let Some(&c) = chars.get(*i) {
         if c == '\\' && *i + 1 < chars.len() {
-            body.push(c);
-            body.push(chars[*i + 1]);
-            step(i, line, col);
-            step(i, line, col);
+            step(chars, i, line, col);
+            step(chars, i, line, col);
             continue;
         }
-        if triple {
-            if c == q && chars.get(*i + 1) == Some(&q) && chars.get(*i + 2) == Some(&q) {
-                for _ in 0..3 {
-                    step(i, line, col);
-                }
-                return body;
+        if closes_at(chars, *i, q, triple) {
+            for _ in 0..if triple { 3 } else { 1 } {
+                step(chars, i, line, col);
             }
-        } else if c == q {
-            step(i, line, col);
-            return body;
-        } else if c == '\n' {
-            // Unterminated single-quoted string: stop at the line end.
-            return body;
+            return;
         }
-        body.push(c);
-        step(i, line, col);
+        if c == '\n' && !triple {
+            // Unterminated single-quoted string: stop at the line end.
+            return;
+        }
+        step(chars, i, line, col);
     }
-    body
+}
+
+/// Lexes one f-string literal starting at the opening quote (its prefix already consumed)
+/// the way the Python 3.12 tokenizer does (PEP 701), and returns the code of its
+/// replacement fields, each parenthesised on its own line.
+///
+/// Inside a `{...}` field the outer quote does not close the string: nested string literals
+/// (of any quote, f-strings included) are lexed as literals, brackets are counted, and a
+/// `#` comment runs to the line end. A format spec after a top-level `:` is literal text
+/// except for its own nested `{...}` fields.
+fn lex_fstring(
+    chars: &[char],
+    i: &mut usize,
+    line: &mut usize,
+    col: &mut usize,
+    raw: bool,
+) -> String {
+    let mut code = String::new();
+    let Some(&q) = chars.get(*i) else {
+        return code;
+    };
+    let triple = closes_at(chars, *i, q, true);
+    for _ in 0..if triple { 3 } else { 1 } {
+        step(chars, i, line, col);
+    }
+    while let Some(&c) = chars.get(*i) {
+        if c == '\\' {
+            match chars.get(*i + 1) {
+                // `\{` leaves the brace to open a field, in raw and plain f-strings alike.
+                None | Some('{') | Some('}') => step(chars, i, line, col),
+                Some('N') if !raw && chars.get(*i + 2) == Some(&'{') => {
+                    // A named escape `\N{...}`: its braces are not a field.
+                    while chars
+                        .get(*i)
+                        .is_some_and(|&c| c != '}' && c != '\n' && c != q)
+                    {
+                        step(chars, i, line, col);
+                    }
+                    if chars.get(*i) == Some(&'}') {
+                        step(chars, i, line, col);
+                    }
+                }
+                Some(_) => {
+                    step(chars, i, line, col);
+                    step(chars, i, line, col);
+                }
+            }
+            continue;
+        }
+        if closes_at(chars, *i, q, triple) {
+            for _ in 0..if triple { 3 } else { 1 } {
+                step(chars, i, line, col);
+            }
+            return code;
+        }
+        if c == '\n' && !triple {
+            // Unterminated single-quoted f-string: stop at the line end.
+            return code;
+        }
+        if c == '{' {
+            if chars.get(*i + 1) == Some(&'{') {
+                step(chars, i, line, col);
+                step(chars, i, line, col);
+                continue;
+            }
+            step(chars, i, line, col);
+            lex_field(chars, i, line, col, &mut code);
+            continue;
+        }
+        step(chars, i, line, col);
+    }
+    code
+}
+
+/// Lexes one replacement field after its `{`, through its closing `}`, appending its
+/// expression (and those of fields nested in its format spec) to `code`.
+fn lex_field(chars: &[char], i: &mut usize, line: &mut usize, col: &mut usize, code: &mut String) {
+    let mut expr = String::new();
+    let mut depth = 0usize;
+    let finish = |expr: &str, code: &mut String| {
+        if !expr.trim().is_empty() {
+            code.push('(');
+            code.push_str(expr);
+            code.push_str(")\n");
+        }
+    };
+    while let Some(&c) = chars.get(*i) {
+        if c == '#' {
+            while chars.get(*i).is_some_and(|&c| c != '\n') {
+                step(chars, i, line, col);
+            }
+            continue;
+        }
+        if c == '"' || c == '\'' {
+            let start = *i;
+            lex_string(chars, i, line, col);
+            expr.extend(&chars[start..*i]);
+            continue;
+        }
+        if c.is_alphabetic() || c == '_' {
+            let start = *i;
+            let mut j = *i;
+            while chars
+                .get(j)
+                .is_some_and(|&c| c.is_alphanumeric() || c == '_')
+            {
+                j += 1;
+            }
+            let word: String = chars[start..j].iter().collect();
+            while *i < j {
+                step(chars, i, line, col);
+            }
+            if chars.get(j).is_some_and(|&c| c == '"' || c == '\'') && is_string_prefix(&word) {
+                let lower = word.to_ascii_lowercase();
+                if lower.contains('f') {
+                    // The nested f-string's own fields are lexed again from its raw text.
+                    lex_fstring(chars, i, line, col, lower.contains('r'));
+                } else {
+                    lex_string(chars, i, line, col);
+                }
+            }
+            expr.extend(&chars[start..*i]);
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '}' if depth == 0 => {
+                step(chars, i, line, col);
+                finish(&expr, code);
+                return;
+            }
+            '}' => depth -= 1,
+            ':' if depth == 0 => {
+                step(chars, i, line, col);
+                finish(&expr, code);
+                lex_spec(chars, i, line, col, code);
+                return;
+            }
+            '!' if depth == 0 && chars.get(*i + 1) != Some(&'=') => {
+                // A conversion (`!r`, `!s`, `!a`): not code.
+                step(chars, i, line, col);
+                while chars.get(*i).is_some_and(|&c| c.is_alphanumeric()) {
+                    step(chars, i, line, col);
+                }
+                continue;
+            }
+            '=' if depth == 0 && self_documenting(chars, *i, &expr) => {
+                // `{x=}` prints the expression text; the `=` is not an assignment.
+                step(chars, i, line, col);
+                expr.push(' ');
+                continue;
+            }
+            _ => {}
+        }
+        expr.push(c);
+        step(chars, i, line, col);
+    }
+    finish(&expr, code);
+}
+
+/// Whether the `=` at `i` ends a self-documenting field expression (`{x=}`, `{x = !r}`).
+fn self_documenting(chars: &[char], i: usize, expr: &str) -> bool {
+    let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+    let prev = expr.chars().rev().find(|c| !c.is_whitespace());
+    matches!(next, Some('}') | Some('!') | Some(':'))
+        && !matches!(prev, Some('=') | Some('!') | Some('<') | Some('>'))
+}
+
+/// Lexes a format spec after a field's top-level `:`, through the field's closing `}`. The
+/// spec is literal text except for nested `{...}` fields.
+fn lex_spec(chars: &[char], i: &mut usize, line: &mut usize, col: &mut usize, code: &mut String) {
+    while let Some(&c) = chars.get(*i) {
+        step(chars, i, line, col);
+        match c {
+            '{' => lex_field(chars, i, line, col, code),
+            '}' => return,
+            _ => {}
+        }
+    }
 }
 
 fn is_name(t: &Tok, text: &str) -> bool {
@@ -1101,6 +1264,65 @@ mod tests {
     }
 
     #[test]
+    fn pep701_fstring_quotes_do_not_hide_imports() {
+        // The outer quote inside a replacement field does not close a 3.12 f-string, so the
+        // `'''` in the field is a string literal, not the start of a triple-quoted string.
+        let mods = |src: &str| -> Vec<(String, usize)> {
+            scan(src).into_iter().map(|i| (i.module, i.line)).collect()
+        };
+        let probe = "x = f\"{ \"'''\" }\"\nimport os\ny = 1  # '''\n";
+        assert_eq!(mods(probe), vec![("os".to_string(), 2)]);
+        let imp = Import {
+            module: "os".into(),
+            line: 2,
+            col: 1,
+        };
+        assert!(refusal(Policy::Lib, &imp).is_some());
+        // A triple quote inside a field of a triple-quoted f-string.
+        let triple = "x = f\"\"\"{ '\"\"\"' }\"\"\"\nimport socket\ny = 1\n";
+        assert_eq!(mods(triple), vec![("socket".to_string(), 2)]);
+        // A quote inside a comment in a field does not close the string either.
+        let comment = "x = f\"{1 # \"}\n}\"\nimport os\n";
+        assert_eq!(mods(comment), vec![("os".to_string(), 3)]);
+        // Nested fields, conversions, self-documenting fields, format specs, named escapes
+        // and literal braces are ordinary text; banned names in any field are still seen.
+        let plain = "y = f\"{x!r:>{w}} {x=} {x:%H:%M} \\N{BULLET} {{open}}\"\n";
+        assert_eq!(mods(plain), vec![]);
+        let nested = "y = f\"{x:{f'{eval(1)}'}}\" + rf\"\\{open}\"\n";
+        assert_eq!(
+            mods(nested),
+            vec![
+                ("builtin:eval".to_string(), 1),
+                ("builtin:open".to_string(), 1)
+            ]
+        );
+        // A field spanning lines keeps attribute adjacency.
+        let multi = "y = f\"\"\"{json\n.codecs}\"\"\"\n";
+        assert_eq!(mods(multi), vec![("attr:codecs".to_string(), 1)]);
+    }
+
+    #[test]
+    fn format_field_names_are_refused() {
+        // `str.format` field names walk attributes and keys from inside a string literal.
+        let src = "import json\nv = \"{0.__globals__[codecs].sys}\".format(json.dumps)\nw = str.format_map(s, m)\n";
+        let got: Vec<(String, usize)> = scan(src).into_iter().map(|i| (i.module, i.line)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("json".to_string(), 1),
+                ("attr:format".to_string(), 2),
+                ("attr:format_map".to_string(), 3),
+            ]
+        );
+        let imp = Import {
+            module: "attr:format".into(),
+            line: 2,
+            col: 1,
+        };
+        assert!(refusal(Policy::Lib, &imp).is_some());
+    }
+
+    #[test]
     fn policies() {
         let imp = |m: &str| Import {
             module: m.into(),
@@ -1110,7 +1332,9 @@ mod tests {
         assert_eq!(refusal(Policy::Lib, &imp("typing")), None);
         assert_eq!(refusal(Policy::Lib, &imp("collections.abc")), None);
         assert_eq!(refusal(Policy::Lib, &imp("cwr_state")), None);
-        assert_eq!(refusal(Policy::Lib, &imp("cwr.fs")), None);
+        assert!(refusal(Policy::Lib, &imp("cwr.fs")).is_some());
+        assert!(refusal(Policy::Lib, &imp("cwr")).is_some());
+        assert!(refusal(Policy::Migration, &imp("cwr")).is_some());
         assert!(refusal(Policy::Migration, &imp("cwr_state")).is_some());
         for m in FORBIDDEN_HOST
             .iter()

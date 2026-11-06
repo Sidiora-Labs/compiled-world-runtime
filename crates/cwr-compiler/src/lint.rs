@@ -8,13 +8,14 @@
 //! | CWR-V001 | A precondition (primitive, adapter or drift entry) calls a primitive or adapter whose `side_effect` is not `read_only` |
 //! | CWR-F001 | A precondition code, drift `failure` or adapter `failures` entry outside the eleven-code envelope |
 //! | CWR-F002 | An adapter with an empty `failures` list, without `UNAVAILABLE`, without `TIMEOUT`, a `key` adapter without `DUPLICATE_KEY` (codes the gateway produces itself, kernel.md section 7), or without `content_guaranteed = false` |
-//! | CWR-D001 | An empty `doc` string, or a `manual/` prose file naming a primitive (`<module>.<name>`), failure code (`UPPER_CASE` with an underscore, outside fenced code) or limit (`limits.<name>`) that the Build does not define |
+//! | CWR-D001 | An empty `doc` string, or a `manual/` prose file naming a primitive (`<module>.<name>`), failure code or limit (`limits.<name>`) that the Build does not define. A failure-code candidate is any all-caps word with at least three letters outside fenced code and HTML comments, except the acronyms of [`PROSE_ACRONYMS`]; it must be a code the Build's contracts declare (a precondition code, an adapter failure, or `INVALID`, `LIMIT` and `INVARIANT_VIOLATION`, which the kernel produces itself) |
 //! | CWR-L001 | A forbidden import in `lib/`, `adapters/*/live.py` or `migrations/` (closed list in [`crate::pyimports`]) |
 //! | CWR-M001 | A `state_shape` change in CHANGELOG.kvx whose `migration` is missing, empty or names a file that does not exist (the source-level half; the ContractDiff half belongs to the changelog gate) |
 //!
 //! The ContractDiff-dependent half of CWR-M001 (a `state_shape` diff entry with no matching
 //! change) needs the diff stage and is not checked by the front end.
 
+use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use cwr_contract::kvx::Json;
@@ -178,8 +179,9 @@ pub fn lint(parsed: &Parsed, table: &SymbolTable) -> Vec<Diagnostic> {
     }
 
     // CWR-D001 over manual prose.
+    let declared = declared_codes(parsed);
     for (path, file) in parsed.of_class(FileClass::Manual) {
-        diags.extend(prose(path, &file.text, table));
+        diags.extend(prose(path, &file.text, table, &declared));
     }
 
     // CWR-L001 over Python imports.
@@ -243,6 +245,77 @@ pub fn lint(parsed: &Parsed, table: &SymbolTable) -> Vec<Diagnostic> {
     diags
 }
 
+/// All-caps words manual prose may use that are not failure codes (also with a numeric suffix:
+/// `UTF8`, `SHA256`).
+pub const PROSE_ACRONYMS: [&str; 20] = [
+    "API", "ASCII", "CPU", "CWR", "HTML", "HTTP", "HTTPS", "JSON", "KVX", "NOTE", "PCG", "RNG",
+    "SDK", "SHA", "SPDX", "TTL", "URL", "UTC", "UTF", "UUID",
+];
+
+/// The codes manual prose may name: every precondition code and adapter failure the contracts
+/// declare, plus the codes the kernel produces for any call (`INVALID` for parameters, `LIMIT`
+/// for budgets, `INVARIANT_VIOLATION` for defects). Without a typed model (the reader deferred
+/// an error to a later stage), the whole envelope.
+fn declared_codes(parsed: &Parsed) -> BTreeSet<String> {
+    let Some(model) = parsed.model.as_ref() else {
+        return Code::ALL.iter().map(|c| c.as_str().to_string()).collect();
+    };
+    let mut codes: BTreeSet<String> = [Code::Invalid, Code::Limit, Code::InvariantViolation]
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
+    for p in model.contracts.iter().flat_map(|c| c.primitives.iter()) {
+        codes.extend(
+            p.preconditions
+                .iter()
+                .map(|c| c.code().as_str().to_string()),
+        );
+    }
+    for a in model.adapters.iter().flat_map(|a| a.adapters.iter()) {
+        codes.extend(
+            a.preconditions
+                .iter()
+                .map(|c| c.code().as_str().to_string()),
+        );
+        codes.extend(a.failures.iter().map(|c| c.as_str().to_string()));
+    }
+    codes
+}
+
+/// `line` with every HTML comment (`<!-- ... -->`, possibly spanning lines) blanked out;
+/// `open` carries whether a comment is still open at the end of the line.
+fn without_comments(line: &str, open: &mut bool) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    loop {
+        if *open {
+            match rest.find("-->") {
+                Some(i) => {
+                    out.extend(std::iter::repeat_n(' ', rest[..i + 3].chars().count()));
+                    rest = &rest[i + 3..];
+                    *open = false;
+                }
+                None => {
+                    out.extend(std::iter::repeat_n(' ', rest.chars().count()));
+                    return out;
+                }
+            }
+        } else {
+            match rest.find("<!--") {
+                Some(i) => {
+                    out.push_str(&rest[..i]);
+                    rest = &rest[i..];
+                    *open = true;
+                }
+                None => {
+                    out.push_str(rest);
+                    return out;
+                }
+            }
+        }
+    }
+}
+
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
@@ -251,11 +324,18 @@ fn is_ident_char(c: char) -> bool {
 const FILE_EXTENSIONS: [&str; 5] = ["kvx", "md", "py", "json", "txt"];
 
 /// CWR-D001 over one manual prose file.
-fn prose(path: &str, text: &str, table: &SymbolTable) -> Vec<Diagnostic> {
+fn prose(
+    path: &str,
+    text: &str,
+    table: &SymbolTable,
+    declared: &BTreeSet<String>,
+) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let mut fenced = false;
-    for (n, line) in text.lines().enumerate() {
+    let mut comment = false;
+    for (n, raw) in text.lines().enumerate() {
         let line_no = n + 1;
+        let line = without_comments(raw, &mut comment);
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
             continue;
@@ -311,23 +391,92 @@ fn prose(path: &str, text: &str, table: &SymbolTable) -> Vec<Diagnostic> {
                 }
             }
             let looks_like_code = !fenced
-                && word.contains('_')
                 && word.chars().next().is_some_and(|c| c.is_ascii_uppercase())
                 && word
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-                && !word.starts_with('_')
-                && !word.ends_with('_');
-            if looks_like_code && member.is_none() && !in_envelope(&word) {
+                && word.chars().filter(char::is_ascii_uppercase).count() >= 3
+                && !word.ends_with('_')
+                && !PROSE_ACRONYMS.contains(&word.trim_end_matches(|c: char| c.is_ascii_digit()));
+            if looks_like_code && member.is_none() && !declared.contains(&word) {
+                let why = if in_envelope(&word) {
+                    format!(
+                        "which no contract of this Build declares (declared: {})",
+                        declared.iter().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                } else {
+                    "which is outside the closed eleven-code envelope".to_string()
+                };
                 out.push(Diagnostic::new(
                     Stage::Lint,
                     Some("CWR-D001"),
                     "prose",
                     loc(path, line_no, col, None, None),
-                    format!("manual prose names failure code {word}, which is outside the closed eleven-code envelope"),
+                    format!("manual prose names failure code {word}, {why}"),
                 ));
             }
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table() -> SymbolTable {
+        SymbolTable {
+            modules: vec!["fs".into()],
+            symbols: Default::default(),
+            preconditions: Vec::new(),
+            python: Vec::new(),
+            lib: Default::default(),
+            removed: Default::default(),
+        }
+    }
+
+    /// compiler.md section 3: prose may name only codes the contracts define. A made-up code
+    /// without an underscore, and an envelope code no contract declares, are both CWR-D001;
+    /// declared codes, kernel codes, acronyms, fenced code and HTML comments are not.
+    #[test]
+    fn prose_names_only_declared_codes() {
+        let declared: BTreeSet<String> = ["INVALID", "LIMIT", "INVARIANT_VIOLATION", "LOCKED"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let text = "<!-- SPDX header: CWR DEV OSS -->\nA write fails with LOCKED or LIMIT; JSON and UTF8 are fine.\n<!-- a comment\nspanning BUSY lines -->\nIt may also fail with BUSY or RATE_LIMITED.\n```text\nTIMEOUTS in a fence\n```\nOk.\n";
+        let got: Vec<(usize, usize, String)> =
+            prose("manual/conventions.md", text, &table(), &declared)
+                .into_iter()
+                .map(|d| (d.line, d.col, d.message))
+                .collect();
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!((got[0].0, got[0].1), (5, 23));
+        assert!(got[0]
+            .2
+            .contains("BUSY, which is outside the closed eleven-code envelope"));
+        assert_eq!((got[1].0, got[1].1), (5, 31));
+        assert!(got[1]
+            .2
+            .contains("RATE_LIMITED, which no contract of this Build declares"));
+    }
+
+    #[test]
+    fn html_comments_are_blanked_across_lines() {
+        let mut open = false;
+        assert_eq!(
+            without_comments("a <!-- b --> c", &mut open),
+            format!("a {} c", " ".repeat(10))
+        );
+        assert_eq!(
+            without_comments("x <!-- y", &mut open),
+            format!("x {}", " ".repeat(6))
+        );
+        assert!(open);
+        assert_eq!(
+            without_comments("z --> w", &mut open),
+            format!("{} w", " ".repeat(5))
+        );
+        assert!(!open);
+    }
 }

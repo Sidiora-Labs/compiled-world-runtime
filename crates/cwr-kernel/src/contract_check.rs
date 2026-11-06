@@ -21,8 +21,25 @@
 //! before step 3; an exceeding call is not executed. A primitive that passes its preconditions and
 //! then fails with a code its contract does not declare, raises a Python exception, returns the
 //! wrong shape, changes state while read_only, or (debug mode) breaks an effect is recorded as
-//! `INVARIANT_VIOLATION` with the defect text and the turn's trace; a mutating defect seals the
-//! Instance.
+//! `INVARIANT_VIOLATION` with the defect text and the turn's trace. By the table of kernel.md
+//! section 4, a defect at step 3 of a mutating primitive and every effect failure at step 4,
+//! whatever the side effect, seal the Instance for inspection; a step-3 defect of a read_only or
+//! external primitive changed no world state and does not. A precondition that cannot be
+//! evaluated at step 2 (a read_only call inside it raises, or the expression compares values of
+//! the wrong types) is the same kind of read_only defect: it is recorded as `INVARIANT_VIOLATION`
+//! with the trace, nothing executed, and the Instance is not sealed.
+//!
+//! Once the turn's `primitive_calls` budget is spent, the first exceeding call (primitive or
+//! closure refusal) is recorded as `LIMIT primitive_calls`; later exceeding calls receive the same
+//! answer without a ledger record or trace item, so a script cannot grow the ledger without bound.
+//!
+//! Every exchange with the world-code worker is bounded by the turn's remaining `wall_ms`. When
+//! the turn deadline passes while a primitive runs, the worker is killed, the call is recorded as
+//! `LIMIT wall_ms` (no tick, state unchanged) and the turn ends with `LIMIT wall_ms`; host speed
+//! never turns a call into a defect.
+//!
+//! A `$bytes` value is accepted only as canonical RFC 4648 base64 ([`canonical_b64_len`]);
+//! anything else is a value outside the SDK codec and is refused as `INVALID` at step 1.
 //!
 //! World code (`lib/*.py`) runs in [`LibWorker`], a Python 3.12 process in the same kind of
 //! sandbox as scripts (see [`crate::sandbox`]) speaking JSON lines; it calls back into the kernel
@@ -33,8 +50,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout};
-use std::time::Instant;
+use std::process::{Child, ChildStdin};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 use cwr_contract::precondition::{self as pexpr, Arg, CmpOp, Expr, Term};
 use cwr_contract::{Code, TypeExpr};
@@ -142,6 +160,49 @@ impl Records {
         }
         Records(out)
     }
+
+    /// Like [`Records::parse`], but refuses a record field whose type does not parse instead of
+    /// leaving it unchecked, so no record field the kernel enforces is silently skipped.
+    pub fn parse_checked(text: &str) -> std::result::Result<Records, String> {
+        let r = Records::parse(text);
+        for (name, fields) in &r.0 {
+            if let Some((f, _)) = fields.iter().find(|(_, t)| t.is_none()) {
+                return Err(format!(
+                    "record {name} field {f} has a type that does not parse"
+                ));
+            }
+        }
+        Ok(r)
+    }
+
+    /// Records as the compiler emits them in contracts.json: `{Name: [[field, type], ...]}`.
+    /// Every field type must parse.
+    pub fn from_json(v: &Value) -> std::result::Result<Records, String> {
+        let obj = v
+            .as_object()
+            .ok_or("records must be an object of record names")?;
+        let mut out = BTreeMap::new();
+        for (name, fields) in obj {
+            let list = fields
+                .as_array()
+                .ok_or_else(|| format!("record {name} must be a list of [field, type]"))?;
+            let mut parsed = Vec::new();
+            for f in list {
+                let (Some(field), Some(ty)) = (
+                    f.get(0).and_then(Value::as_str),
+                    f.get(1).and_then(Value::as_str),
+                ) else {
+                    return Err(format!("record {name} holds a malformed field {f}"));
+                };
+                let t = ty
+                    .parse::<TypeExpr>()
+                    .map_err(|e| format!("record {name} field {field}: {e:?}"))?;
+                parsed.push((field.to_string(), Some(t)));
+            }
+            out.insert(name.clone(), parsed);
+        }
+        Ok(Records(out))
+    }
 }
 
 /// Everything the kernel enforces for one Build, read from `contracts.json` and `manual.md`.
@@ -164,7 +225,10 @@ fn bad(build: &Build, m: impl std::fmt::Display) -> KernelError {
 }
 
 impl ContractTable {
-    /// Reads `contracts.json`, `manual.md` and `lib/` of `build`; any malformed contract is [`KernelError::Refused`].
+    /// Reads `contracts.json` and `lib/` of `build`, with the record types from contracts.json's
+    /// `records` when present and otherwise from `manual.md`. Any malformed contract or record
+    /// type is [`KernelError::Refused`]; an unreadable manual is [`KernelError::Io`]. Nothing is
+    /// read partially.
     pub fn load(build: &Build) -> Result<ContractTable> {
         let path = build.dir.join("contracts.json");
         let v: Value = serde_json::from_slice(
@@ -300,7 +364,17 @@ impl ContractTable {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let manual = fs::read_to_string(build.dir.join("manual.md")).unwrap_or_default();
+        let records = match v.get("records") {
+            Some(r) => Records::from_json(r).map_err(|e| bad(build, e))?,
+            None => {
+                let mpath = build.dir.join("manual.md");
+                let manual = fs::read_to_string(&mpath)
+                    .map_err(|e| KernelError::Io(format!("read {}: {e}", mpath.display())))?;
+                Records::parse_checked(&manual).map_err(|e| {
+                    KernelError::Refused(format!("Build {}: manual.md: {e}", build.hash))
+                })?
+            }
+        };
         let mut lib = BTreeMap::new();
         for m in &modules {
             if build.dir.join("lib").join(format!("{m}.py")).is_file() {
@@ -309,7 +383,7 @@ impl ContractTable {
         }
         Ok(ContractTable {
             contracts,
-            records: Records::parse(&manual),
+            records,
             modules,
             runtime,
             lib,
@@ -326,16 +400,56 @@ impl ContractTable {
 // Values in codec form (sdk/python/cwr/_codec.py)
 // ---------------------------------------------------------------------------------------------
 
-fn bytes_b64(v: &Value) -> Option<&str> {
-    match v {
-        Value::Object(m) if m.len() == 1 => m.get("$bytes").and_then(Value::as_str),
-        _ => None,
+/// The decoded length of `s` when it is canonical RFC 4648 base64, `None` otherwise.
+///
+/// Canonical means: only the standard alphabet, a length that is a multiple of four, at most two
+/// `=` and only at the end, and zero bits in the unused low bits of the last data character, so
+/// that re-encoding the decoded bytes reproduces `s` exactly. The kernel and the world-code worker
+/// therefore agree on every byte of an accepted value.
+pub fn canonical_b64_len(s: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    if !b.len().is_multiple_of(4) {
+        return None;
     }
+    let pad = b.iter().rev().take_while(|c| **c == b'=').count();
+    if pad > 2 {
+        return None;
+    }
+    let sextet = |c: u8| -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let mut last = 0u8;
+    for c in b.iter().take(b.len() - pad) {
+        last = sextet(*c)?;
+    }
+    let unused_bits_clear = match pad {
+        0 => true,
+        1 => last & 0b11 == 0,
+        _ => last & 0b1111 == 0,
+    };
+    if !unused_bits_clear {
+        return None;
+    }
+    (b.len() / 4).checked_mul(3)?.checked_sub(pad)
 }
 
-fn b64_len(s: &str) -> usize {
-    let pad = s.bytes().rev().take_while(|b| *b == b'=').count().min(2);
-    (s.len() / 4) * 3 - pad
+/// The base64 text of a well-formed `$bytes` codec value: a one-key object whose value is
+/// canonical base64. Any other `$bytes` object is not a bytes value (and carries a bad tag).
+fn bytes_b64(v: &Value) -> Option<&str> {
+    match v {
+        Value::Object(m) if m.len() == 1 => m
+            .get("$bytes")
+            .and_then(Value::as_str)
+            .filter(|s| canonical_b64_len(s).is_some()),
+        _ => None,
+    }
 }
 
 /// Whether a codec value carries a tag the codec does not define (`$invalid`, or any single-`$`
@@ -398,7 +512,9 @@ fn as_int(v: &Value) -> Option<i128> {
 
 fn len_of(v: &Value) -> std::result::Result<i64, String> {
     if let Some(b) = bytes_b64(v) {
-        return Ok(b64_len(b) as i64);
+        return canonical_b64_len(b)
+            .and_then(|n| i64::try_from(n).ok())
+            .ok_or_else(|| "len() of a malformed bytes value".to_string());
     }
     match v {
         Value::String(s) => Ok(s.chars().count() as i64),
@@ -524,6 +640,95 @@ pub fn check_shape(v: &Value, ty: &TypeExpr, records: &Records) -> std::result::
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The precondition and effect language
+// ---------------------------------------------------------------------------------------------
+
+/// A callback that runs one read_only primitive on behalf of an expression and returns its
+/// result, or why it could not be called.
+pub type ReadOnlyCall<'r> = dyn FnMut(&str, Vec<Value>) -> std::result::Result<Value, String> + 'r;
+
+/// Evaluates a precondition or effect expression (world-source.md section 5) over the call's
+/// parameters and, for an effect, its `result`, with Python truthiness, comparison and `len`
+/// semantics. Every primitive call in the expression goes through `read_only`. The kernel's
+/// [`Checker`] and the compiler's ephemeral Instance both evaluate through this function, so a
+/// contract test and a run-time check of the same expression agree.
+pub fn eval_expr(
+    e: &Expr,
+    params: &Map<String, Value>,
+    result: Option<&Value>,
+    read_only: &mut ReadOnlyCall<'_>,
+) -> std::result::Result<Value, String> {
+    let env = Env { params, result };
+    eval_in(e, &env, read_only)
+}
+
+fn eval_in(e: &Expr, env: &Env, ro: &mut ReadOnlyCall<'_>) -> std::result::Result<Value, String> {
+    Ok(match e {
+        Expr::Or(a, b) => {
+            Value::Bool(truthy(&eval_in(a, env, ro)?) || truthy(&eval_in(b, env, ro)?))
+        }
+        Expr::And(a, b) => {
+            Value::Bool(truthy(&eval_in(a, env, ro)?) && truthy(&eval_in(b, env, ro)?))
+        }
+        Expr::Not(a) => Value::Bool(!truthy(&eval_in(a, env, ro)?)),
+        Expr::Compare(op, a, b) => {
+            let x = eval_term(a, env, ro)?;
+            let y = eval_term(b, env, ro)?;
+            Value::Bool(compare(*op, &x, &y)?)
+        }
+        Expr::Term(t) => eval_term(t, env, ro)?,
+    })
+}
+
+fn name_value(name: &str, env: &Env) -> std::result::Result<Value, String> {
+    if let Some(v) = env.params.get(name) {
+        return Ok(v.clone());
+    }
+    if name == "result" {
+        if let Some(r) = env.result {
+            return Ok(r.clone());
+        }
+    }
+    Err(format!("name {name} is not a parameter"))
+}
+
+fn eval_term(t: &Term, env: &Env, ro: &mut ReadOnlyCall<'_>) -> std::result::Result<Value, String> {
+    Ok(match t {
+        Term::Name(n) => name_value(n, env)?,
+        Term::Int(i) => json!(i),
+        Term::Str(s) => Value::String(s.clone()),
+        Term::Call { target, args } => {
+            let mut vals = Vec::new();
+            for a in args {
+                vals.push(match a {
+                    Arg::Name(n) => name_value(n, env)?,
+                    Arg::Int(i) => json!(i),
+                    Arg::Str(s) => Value::String(s.clone()),
+                });
+            }
+            ro(target, vals)?
+        }
+        Term::Len(x) => json!(len_of(&eval_term(x, env, ro)?)?),
+        Term::Add(a, b) => {
+            let (x, y) = (eval_term(a, env, ro)?, eval_term(b, env, ro)?);
+            match (as_int(&x), as_int(&y)) {
+                (Some(p), Some(q)) => {
+                    json!(i64::try_from(p + q).map_err(|_| "integer overflow".to_string())?)
+                }
+                _ => {
+                    return Err(format!(
+                        "cannot add a {} and a {}",
+                        type_name(&x),
+                        type_name(&y)
+                    ))
+                }
+            }
+        }
+        Term::Group(e) => eval_in(e, env, ro)?,
+    })
+}
+
 /// Step 1: the call's parameters must be an object with exactly the declared names, each value of
 /// its declared type and free of codec tags the codec does not define. Returns the arguments in
 /// declared order.
@@ -561,12 +766,37 @@ pub fn validate_params(
 // The world-code worker
 // ---------------------------------------------------------------------------------------------
 
+/// How long the world-code worker may take to start and load the Build's `lib/`.
+const WORKER_INIT_BUDGET: Duration = Duration::from_secs(20);
+
+/// Why an exchange with the world-code worker did not produce an answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerError {
+    /// The deadline of the exchange (the turn's `wall_ms`) passed; the worker was killed.
+    Deadline,
+    /// The worker failed, exited or broke its protocol.
+    Failed(String),
+}
+
+impl std::fmt::Display for WorkerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkerError::Deadline => write!(
+                f,
+                "world-code worker: the turn deadline passed before it answered"
+            ),
+            WorkerError::Failed(m) => write!(f, "{m}"),
+        }
+    }
+}
+
 /// The kernel-side world-code worker. Runs the Build's `lib/` functions; holds a working copy of
-/// the Instance state that it commits only for mutating calls that return normally.
+/// the Instance state that it commits only for mutating calls that return normally. Its output
+/// is read on a separate thread so that every exchange can be bounded by a deadline.
 pub struct LibWorker {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    lines: Receiver<String>,
 }
 
 impl LibWorker {
@@ -583,20 +813,37 @@ impl LibWorker {
             .stdin
             .take()
             .ok_or_else(|| KernelError::Io("worker stdin".into()))?;
-        let stdout = BufReader::new(
-            child
-                .stdout
-                .take()
-                .ok_or_else(|| KernelError::Io("worker stdout".into()))?,
-        );
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| KernelError::Io("worker stdout".into()))?;
+        let (tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut r = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                match r.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
         let mut w = LibWorker {
             child,
             stdin,
-            stdout,
+            lines,
         };
         let init = json!({"op": "init", "lib": table.lib, "modules": table.modules, "state": state.to_json(), "version": build.version, "seed": seed});
         let r = w
-            .request(&init, &mut |_| json!({"error": "no callbacks during init"}))
+            .request(
+                &init,
+                &mut |_| json!({"error": "no callbacks during init"}),
+                Some(Instant::now() + WORKER_INIT_BUDGET),
+            )
             .map_err(|e| KernelError::Refused(format!("world-code worker: {e}")))?;
         if let Some(e) = r.get("error").and_then(Value::as_str) {
             return Err(KernelError::Refused(format!("world-code worker: {e}")));
@@ -614,30 +861,52 @@ impl LibWorker {
     }
 
     /// One request; callback lines (`{"cb": ...}`) are answered with `cb` until the response.
+    /// When `deadline` passes before the worker answers, the worker is killed and the exchange
+    /// fails with [`WorkerError::Deadline`]; a killed worker answers nothing afterwards.
     pub fn request(
         &mut self,
         req: &Value,
         cb: &mut dyn FnMut(&Value) -> Value,
-    ) -> std::result::Result<Value, String> {
-        self.send(req)?;
+        deadline: Option<Instant>,
+    ) -> std::result::Result<Value, WorkerError> {
+        self.send(req).map_err(WorkerError::Failed)?;
         loop {
-            let mut line = String::new();
-            let n = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|e| format!("world-code worker: {e}"))?;
-            if n == 0 {
-                return Err("world-code worker exited unexpectedly".into());
-            }
-            let v: Value = serde_json::from_str(&line)
-                .map_err(|e| format!("world-code worker sent malformed output: {e}"))?;
+            let next = match deadline {
+                Some(d) => {
+                    let left = d.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        Err(RecvTimeoutError::Timeout)
+                    } else {
+                        self.lines.recv_timeout(left)
+                    }
+                }
+                None => self
+                    .lines
+                    .recv()
+                    .map_err(|_| RecvTimeoutError::Disconnected),
+            };
+            let line = match next {
+                Ok(l) => l,
+                Err(RecvTimeoutError::Timeout) => {
+                    let _ = self.child.kill();
+                    return Err(WorkerError::Deadline);
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(WorkerError::Failed(
+                        "world-code worker exited unexpectedly".into(),
+                    ))
+                }
+            };
+            let v: Value = serde_json::from_str(&line).map_err(|e| {
+                WorkerError::Failed(format!("world-code worker sent malformed output: {e}"))
+            })?;
             if v.get("cb").is_some() {
                 let reply = cb(&v);
-                self.send(&reply)?;
+                self.send(&reply).map_err(WorkerError::Failed)?;
                 continue;
             }
             if let Some(f) = v.get("fatal").and_then(Value::as_str) {
-                return Err(f.to_string());
+                return Err(WorkerError::Failed(f.to_string()));
             }
             return Ok(v);
         }
@@ -688,6 +957,9 @@ pub trait Gateway {
     fn evidence(&mut self) -> Option<Value> {
         None
     }
+    /// The turn's wall-clock deadline: every later exchange (service call, adapter code) must
+    /// end by then, whatever its own `timeout_ms`. A gateway without host exchanges ignores it.
+    fn set_deadline(&mut self, _deadline: Instant) {}
 }
 
 /// The gateway of a kernel without network capability: every external call is `UNAVAILABLE`
@@ -717,14 +989,27 @@ impl Gateway for NoGateway {
 // The checker
 // ---------------------------------------------------------------------------------------------
 
-/// The answer to one call: the per-call result to send back, and whether the Instance must be
-/// sealed (a mutating defect) so the turn ends.
+/// The answer to one call: the per-call result to send back, and whether the turn must end
+/// (a defect sealed the Instance, or the turn's wall-clock deadline passed during the call).
 #[derive(Debug, Clone)]
 pub struct CallReply {
     /// The per-call result sent back to the script.
     pub result: Value,
-    /// Whether a mutating defect sealed the Instance, so the turn must end.
+    /// Whether a defect sealed the Instance, so the turn must end.
     pub seal: bool,
+    /// Whether the turn's `wall_ms` deadline passed while the call ran, so the turn must end
+    /// with `LIMIT wall_ms`.
+    pub wall_expired: bool,
+}
+
+impl CallReply {
+    fn answer(result: Value) -> CallReply {
+        CallReply {
+            result,
+            seal: false,
+            wall_expired: false,
+        }
+    }
 }
 
 /// The identity of one call as its ledger record carries it: record kind, reported name, params
@@ -786,6 +1071,13 @@ pub struct Checker<'a> {
     pub mutated: bool,
     /// The sealing defect, if any.
     pub sealed: Option<Failure>,
+    /// The turn's wall-clock deadline; every worker exchange is bounded by it.
+    pub deadline: Option<Instant>,
+    /// Set when a worker exchange hit [`Checker::deadline`]; the worker is then dead.
+    wall_expired: bool,
+    /// Whether the first call over the `primitive_calls` budget has been recorded; later
+    /// exceeding calls are answered without a record.
+    over_budget: bool,
     proposals: Vec<String>,
     /// Proposals committed earlier in this turn; ids continue from here so that every
     /// `world.propose` of a turn gets a distinct id.
@@ -841,6 +1133,10 @@ fn reported_name(name: &str) -> String {
 /// The sealing marker of an Instance (see [`crate::executor`]).
 pub const SEAL_FILE: &str = "sealed.json";
 
+/// Bound on the failures an unrecorded over-budget answer adds to [`Checker::failures`], so a
+/// script looping on calls after its budget is spent cannot grow kernel memory without bound.
+pub const MAX_UNRECORDED_FAILURES: usize = 4096;
+
 impl<'a> Checker<'a> {
     /// A checker for `turn` on `inst` with an empty budget, trace and failure list.
     pub fn new(
@@ -865,6 +1161,9 @@ impl<'a> Checker<'a> {
             failures: Vec::new(),
             mutated: false,
             sealed: None,
+            deadline: None,
+            wall_expired: false,
+            over_budget: false,
             proposals: Vec::new(),
             proposed: 0,
             draws: 0,
@@ -875,6 +1174,73 @@ impl<'a> Checker<'a> {
         let c = self.inst.build.clock;
         self.budget
             .limits_record(&self.limits, c.tick_per_primitive, c.tick_per_turn)
+    }
+
+    /// Sets the turn's wall-clock deadline for the worker and the gateway.
+    pub fn set_deadline(&mut self, deadline: Instant) {
+        self.deadline = Some(deadline);
+        self.gateway.set_deadline(deadline);
+    }
+
+    /// Writes the seal marker for the defect recorded at `rec` and remembers it.
+    fn seal_instance(&mut self, rec: &Value, name: &str, f: &Failure) -> Result<()> {
+        let marker = json!({"seq": rec["seq"], "turn": self.turn, "primitive": name, "defect": f.detail, "build": self.inst.build.hash});
+        write_atomic(
+            &self.inst.dir.join(SEAL_FILE),
+            canonical_json(&marker).as_bytes(),
+        )?;
+        self.sealed = Some(f.clone());
+        Ok(())
+    }
+
+    /// A call over the spent `primitive_calls` budget: the first one is recorded like any refusal;
+    /// every later one gets the same answer without a ledger record or trace item. Its failure
+    /// joins [`Checker::failures`] once per reported name, up to [`MAX_UNRECORDED_FAILURES`].
+    fn over_budget(
+        &mut self,
+        head: CallHead<'_>,
+        shape: Option<String>,
+        side: Option<String>,
+        cg: bool,
+    ) -> Result<CallReply> {
+        let detail = format!(
+            "the turn budget of {} primitive calls is spent; this call was not executed",
+            self.limits.primitive_calls
+        );
+        let f = Failure::limit(head.name, "primitive_calls", detail);
+        if self.over_budget {
+            if self.failures.len() < MAX_UNRECORDED_FAILURES && !self.failures.contains(&f) {
+                self.failures.push(f.clone());
+            }
+            return Ok(CallReply::answer(call_error(&f, cg)));
+        }
+        self.over_budget = true;
+        self.refuse(head, f, shape, side, cg)
+    }
+
+    /// A call cut off by the turn's wall-clock deadline: recorded as `LIMIT wall_ms` with no tick
+    /// and no state change (the worker never committed), and the turn must end.
+    fn wall_limit(
+        &mut self,
+        head: CallHead<'_>,
+        rng_before: crate::rng::RngState,
+        shape: Option<String>,
+        side: Option<String>,
+        cg: bool,
+    ) -> Result<CallReply> {
+        self.inst.rng = Pcg32::from_state(rng_before);
+        self.proposals.clear();
+        let f = Failure::limit(
+            head.name,
+            "wall_ms",
+            format!(
+                "the turn exceeded {} ms of wall time while this call ran; the call did not complete and changed nothing",
+                self.limits.wall_ms
+            ),
+        );
+        let mut r = self.refuse(head, f, shape, side, cg)?;
+        r.wall_expired = true;
+        Ok(r)
     }
 
     /// Calls a lib function in the worker, answering its callbacks.
@@ -890,6 +1256,7 @@ impl<'a> Checker<'a> {
         let proposals = &mut self.proposals;
         let proposed = self.proposed;
         let draws = &mut self.draws;
+        let deadline = self.deadline;
         let mut cb = |v: &Value| -> Value {
             match v.get("cb").and_then(Value::as_str) {
                 Some("random") => {
@@ -912,7 +1279,14 @@ impl<'a> Checker<'a> {
                 other => json!({"error": format!("unknown kernel facility {other:?}")}),
             }
         };
-        self.worker.request(&req, &mut cb)
+        match self.worker.request(&req, &mut cb, deadline) {
+            Ok(v) => Ok(v),
+            Err(WorkerError::Deadline) => {
+                self.wall_expired = true;
+                Err(WorkerError::Deadline.to_string())
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     /// A read_only call made while evaluating a precondition or an effect.
@@ -945,73 +1319,17 @@ impl<'a> Checker<'a> {
         if let Some(e) = r.get("exception").and_then(Value::as_str) {
             return Err(format!("{target} raised a Python exception: {e}"));
         }
+        if let Some(e) = r.get("invalid").and_then(Value::as_str) {
+            return Err(format!(
+                "{target} received a value outside the SDK codec: {e}"
+            ));
+        }
         Err(format!("{target} has no lib/ implementation"))
     }
 
     fn eval_expr(&mut self, e: &Expr, env: &Env) -> std::result::Result<Value, String> {
-        Ok(match e {
-            Expr::Or(a, b) => {
-                Value::Bool(truthy(&self.eval_expr(a, env)?) || truthy(&self.eval_expr(b, env)?))
-            }
-            Expr::And(a, b) => {
-                Value::Bool(truthy(&self.eval_expr(a, env)?) && truthy(&self.eval_expr(b, env)?))
-            }
-            Expr::Not(a) => Value::Bool(!truthy(&self.eval_expr(a, env)?)),
-            Expr::Compare(op, a, b) => {
-                let x = self.eval_term(a, env)?;
-                let y = self.eval_term(b, env)?;
-                Value::Bool(compare(*op, &x, &y)?)
-            }
-            Expr::Term(t) => self.eval_term(t, env)?,
-        })
-    }
-
-    fn name_value(name: &str, env: &Env) -> std::result::Result<Value, String> {
-        if let Some(v) = env.params.get(name) {
-            return Ok(v.clone());
-        }
-        if name == "result" {
-            if let Some(r) = env.result {
-                return Ok(r.clone());
-            }
-        }
-        Err(format!("name {name} is not a parameter"))
-    }
-
-    fn eval_term(&mut self, t: &Term, env: &Env) -> std::result::Result<Value, String> {
-        Ok(match t {
-            Term::Name(n) => Self::name_value(n, env)?,
-            Term::Int(i) => json!(i),
-            Term::Str(s) => Value::String(s.clone()),
-            Term::Call { target, args } => {
-                let mut vals = Vec::new();
-                for a in args {
-                    vals.push(match a {
-                        Arg::Name(n) => Self::name_value(n, env)?,
-                        Arg::Int(i) => json!(i),
-                        Arg::Str(s) => Value::String(s.clone()),
-                    });
-                }
-                self.read_only(target, vals)?
-            }
-            Term::Len(x) => json!(len_of(&self.eval_term(x, env)?)?),
-            Term::Add(a, b) => {
-                let (x, y) = (self.eval_term(a, env)?, self.eval_term(b, env)?);
-                match (as_int(&x), as_int(&y)) {
-                    (Some(p), Some(q)) => {
-                        json!(i64::try_from(p + q).map_err(|_| "integer overflow".to_string())?)
-                    }
-                    _ => {
-                        return Err(format!(
-                            "cannot add a {} and a {}",
-                            type_name(&x),
-                            type_name(&y)
-                        ))
-                    }
-                }
-            }
-            Term::Group(e) => self.eval_expr(e, env)?,
-        })
+        let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
+        eval_expr(e, env.params, env.result, &mut read_only)
     }
 
     fn record(
@@ -1034,7 +1352,8 @@ impl<'a> Checker<'a> {
     }
 
     /// A call refused before execution (closure, budget, step 1 or step 2): state unchanged, no
-    /// tick, one ledger record.
+    /// tick, one ledger record. An `INVARIANT_VIOLATION` refusal (a precondition that cannot be
+    /// evaluated) carries the defect text and the trace; it does not seal the Instance.
     fn refuse(
         &mut self,
         head: CallHead<'_>,
@@ -1057,26 +1376,33 @@ impl<'a> Checker<'a> {
         if f.code == Code::InvariantViolation {
             extra.push(("defect", json!(f.detail)));
             extra.push(("trace", Value::Array(self.trace.clone())));
+            extra.push(("sealed", json!(false)));
         }
         let rec = self.record(head, outcome, extra, None)?;
         let wt = rec["world_time"].as_u64().unwrap_or(0);
         self.trace.push(trace_item(name, Some(f.code), wt, cg));
         self.failures.push(f.clone());
-        Ok(CallReply {
-            result: call_error(&f, cg),
-            seal: false,
-        })
+        Ok(CallReply::answer(call_error(&f, cg)))
     }
 
     /// A closure refusal reported by the runner: recorded as `INVALID` under the facility name.
     pub fn closure(&mut self, facility: &str, detail: &str) -> Result<CallReply> {
         let started = Instant::now();
-        self.budget.take_call(&self.limits);
+        let within = self.budget.take_call(&self.limits);
         let fac = if envelope::CLOSURE_FACILITIES.contains(&facility) {
             facility
         } else {
             "sandbox.interpreter"
         };
+        if !within {
+            let phash = params_hash(&json!({"detail": detail}));
+            return self.over_budget(
+                CallHead::new(Kind::Primitive, fac, phash, Vec::new(), started),
+                None,
+                None,
+                true,
+            );
+        }
         let f = Failure::new(
             Code::Invalid,
             fac,
@@ -1099,10 +1425,7 @@ impl<'a> Checker<'a> {
         self.trace
             .push(trace_item(fac, Some(Code::Invalid), wt, true));
         self.failures.push(f.clone());
-        Ok(CallReply {
-            result: call_error(&f, true),
-            seal: false,
-        })
+        Ok(CallReply::answer(call_error(&f, true)))
     }
 
     /// One primitive call through the six steps.
@@ -1126,22 +1449,14 @@ impl<'a> Checker<'a> {
         let side = contract.map(|c| c.side_effect.clone());
         let cg = contract.map(|c| c.content_guaranteed).unwrap_or(true);
         if !within {
-            let f = Failure::limit(
-                &rname,
-                "primitive_calls",
-                format!(
-                    "the turn budget of {} primitive calls is spent; this call was not executed",
-                    self.limits.primitive_calls
-                ),
-            );
-            return self.refuse(
+            return self.over_budget(
                 CallHead::new(kind, &rname, phash, Vec::new(), started),
-                f,
                 shape,
                 side,
                 cg,
             );
         }
+        let rng_at_call = self.inst.rng.state();
         let Some(c) = contract else {
             let f = Failure::new(
                 Code::Invalid,
@@ -1200,6 +1515,15 @@ impl<'a> Checker<'a> {
                             cg,
                         );
                     }
+                }
+                Err(_) if self.wall_expired => {
+                    return self.wall_limit(
+                        CallHead::new(kind, name, phash, evals, started),
+                        rng_at_call,
+                        shape,
+                        side,
+                        cg,
+                    );
                 }
                 Err(m) => {
                     let f = Failure::new(
@@ -1293,6 +1617,12 @@ impl<'a> Checker<'a> {
                         }
                     } else if let Some(e) = r.get("exception").and_then(Value::as_str) {
                         defect = Some(format!("a Python exception escaped lib/ in {name}: {e}"));
+                    } else if let Some(e) = r.get("invalid").and_then(Value::as_str) {
+                        fail = Some(Failure::new(
+                            Code::Invalid,
+                            name,
+                            format!("a parameter holds a value outside the SDK codec: {e}"),
+                        ));
                     } else {
                         defect = Some(format!("{name} has no lib/ implementation in this Build"));
                     }
@@ -1300,6 +1630,7 @@ impl<'a> Checker<'a> {
             }
         }
         // Step 4: effects (debug mode).
+        let mut effect_failed = false;
         if defect.is_none() && fail.is_none() && self.debug_effects && !c.effects.is_empty() {
             for (src, ast) in &c.effects {
                 let env = Env {
@@ -1322,10 +1653,20 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            effect_failed = defect.is_some();
         }
-        // Only a mutating primitive can leave a defect behind in state (step 3 or step 4), so only
-        // that seals the Instance; a read_only or gateway defect changed nothing.
-        let seal = defect.is_some() && mutating;
+        if self.wall_expired {
+            return self.wall_limit(
+                CallHead::new(kind, name, phash, evals, started),
+                rng_before,
+                shape,
+                side,
+                cg,
+            );
+        }
+        // kernel.md section 4: a step-3 defect of a mutating primitive and every step-4 effect
+        // failure, whatever the side effect, seal the Instance for inspection.
+        let seal = defect.is_some() && (mutating || effect_failed);
         if let Some(d) = &defect {
             fail = Some(Failure::new(Code::InvariantViolation, name, d.clone()));
         }
@@ -1379,6 +1720,10 @@ impl<'a> Checker<'a> {
             wt,
             c.content_guaranteed,
         ));
+        // An external call was sent and its outcome stands as recorded; if the turn's deadline
+        // passed meanwhile (the gateway cut the exchange at it), the turn ends with LIMIT wall_ms.
+        let wall_expired =
+            c.is_adapter && self.deadline.is_some_and(|d| Instant::now() >= d) && !seal;
         let Some(f) = fail else {
             if c.side_effect != "read_only" {
                 self.mutated = true;
@@ -1388,23 +1733,18 @@ impl<'a> Checker<'a> {
                 self.proposed += 1;
                 self.write_proposal(self.proposed, text)?;
             }
-            return Ok(CallReply {
-                result: call_ok(value, c.content_guaranteed),
-                seal: false,
-            });
+            let mut r = CallReply::answer(call_ok(value, c.content_guaranteed));
+            r.wall_expired = wall_expired;
+            return Ok(r);
         };
         self.failures.push(f.clone());
         if seal {
-            let marker = json!({"seq": rec["seq"], "turn": self.turn, "primitive": name, "defect": f.detail, "build": self.inst.build.hash});
-            write_atomic(
-                &self.inst.dir.join(SEAL_FILE),
-                canonical_json(&marker).as_bytes(),
-            )?;
-            self.sealed = Some(f.clone());
+            self.seal_instance(&rec, name, &f)?;
         }
         Ok(CallReply {
             result: call_error(&f, c.content_guaranteed),
             seal,
+            wall_expired,
         })
     }
 
@@ -1426,12 +1766,11 @@ impl<'a> Checker<'a> {
 /// The world-code worker: executes `lib/` functions for the kernel. Python 3.12, standard
 /// library only; started with `-P -s -S -B` inside the worker sandbox.
 pub const WORKER: &str = r#####"
-import base64, copy, importlib.util, json, keyword, signal, sys, types
+import base64, copy, importlib.util, json, keyword, sys, types
 
 PROTO_IN = sys.stdin
 PROTO = sys.stdout
 sys.stdout = sys.stderr
-STEP_SECONDS = 20
 
 def out(obj):
     PROTO.write(json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n")
@@ -1463,7 +1802,11 @@ def dec(v):
         return [dec(x) for x in v]
     if isinstance(v, dict):
         if len(v) == 1 and "$bytes" in v and isinstance(v["$bytes"], str):
-            return base64.b64decode(v["$bytes"])
+            s = v["$bytes"]
+            b = base64.b64decode(s, validate=True)
+            if base64.b64encode(b).decode("ascii") != s:
+                raise ValueError("$bytes is not canonical base64")
+            return b
         return {(k[1:] if k.startswith("$$") else k): dec(x) for k, x in v.items()}
     return v
 
@@ -1473,13 +1816,6 @@ class Failure(Exception):
         self.code = code
         self.detail = detail
 
-class StepTimeout(Exception):
-    pass
-
-def _alarm(signum, frame):
-    raise StepTimeout("world code exceeded %d s of host time" % STEP_SECONDS)
-
-signal.signal(signal.SIGALRM, _alarm)
 
 def callback(name, **kw):
     msg = {"cb": name}
@@ -1564,11 +1900,14 @@ def op_call(req):
         return {"missing": True}
     G.world_time = req["world_time"]
     G.limits = req["limits"]
+    try:
+        args = [dec(a) for a in req["args"]]
+    except ValueError as e:
+        return {"invalid": describe(e)}
     work = copy.deepcopy(G.state)
     G.work = work
-    signal.alarm(STEP_SECONDS)
     try:
-        result = fn(Handle(), *[dec(a) for a in req["args"]])
+        result = fn(Handle(), *args)
     except Failure as e:
         G.work = G.state
         return {"raised": str(e.code), "detail": str(e.detail)}
@@ -1578,8 +1917,6 @@ def op_call(req):
         if isinstance(code, str):
             return {"raised": code, "detail": describe(e)}
         return {"exception": describe(e)}
-    finally:
-        signal.alarm(0)
     changed = sorted(m for m in work if work[m] != G.state.get(m))
     try:
         encoded = enc(result)
@@ -1633,6 +1970,16 @@ mod tests {
     }
 
     #[test]
+    fn record_types_are_checked_strictly() {
+        assert!(Records::parse_checked("record A\n  x: int\n").is_ok());
+        assert!(Records::parse_checked("record A\n  x: list[\n").is_err());
+        let r = Records::from_json(&json!({"Hit": [["title", "str"], ["n", "int"]]})).unwrap();
+        assert_eq!(r.0["Hit"].len(), 2);
+        assert!(Records::from_json(&json!({"Hit": [["title", "list["]]})).is_err());
+        assert!(Records::from_json(&json!({"Hit": [["title"]]})).is_err());
+    }
+
+    #[test]
     fn codec_tags_and_values() {
         assert!(has_bad_tag(&json!({"$invalid": "set"})));
         assert!(has_bad_tag(&json!([1, {"a": {"$x": 1}}])));
@@ -1647,6 +1994,58 @@ mod tests {
         assert!(check_shape(&json!(true), &TypeExpr::Int, &Records::default()).is_err());
         assert!(compare(CmpOp::Le, &json!(3), &json!(3)).unwrap());
         assert!(truthy(&json!({"$bytes": "AA=="})));
+    }
+
+    fn fs_write() -> Contract {
+        Contract {
+            name: "fs.write".into(),
+            module: "fs".into(),
+            is_adapter: false,
+            side_effect: "mutating".into(),
+            params: vec![
+                ("path".into(), TypeExpr::Path),
+                ("content".into(), TypeExpr::Bytes),
+            ],
+            returns: TypeExpr::None,
+            returns_text: "None".into(),
+            preconditions: Vec::new(),
+            effects: Vec::new(),
+            failures: BTreeSet::new(),
+            content_guaranteed: true,
+            raw: json!({}),
+        }
+    }
+
+    #[test]
+    fn canonical_base64_only() {
+        for (s, n) in [
+            ("", 0),
+            ("AA==", 1),
+            ("AAE=", 2),
+            ("AAEC", 3),
+            ("AAECAw==", 4),
+        ] {
+            assert_eq!(canonical_b64_len(s), Some(n), "{s:?}");
+        }
+        for bad in [
+            "=", "A", "AAE", "AA==AAAA", "AAF=", "AB==", "A===", "AA=A", "AA-_", "AA\n=",
+        ] {
+            assert_eq!(canonical_b64_len(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_bytes_are_invalid_at_step_one_for_a_mutating_primitive() {
+        let c = fs_write();
+        let records = Records::default();
+        for bad in ["=", "A", "AAE", "AA==AAAA"] {
+            let params = json!({"path": "/a", "content": {"$bytes": bad}});
+            let err = validate_params(&c, &params, &records).unwrap_err();
+            assert!(err.contains("content"), "{bad:?}: {err}");
+            assert!(has_bad_tag(&json!({"$bytes": bad})), "{bad:?}");
+        }
+        let ok = json!({"path": "/a", "content": {"$bytes": "AAE="}});
+        assert_eq!(validate_params(&c, &ok, &records).unwrap().len(), 2);
     }
 
     #[test]

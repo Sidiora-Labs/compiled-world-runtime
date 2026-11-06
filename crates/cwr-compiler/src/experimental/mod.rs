@@ -31,19 +31,15 @@ pub mod notice;
 pub mod one_primitive;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use cwr_contract::kvx;
 use serde_json::{json, Value};
 
 use crate::diff::{compute, Surface};
-use crate::manifest::{Generated, Manifest};
-use crate::package::{self, Built, COPIED_DIRS};
-use crate::{
-    run_stage, sort_diagnostics, Context, Diagnostic, Location, Options, Report, Stage,
-    StageReport, StageRun, StageStatus,
-};
+use crate::manifest::Generated;
+use crate::package;
+use crate::{run_stage, Context, Diagnostic, Location, Options, Report, Stage, StageRun};
 
 /// One experimental flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,17 +121,20 @@ pub fn build(root: &Path, options: &Options, flag: &Flag) -> Report {
         through: Stage::Package,
         ..options.clone()
     };
+    let mut report = Report::start(root, Stage::Package);
     let xroot = xbuild_root(&options);
     let staged = match flag {
         Flag::Drift(file) => match drift::Staged::new(root, file, &xroot) {
             Ok(s) => Some(s),
-            Err(d) => return stopped(root, Stage::Parse, vec![*d], Vec::new()),
+            Err(d) => {
+                report.fail(Stage::Parse, vec![*d]);
+                return report;
+            }
         },
         _ => None,
     };
     let source = staged.as_ref().map(|s| s.dir.as_path()).unwrap_or(root);
     let mut cx = Context::new(source, &options);
-    let mut passed = Vec::new();
     for stage in Stage::ALL {
         if stage == Stage::Package {
             break;
@@ -148,21 +147,22 @@ pub fn build(root: &Path, options: &Options, flag: &Flag) -> Report {
             other => other,
         };
         match run {
-            StageRun::Passed => passed.push(stage),
+            StageRun::Passed => report.pass(stage),
             StageRun::Failed(mut diags) => {
                 if let Some(s) = &staged {
                     s.relocate(&mut diags);
                 }
-                return stopped(root, stage, diags, passed);
+                report.fail(stage, diags);
+                return report;
             }
-            StageRun::Pending => return pending(root, stage, passed),
         }
     }
     let transformed = match transform(&cx, flag) {
         Ok(t) => t,
         Err(m) => {
             let d = diagnostic(Stage::Generate, "generator", "world.kvx", m);
-            return stopped(root, Stage::Generate, vec![d], passed);
+            report.fail(Stage::Generate, vec![d]);
+            return report;
         }
     };
     let extra = staged
@@ -174,10 +174,19 @@ pub fn build(root: &Path, options: &Options, flag: &Flag) -> Report {
             )]
         })
         .unwrap_or_default();
-    match package_experimental(&cx, &transformed, flag, &extra, &xroot) {
+    let packaged = package::Contents::of(&cx).and_then(|c| {
+        let c = package::Contents {
+            generated: &transformed,
+            experimental_flag: Some(flag.name()),
+            extra: &extra,
+            ..c
+        };
+        package::package_into(&xroot, &c)
+    });
+    match packaged {
         Ok(built) => {
-            passed.push(Stage::Package);
-            let summary = format!(
+            report.pass(Stage::Package);
+            report.summary = format!(
                 "{} {} ({}) at {}",
                 if built.already_built {
                     "already built:"
@@ -188,13 +197,14 @@ pub fn build(root: &Path, options: &Options, flag: &Flag) -> Report {
                 flag.name(),
                 built.dir
             );
-            report(root, passed, None, 0, summary, Some(built))
+            report.build = Some(built);
         }
         Err(m) => {
             let d = diagnostic(Stage::Package, "package", "world.kvx", m);
-            stopped(root, Stage::Package, vec![d], passed)
+            report.fail(Stage::Package, vec![d]);
         }
     }
+    report
 }
 
 fn transform(cx: &Context, flag: &Flag) -> Result<Generated, String> {
@@ -206,251 +216,6 @@ fn transform(cx: &Context, flag: &Flag) -> Result<Generated, String> {
         }
         Flag::Drift(_) | Flag::SilentChange | Flag::VersionOnly => Ok(g.clone()),
     }
-}
-
-fn report(
-    root: &Path,
-    passed: Vec<Stage>,
-    stop: Option<(Stage, StageStatus, Vec<Diagnostic>)>,
-    exit_code: i32,
-    summary: String,
-    build: Option<Built>,
-) -> Report {
-    let mut stages: Vec<StageReport> = Stage::ALL
-        .iter()
-        .map(|&stage| StageReport {
-            stage,
-            status: if passed.contains(&stage) {
-                StageStatus::Passed
-            } else {
-                StageStatus::NotRun
-            },
-            diagnostics: Vec::new(),
-        })
-        .collect();
-    let stopped_at = stop.as_ref().map(|(s, _, _)| *s);
-    if let Some((stage, status, diags)) = stop {
-        stages[stage as usize].status = status;
-        stages[stage as usize].diagnostics = diags;
-    }
-    Report {
-        source: root.display().to_string(),
-        through: Stage::Package,
-        stages,
-        stopped_at,
-        exit_code,
-        summary,
-        build,
-    }
-}
-
-fn stopped(root: &Path, stage: Stage, mut diags: Vec<Diagnostic>, passed: Vec<Stage>) -> Report {
-    sort_diagnostics(&mut diags);
-    for d in &mut diags {
-        d.stage = stage;
-    }
-    let n = diags.len();
-    let summary = format!(
-        "failed at stage {stage}: {n} diagnostic{}; nothing written",
-        if n == 1 { "" } else { "s" }
-    );
-    report(
-        root,
-        passed,
-        Some((stage, StageStatus::Failed, diags)),
-        stage.exit_code(),
-        summary,
-        None,
-    )
-}
-
-fn pending(root: &Path, stage: Stage, passed: Vec<Stage>) -> Report {
-    let summary = format!(
-        "stopped at stage {stage}: not implemented in this compiler revision; no Build written"
-    );
-    report(
-        root,
-        passed,
-        Some((stage, StageStatus::Pending, Vec::new())),
-        1,
-        summary,
-        None,
-    )
-}
-
-fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(p) = path.parent() {
-        fs::create_dir_all(p).map_err(|e| format!("create {}: {e}", p.display()))?;
-    }
-    fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
-}
-
-/// Copies a source directory into a Build the way the package stage does: regular files and
-/// directories in name order, symbolic links and `__pycache__` skipped, a missing source
-/// directory becoming an empty one.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|e| format!("create {}: {e}", to.display()))?;
-    if !from.is_dir() {
-        return Ok(());
-    }
-    let mut entries: Vec<_> = fs::read_dir(from)
-        .map_err(|e| format!("read {}: {e}", from.display()))?
-        .filter_map(|e| e.ok())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let ft = e
-            .file_type()
-            .map_err(|err| format!("stat {}: {err}", e.path().display()))?;
-        let name = e.file_name();
-        if ft.is_symlink() || name == "__pycache__" {
-            continue;
-        }
-        if ft.is_dir() {
-            copy_tree(&e.path(), &to.join(&name))?;
-        } else {
-            let bytes =
-                fs::read(e.path()).map_err(|err| format!("read {}: {err}", e.path().display()))?;
-            write(&to.join(&name), &bytes)?;
-        }
-    }
-    Ok(())
-}
-
-fn discard(dir: &Path) {
-    fn unseal(d: &Path) {
-        let _ = fs::set_permissions(d, fs::Permissions::from_mode(0o755));
-        if let Ok(rd) = fs::read_dir(d) {
-            for e in rd.flatten() {
-                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    unseal(&e.path());
-                }
-            }
-        }
-    }
-    unseal(dir);
-    let _ = fs::remove_dir_all(dir);
-}
-
-fn fill(
-    cx: &Context,
-    g: &Generated,
-    flag: &Flag,
-    extra: &[(&str, Vec<u8>)],
-    tmp: &Path,
-) -> Result<String, String> {
-    let diff = cx.diff.as_ref().ok_or("diff did not run")?;
-    let tests = cx.tests.as_ref().ok_or("contract tests did not run")?;
-    write(&tmp.join("contracts.json"), g.contracts_json.as_bytes())?;
-    write(&tmp.join("contract_diff.json"), diff.to_json().as_bytes())?;
-    write(&tmp.join("manual.md"), g.manual.as_bytes())?;
-    fs::create_dir_all(tmp.join("sdk")).map_err(|e| format!("create sdk/: {e}"))?;
-    for (rel, text) in &g.sdk {
-        write(&tmp.join("sdk").join(rel), text.as_bytes())?;
-    }
-    for d in COPIED_DIRS {
-        copy_tree(&cx.root.join(d), &tmp.join(d))?;
-    }
-    for (rel, bytes) in extra {
-        let path = tmp.join(rel);
-        if path.exists() {
-            return Err(format!(
-                "the World Source already has {rel}, which an experimental Build reserves"
-            ));
-        }
-        write(&path, bytes)?;
-    }
-    write(
-        &tmp.join("tests.json"),
-        package::tests_json(tests)?.as_bytes(),
-    )?;
-    let previous = diff.previous.clone().filter(|p| p.starts_with("sha256:"));
-    let mut manifest = Manifest::from_contracts(&g.contracts, previous);
-    manifest.experimental_flag = Some(flag.name().to_string());
-    write(&tmp.join("manifest.kvx"), manifest.render(None).as_bytes())?;
-    let hex = cwr_kernel::Build::compute_hash(tmp).map_err(|e| e.to_string())?;
-    write(
-        &tmp.join("manifest.kvx"),
-        manifest.render(Some(&format!("sha256:{hex}"))).as_bytes(),
-    )?;
-    let check = cwr_kernel::Build::compute_hash(tmp).map_err(|e| e.to_string())?;
-    if check != hex {
-        return Err(format!(
-            "compiler defect: hash changed after writing the manifest ({hex} then {check})"
-        ));
-    }
-    Ok(hex)
-}
-
-/// Packages an experimental Build into `xroot/<hex>` with the guarantees of the package stage:
-/// written into a temporary sibling, manifest last, sealed read-only, renamed into place, and an
-/// existing verifying directory reported as already built and left untouched.
-fn package_experimental(
-    cx: &Context,
-    g: &Generated,
-    flag: &Flag,
-    extra: &[(&str, Vec<u8>)],
-    xroot: &Path,
-) -> Result<Built, String> {
-    fs::create_dir_all(xroot).map_err(|e| {
-        format!(
-            "cannot create the experimental root {}: {e}",
-            xroot.display()
-        )
-    })?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp = xroot.join(format!(".tmp-{}-{nanos}", std::process::id()));
-    let hex = match fill(cx, g, flag, extra, &tmp) {
-        Ok(h) => h,
-        Err(m) => {
-            discard(&tmp);
-            return Err(m);
-        }
-    };
-    let target = xroot.join(&hex);
-    let built = |already| Built {
-        hash: format!("sha256:{hex}"),
-        dir: target.display().to_string(),
-        already_built: already,
-    };
-    let existing = |t: &Path| t.exists().then(|| package::verify(t).map(|_| ()));
-    let untouched = |m: String| {
-        format!(
-            "the output directory {} exists and does not verify: {m}; left untouched",
-            target.display()
-        )
-    };
-    if let Some(r) = existing(&target) {
-        discard(&tmp);
-        return r.map(|_| built(true)).map_err(untouched);
-    }
-    if let Err(m) = package::seal(&tmp) {
-        discard(&tmp);
-        return Err(m);
-    }
-    if let Err(e) = fs::rename(&tmp, &target) {
-        discard(&tmp);
-        return match existing(&target) {
-            Some(r) => r.map(|_| built(true)).map_err(untouched),
-            None => Err(format!(
-                "cannot rename the packaged Build to {}: {e}",
-                target.display()
-            )),
-        };
-    }
-    let _ = fs::File::open(xroot).and_then(|d| d.sync_all());
-    package::verify(&target)
-        .map_err(|m| format!("compiler defect: the packaged Build does not verify: {m}"))?;
-    if !package::sealed(&target) {
-        return Err(format!(
-            "Build {} has a writable file after sealing",
-            target.display()
-        ));
-    }
-    Ok(built(false))
 }
 
 // ---------------------------------------------------------------------------------------------

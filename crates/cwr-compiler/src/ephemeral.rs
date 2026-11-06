@@ -19,290 +19,65 @@
 //!
 //! Rule logic (parameter validation, precondition order, effects, the closed envelope, shape
 //! checks, the clock and the RNG draws) lives here in Rust; world code runs in one Python 3.12
-//! worker process per suite run, spoken to over JSON lines on stdin/stdout. The worker holds
-//! the Instance state, implements the state handle methods the refworld convention defines
-//! (`module(name)`, `world_time()`, `random()`, `seed()`, `build_version()`, `limits()`,
-//! `history(n)`, `propose(text)`) and a `cwr_state` module with `Failure(code, detail)` for
-//! world code that raises an envelope code. Module state is committed only when a `lib/`
-//! function returns normally. RNG draws come from the kernel's PCG32 stream
-//! ([`cwr_kernel::Pcg32`]) seeded from the fixture's `seed` (default 0). Bytes travel as
-//! `{"$bytes": "<base64>"}`. The worker is started with `-I -B` (isolated mode: no `PYTHON*`
-//! variables, no user site, no script directory on the path) and never writes bytecode into
-//! the World Source. World code executed by contract tests has no network capability (clause
-//! 7.1; compiler.md: a compiler never opens a network connection), in two layers: where
-//! bubblewrap is installed the worker runs in its own empty network namespace (the host
-//! filesystem view is unchanged), so there is no route to any host; and in every case the worker
-//! installs a Python audit hook before any world code loads that refuses socket creation and
-//! name resolution, ctypes, subprocesses, exec/fork/spawn, importing the modules that start
-//! processes or interpreters without raising an audit event (`_posixsubprocess`, the
-//! subinterpreter and test-API modules) and writing native extension files. On a host without
-//! bubblewrap the audit hook is not the only layer: the worker is started under
-//! [`cwr_kernel::gateway::seal_network`], a seccomp filter inherited by every descendant under
-//! which `socket(2)` and the other network paths fail, so a process that slips past the hook
-//! still has no network.
+//! worker process per suite run, spoken to over JSON lines on stdin/stdout. The value checks
+//! ([`check_shape`], [`truthy`], [`has_bad_tag`]), the record table ([`Records`]) and the
+//! precondition and effect evaluator ([`cwr_kernel::contract_check::eval_expr`]) are the
+//! kernel's own, so a contract test and the run-time check of the same Build agree. The worker
+//! holds the Instance state, implements the state handle methods the refworld convention
+//! defines (`module(name)`, `world_time()`, `random()`, `seed()`, `build_version()`,
+//! `limits()`, `history(n)`, `propose(text)`) and a `cwr_state` module with
+//! `Failure(code, detail)` for world code that raises an envelope code. Module state is
+//! committed only when a `lib/` function returns normally. RNG draws come from the kernel's
+//! PCG32 stream ([`cwr_kernel::Pcg32`]) seeded from the fixture's `seed` (default 0). Bytes
+//! travel as `{"$bytes": "<base64>"}`. The worker is started with `-I -B` (isolated mode: no
+//! `PYTHON*` variables, no user site, no script directory on the path) and never writes
+//! bytecode into the World Source.
+//!
+//! World code executed by contract tests is confined (clause 7.1; compiler.md: a compiler
+//! never opens a network connection):
+//!
+//! | Layer | Where | What it guarantees |
+//! |---|---|---|
+//! | bubblewrap view | where `bwrap` is installed | fresh user, mount, network, PID, IPC, UTS and cgroup namespaces; the view holds only the interpreter (read-only), the World Source root (read-only) and a scratch directory (read-write, the working directory); no route to any host |
+//! | seccomp network seal | where `bwrap` is not installed | [`cwr_kernel::gateway::seal_network`]: `socket(2)` and the other network paths fail for the worker and every descendant |
+//! | empty environment | always | the worker receives only `PATH`; no credential or other variable of the compiler reaches world code |
+//! | audit hook | always, before any world code loads | refuses sockets and name resolution, ctypes, subprocesses, exec/fork/spawn, signals to other processes, environment changes, raising its own resource limits, the modules that start processes or interpreters without an audit event, writing native extension files, and every write, removal, rename or link outside the scratch directory |
+//! | time and memory | always | each step of world code (a call, a migration, module top-level code) has a 20 s host-time alarm and a soft CPU limit of `limits.cpu_ms` plus one second, whose `SIGXCPU` ends the worker even inside native code; the address space is capped at four times `limits.memory_mb` (at least 1 GiB); the compiler kills a worker that does not answer a request within 30 s and reports it |
 //!
 //! Outcomes that are defects (an undeclared code after the preconditions passed, any code from
 //! a mutating primitive's implementation, a Python exception escaping world code, an effect
 //! that does not hold, a read_only primitive that changed state, a return value of the wrong
 //! shape) are reported as `INVARIANT_VIOLATION` with the defect text.
 
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::Duration;
 
-use cwr_contract::precondition::{Arg, CmpOp, Term};
 use cwr_contract::{Adapter, Code, Expr, Expression, Primitive, TypeExpr};
 use serde_json::{json, Map, Value};
 
-/// Named record types from `manual/types.md`: record name to ordered `(field, type)` pairs.
-/// A field whose type does not parse is recorded with `None` and accepts any value.
-#[derive(Debug, Clone, Default)]
-pub struct Records(pub BTreeMap<String, Vec<(String, Option<TypeExpr>, String)>>);
+/// Named record types from `manual/types.md`, parsed by the kernel's own reader so that the
+/// contract tests and the run-time check know the same records.
+pub use cwr_kernel::contract_check::Records;
+/// The kernel's value checks, shared so that compile-time and run-time checks agree.
+pub use cwr_kernel::contract_check::{check_shape, has_bad_tag, truthy};
 
-impl Records {
-    /// Parses the `record Name` blocks of `manual/types.md`.
-    pub fn parse(text: &str) -> Records {
-        let mut out: BTreeMap<String, Vec<(String, Option<TypeExpr>, String)>> = BTreeMap::new();
-        let mut current: Option<String> = None;
-        for line in text.lines() {
-            let t = line.trim();
-            if let Some(name) = t.strip_prefix("record ") {
-                let name = name.trim().to_string();
-                out.entry(name.clone()).or_default();
-                current = Some(name);
-                continue;
-            }
-            if t.is_empty() || !(line.starts_with(' ') || line.starts_with('\t')) {
-                current = None;
-                continue;
-            }
-            let Some(rec) = &current else { continue };
-            let Some((field, rest)) = t.split_once(':') else {
-                continue;
-            };
-            let field = field.trim();
-            if field.is_empty() || !field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                continue;
-            }
-            let rest = rest.trim_start();
-            let mut depth = 0i32;
-            let mut end = rest.len();
-            for (i, c) in rest.char_indices() {
-                match c {
-                    '[' => depth += 1,
-                    ']' => depth -= 1,
-                    c if c.is_whitespace() && depth == 0 => {
-                        end = i;
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            let ty = rest[..end].to_string();
-            out.entry(rec.clone())
-                .or_default()
-                .push((field.to_string(), ty.parse().ok(), ty));
+/// The record table as the worker reads it: record name to field name to type text (empty
+/// for a field whose type does not parse, which the worker then leaves undecoded).
+fn records_value(records: &Records) -> Value {
+    let mut m = Map::new();
+    for (name, fields) in &records.0 {
+        let mut f = Map::new();
+        for (k, t) in fields {
+            let text = t.as_ref().map(|t| t.to_string()).unwrap_or_default();
+            f.insert(k.clone(), Value::String(text));
         }
-        Records(out)
+        m.insert(name.clone(), Value::Object(f));
     }
-
-    fn to_value(&self) -> Value {
-        let mut m = Map::new();
-        for (name, fields) in &self.0 {
-            let mut f = Map::new();
-            for (k, _, t) in fields {
-                f.insert(k.clone(), Value::String(t.clone()));
-            }
-            m.insert(name.clone(), Value::Object(f));
-        }
-        Value::Object(m)
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Values
-// ---------------------------------------------------------------------------------------------
-
-fn bytes_b64(v: &Value) -> Option<&str> {
-    match v {
-        Value::Object(m) if m.len() == 1 => m.get("$bytes").and_then(Value::as_str),
-        _ => None,
-    }
-}
-
-fn b64_len(s: &str) -> usize {
-    let pad = s.bytes().rev().take_while(|b| *b == b'=').count();
-    ((s.len() / 4) * 3).saturating_sub(pad.min(2))
-}
-
-/// Python truthiness of a value.
-pub fn truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Object(m) => match bytes_b64(v) {
-            Some(b) => !b.is_empty(),
-            None => !m.is_empty(),
-        },
-    }
-}
-
-fn len_of(v: &Value) -> Result<i64, String> {
-    if let Some(b) = bytes_b64(v) {
-        return Ok(b64_len(b) as i64);
-    }
-    match v {
-        Value::String(s) => Ok(s.chars().count() as i64),
-        Value::Array(a) => Ok(a.len() as i64),
-        Value::Object(m) => Ok(m.len() as i64),
-        other => Err(format!("len() of a {} value", type_name(other))),
-    }
-}
-
-fn type_name(v: &Value) -> &'static str {
-    if bytes_b64(v).is_some() {
-        return "bytes";
-    }
-    match v {
-        Value::Null => "None",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "int",
-        Value::String(_) => "str",
-        Value::Array(_) => "list",
-        Value::Object(_) => "dict",
-    }
-}
-
-fn as_int(v: &Value) -> Option<i128> {
-    match v {
-        Value::Number(n) => n
-            .as_i64()
-            .map(i128::from)
-            .or_else(|| n.as_u64().map(i128::from)),
-        _ => None,
-    }
-}
-
-fn compare(op: CmpOp, a: &Value, b: &Value) -> Result<bool, String> {
-    match op {
-        CmpOp::Eq => Ok(values_equal(a, b)),
-        CmpOp::Ne => Ok(!values_equal(a, b)),
-        CmpOp::Lt => order(a, b).map(Ordering::is_lt),
-        CmpOp::Le => order(a, b).map(Ordering::is_le),
-        CmpOp::Gt => order(a, b).map(Ordering::is_gt),
-        CmpOp::Ge => order(a, b).map(Ordering::is_ge),
-    }
-}
-
-/// Python ordering of two ints or two strings; any other pair is a TypeError message.
-fn order(a: &Value, b: &Value) -> Result<Ordering, String> {
-    match (as_int(a), as_int(b), a, b) {
-        (Some(x), Some(y), _, _) => Ok(x.cmp(&y)),
-        (_, _, Value::String(x), Value::String(y)) => Ok(x.cmp(y)),
-        _ => Err(format!(
-            "cannot order a {} and a {}",
-            type_name(a),
-            type_name(b)
-        )),
-    }
-}
-
-fn values_equal(a: &Value, b: &Value) -> bool {
-    match (as_int(a), as_int(b)) {
-        (Some(x), Some(y)) => x == y,
-        _ => a == b,
-    }
-}
-
-/// Checks a tagged value against a contract type.
-pub fn check_shape(v: &Value, ty: &TypeExpr, records: &Records) -> Result<(), String> {
-    let bad = |want: &str| Err(format!("expected {want}, got {}", type_name(v)));
-    match ty {
-        TypeExpr::Str | TypeExpr::Path => {
-            if v.is_string() {
-                Ok(())
-            } else {
-                bad("str")
-            }
-        }
-        TypeExpr::Int => {
-            if as_int(v).is_some() {
-                Ok(())
-            } else {
-                bad("int")
-            }
-        }
-        TypeExpr::Bool => {
-            if v.is_boolean() {
-                Ok(())
-            } else {
-                bad("bool")
-            }
-        }
-        TypeExpr::Bytes => {
-            if bytes_b64(v).is_some() {
-                Ok(())
-            } else {
-                bad("bytes")
-            }
-        }
-        TypeExpr::None => {
-            if v.is_null() {
-                Ok(())
-            } else {
-                bad("None")
-            }
-        }
-        TypeExpr::List(t) => match v {
-            Value::Array(items) => {
-                for (i, x) in items.iter().enumerate() {
-                    check_shape(x, t, records).map_err(|e| format!("[{i}]: {e}"))?;
-                }
-                Ok(())
-            }
-            _ => bad("list"),
-        },
-        TypeExpr::Dict(t) => match v {
-            Value::Object(m) if bytes_b64(v).is_none() => {
-                for (k, x) in m {
-                    check_shape(x, t, records).map_err(|e| format!("[{k:?}]: {e}"))?;
-                }
-                Ok(())
-            }
-            _ => bad("dict"),
-        },
-        TypeExpr::Record(name) => {
-            let Value::Object(m) = v else {
-                return bad(name);
-            };
-            if bytes_b64(v).is_some() {
-                return bad(name);
-            }
-            let Some(fields) = records.0.get(name) else {
-                return Ok(());
-            };
-            let want: BTreeSet<&str> = fields.iter().map(|(f, _, _)| f.as_str()).collect();
-            let got: BTreeSet<&str> = m.keys().map(String::as_str).collect();
-            if want != got {
-                return Err(format!(
-                    "record {name} needs exactly the keys {:?}, got {:?}",
-                    want.iter().collect::<Vec<_>>(),
-                    got.iter().collect::<Vec<_>>()
-                ));
-            }
-            for (f, t, _) in fields {
-                if let Some(t) = t {
-                    check_shape(&m[f], t, records).map_err(|e| format!("{name}.{f}: {e}"))?;
-                }
-            }
-            Ok(())
-        }
-    }
+    Value::Object(m)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -313,7 +88,9 @@ pub fn check_shape(v: &Value, ty: &TypeExpr, records: &Records) -> Result<(), St
 pub struct Worker {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    lines: Receiver<std::io::Result<String>>,
+    deadline: Duration,
+    dead: Option<String>,
 }
 
 /// The interpreter: `CWR_PYTHON` if set, else `python3`.
@@ -324,39 +101,73 @@ pub fn python() -> String {
         .unwrap_or_else(|| "python3".to_string())
 }
 
+/// Host seconds the worker may take to answer one request: the in-worker guard
+/// (`STEP_SECONDS` in [`WORKER`]) plus a margin. A request still unanswered then (a C-level
+/// loop the guard's signal cannot interrupt, a hang outside world code) kills the worker.
+const HOST_DEADLINE: Duration = Duration::from_secs(30);
+
+/// The only environment variables the worker receives; nothing else of the compiler's
+/// environment (credentials included) reaches world code.
+const WORKER_ENV: [&str; 1] = ["PATH"];
+
 impl Worker {
     /// Starts a worker over a World Source root with the given `lib/` and `live.py` files.
+    ///
+    /// World code sees the source root read-only and may write only below `scratch` (its
+    /// working directory, shared by the two suite runs so that host state carried between
+    /// them shows up as a second-run difference). Its environment is cleared. Where bubblewrap
+    /// exists the worker runs in fresh user, mount, network, PID, IPC, UTS and cgroup
+    /// namespaces whose view holds only the interpreter, the source root and `scratch`; else
+    /// under the kernel's seccomp network seal. The worker's audit hook (see [`WORKER`])
+    /// applies in both cases.
     pub fn spawn(
         root: &Path,
+        scratch: &Path,
         lib: &BTreeMap<String, String>,
         live: &BTreeMap<String, String>,
         records: &Records,
         version: &str,
+        settings: &WorldSettings,
     ) -> Result<Worker, String> {
         let root = std::fs::canonicalize(root)
             .map_err(|e| format!("cannot resolve {}: {e}", root.display()))?;
-        // No network capability for world code (clause 7.1): a fresh, empty network namespace
-        // where bubblewrap exists, else the kernel's seccomp network seal (fail closed if it
-        // cannot be applied); the worker's audit hook (see WORKER) applies in every case.
+        let scratch = std::fs::canonicalize(scratch)
+            .map_err(|e| format!("cannot resolve {}: {e}", scratch.display()))?;
         let mut cmd = match cwr_kernel::sandbox::bwrap() {
             Ok(bwrap) => {
+                let interp = cwr_kernel::sandbox::interpreter().map_err(|e| {
+                    format!("cannot start the contract-test worker in bubblewrap: {e}")
+                })?;
                 let mut c = Command::new(bwrap);
                 c.args([
+                    "--unshare-all",
                     "--unshare-user",
-                    "--unshare-net",
-                    "--unshare-ipc",
+                    "--uid",
+                    "65534",
+                    "--gid",
+                    "65534",
                     "--die-with-parent",
                     "--new-session",
-                    "--bind",
-                    "/",
-                    "/",
-                    "--dev",
-                    "/dev",
-                    "--chdir",
-                ])
-                .arg(&root)
-                .arg("--")
-                .arg(python());
+                    "--cap-drop",
+                    "ALL",
+                    "--clearenv",
+                ]);
+                for b in &interp.binds {
+                    c.arg("--ro-bind").arg(b).arg(b);
+                }
+                for (target, link) in &interp.symlinks {
+                    c.args(["--symlink", target, link]);
+                }
+                c.args(["--dev", "/dev", "--ro-bind"])
+                    .arg(&root)
+                    .arg(&root)
+                    .arg("--bind")
+                    .arg(&scratch)
+                    .arg(&scratch)
+                    .args(["--remount-ro", "/", "--chdir"])
+                    .arg(&scratch)
+                    .arg("--")
+                    .arg(&interp.executable);
                 c
             }
             Err(_) => {
@@ -367,9 +178,15 @@ impl Worker {
                 c
             }
         };
+        cmd.env_clear();
+        for k in WORKER_ENV {
+            if let Some(v) = std::env::var_os(k) {
+                cmd.env(k, v);
+            }
+        }
         let mut child = cmd
             .args(["-I", "-B", "-c", WORKER])
-            .current_dir(&root)
+            .current_dir(&scratch)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -380,13 +197,38 @@ impl Worker {
             let _ = child.wait();
             return Err("cannot open the contract-test worker's stdin and stdout pipes".into());
         };
-        let stdout = BufReader::new(stdout);
+        let (tx, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut r = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                match r.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if tx.send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        break;
+                    }
+                }
+            }
+        });
         let mut w = Worker {
             child,
             stdin,
-            stdout,
+            lines,
+            deadline: HOST_DEADLINE,
+            dead: None,
         };
-        let init = json!({"op": "init", "root": root.display().to_string(), "lib": lib, "live": live, "records": records.to_value(), "version": version});
+        let limit = |k: &str| settings.limits.get(k).copied().unwrap_or(0);
+        let init = json!({
+            "op": "init", "root": root.display().to_string(), "scratch": scratch.display().to_string(),
+            "lib": lib, "live": live, "records": records_value(records), "version": version,
+            "memory_mb": limit("memory_mb"), "cpu_ms": limit("cpu_ms"),
+        });
         let r = w.request(&init)?;
         if r.get("python")
             .and_then(Value::as_str)
@@ -398,28 +240,48 @@ impl Worker {
         Ok(w)
     }
 
-    /// One request and its response. A `fatal` response is an error.
+    /// One request and its response. A `fatal` response is an error. A worker that does not
+    /// answer within its deadline is killed, and this and every later request is an error.
     pub fn request(&mut self, req: &Value) -> Result<Value, String> {
+        if let Some(why) = &self.dead {
+            return Err(why.clone());
+        }
         let mut line = serde_json::to_string(req).map_err(|e| e.to_string())?;
         line.push('\n');
         self.stdin
             .write_all(line.as_bytes())
             .and_then(|_| self.stdin.flush())
             .map_err(|e| format!("contract-test worker: {e}"))?;
-        let mut resp = String::new();
-        let n = self
-            .stdout
-            .read_line(&mut resp)
-            .map_err(|e| format!("contract-test worker: {e}"))?;
-        if n == 0 {
-            return Err("contract-test worker exited unexpectedly".into());
-        }
+        let resp = match self.lines.recv_timeout(self.deadline) {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(format!("contract-test worker: {e}")),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("contract-test worker exited unexpectedly".into())
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                let why = format!(
+                    "contract-test worker did not answer a {} request within {} s of host time and was killed (world code that loops in native code or never returns)",
+                    req.get("op").and_then(Value::as_str).unwrap_or("?"),
+                    self.deadline.as_secs_f64()
+                );
+                self.dead = Some(why.clone());
+                return Err(why);
+            }
+        };
         let v: Value = serde_json::from_str(&resp)
             .map_err(|e| format!("contract-test worker sent malformed output: {e}"))?;
         if let Some(f) = v.get("fatal").and_then(Value::as_str) {
             return Err(f.to_string());
         }
         Ok(v)
+    }
+
+    /// Shortens the host deadline (tests of the deadline itself).
+    #[cfg(test)]
+    fn set_deadline(&mut self, d: Duration) {
+        self.deadline = d;
     }
 }
 
@@ -525,6 +387,9 @@ pub struct CallOutcome {
     pub defects: Vec<String>,
     /// Whether an ok result matched the declared return shape.
     pub shape_ok: bool,
+    /// Whether the call reached step 3 (a primitive's `lib/` function or, for an adapter, the
+    /// replay-only gateway): false for a refusal at parameter validation or a precondition.
+    pub executed: bool,
 }
 
 impl CallOutcome {
@@ -543,6 +408,7 @@ impl CallOutcome {
             retry_after: None,
             defects: Vec::new(),
             shape_ok: true,
+            executed: false,
         }
     }
     fn defect(msg: String) -> Self {
@@ -553,6 +419,7 @@ impl CallOutcome {
             retry_after: None,
             defects: vec![msg],
             shape_ok: false,
+            executed: false,
         }
     }
 }
@@ -641,10 +508,19 @@ impl<'a> Ephemeral<'a> {
     pub fn decode(&mut self, items: &[(Value, String)]) -> Result<Vec<Value>, String> {
         let req = json!({"op": "decode", "items": items.iter().map(|(v, t)| json!([v, t])).collect::<Vec<_>>()});
         let r = self.worker.request(&req)?;
-        r.get("values")
+        let values = r
+            .get("values")
             .and_then(Value::as_array)
             .cloned()
-            .ok_or_else(|| "decode: malformed response".to_string())
+            .ok_or_else(|| "decode: malformed response".to_string())?;
+        if values.len() != items.len() {
+            return Err(format!(
+                "decode: {} values for {} items",
+                values.len(),
+                items.len()
+            ));
+        }
+        Ok(values)
     }
 
     /// Runs one migration fixture case; returns the list of problems (empty on success).
@@ -716,69 +592,8 @@ impl<'a> Ephemeral<'a> {
     }
 
     fn eval_expr(&mut self, e: &Expr, env: &Env) -> Result<Value, String> {
-        Ok(match e {
-            Expr::Or(a, b) => {
-                Value::Bool(truthy(&self.eval_expr(a, env)?) || truthy(&self.eval_expr(b, env)?))
-            }
-            Expr::And(a, b) => {
-                Value::Bool(truthy(&self.eval_expr(a, env)?) && truthy(&self.eval_expr(b, env)?))
-            }
-            Expr::Not(a) => Value::Bool(!truthy(&self.eval_expr(a, env)?)),
-            Expr::Compare(op, a, b) => {
-                let x = self.eval_term(a, env)?;
-                let y = self.eval_term(b, env)?;
-                Value::Bool(compare(*op, &x, &y)?)
-            }
-            Expr::Term(t) => self.eval_term(t, env)?,
-        })
-    }
-
-    fn name_value(name: &str, env: &Env) -> Result<Value, String> {
-        if let Some(v) = env.params.get(name) {
-            return Ok(v.clone());
-        }
-        if name == "result" {
-            if let Some(r) = env.result {
-                return Ok(r.clone());
-            }
-        }
-        Err(format!("name {name} is not a parameter"))
-    }
-
-    fn eval_term(&mut self, t: &Term, env: &Env) -> Result<Value, String> {
-        Ok(match t {
-            Term::Name(n) => Self::name_value(n, env)?,
-            Term::Int(i) => json!(i),
-            Term::Str(s) => Value::String(s.clone()),
-            Term::Call { target, args } => {
-                let mut vals = Vec::new();
-                for a in args {
-                    vals.push(match a {
-                        Arg::Name(n) => Self::name_value(n, env)?,
-                        Arg::Int(i) => json!(i),
-                        Arg::Str(s) => Value::String(s.clone()),
-                    });
-                }
-                self.read_only(target, vals)?
-            }
-            Term::Len(x) => json!(len_of(&self.eval_term(x, env)?)?),
-            Term::Add(a, b) => {
-                let (x, y) = (self.eval_term(a, env)?, self.eval_term(b, env)?);
-                match (as_int(&x), as_int(&y)) {
-                    (Some(p), Some(q)) => {
-                        json!(i64::try_from(p + q).map_err(|_| "integer overflow".to_string())?)
-                    }
-                    _ => {
-                        return Err(format!(
-                            "cannot add a {} and a {}",
-                            type_name(&x),
-                            type_name(&y)
-                        ))
-                    }
-                }
-            }
-            Term::Group(e) => self.eval_expr(e, env)?,
-        })
+        let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
+        cwr_kernel::contract_check::eval_expr(e, env.params, env.result, &mut read_only)
     }
 
     fn record(
@@ -818,7 +633,8 @@ impl<'a> Ephemeral<'a> {
         let mut invalid = declared != given;
         if !invalid {
             for (n, ty) in t.params() {
-                if check_shape(&params[n], ty, self.records).is_err() {
+                let v = params.get(n).unwrap_or(&Value::Null);
+                if has_bad_tag(v) || check_shape(v, ty, self.records).is_err() {
                     invalid = true;
                 }
             }
@@ -857,7 +673,11 @@ impl<'a> Ephemeral<'a> {
             }
         }
         // Step 3: execute.
-        let args: Vec<Value> = t.params().iter().map(|(n, _)| params[n].clone()).collect();
+        let args: Vec<Value> = t
+            .params()
+            .iter()
+            .map(|(n, _)| params.get(n).cloned().unwrap_or(Value::Null))
+            .collect();
         let declared_codes = t.declared_codes();
         let mut out = match t {
             Target::Primitive(p) => {
@@ -881,6 +701,7 @@ impl<'a> Ephemeral<'a> {
                 }
             }
         };
+        out.executed = true;
         // Step 4: effects after ok.
         if out.code.is_none() {
             let result = out.returned.clone().unwrap_or(Value::Null);
@@ -921,6 +742,7 @@ impl<'a> Ephemeral<'a> {
                 retry_after: None,
                 defects: Vec::new(),
                 shape_ok: true,
+                executed: false,
             };
             if p.side_effect.as_str() == "read_only"
                 && r.get("changed").and_then(Value::as_bool) == Some(true)
@@ -983,6 +805,7 @@ impl<'a> Ephemeral<'a> {
                 retry_after: None,
                 defects: Vec::new(),
                 shape_ok: true,
+                executed: false,
             };
         }
         if let Some(c) = r.get("code").and_then(Value::as_str) {
@@ -992,7 +815,7 @@ impl<'a> Ephemeral<'a> {
                 Ok(code) if !declared.contains(&code) => {
                     CallOutcome::defect(format!("{name} emitted {c}, which its contract does not declare among its failures (INVARIANT_VIOLATION)"))
                 }
-                Ok(Code::RateLimited) if retry_after.as_ref().and_then(as_int).map(|n| n < 0).unwrap_or(true) => {
+                Ok(Code::RateLimited) if retry_after.as_ref().and_then(Value::as_u64).is_none() => {
                     CallOutcome::defect(format!("{name}: RATE_LIMITED without an integer retry_after in ticks"))
                 }
                 Ok(code) => {
@@ -1011,34 +834,60 @@ impl<'a> Ephemeral<'a> {
 
 /// The contract-test worker: executes world code on behalf of the ephemeral Instance.
 pub const WORKER: &str = r#####"
-import base64, copy, hashlib, importlib.util, json, keyword, signal, sys, types, typing
+import base64, copy, hashlib, importlib.util, json, keyword, os, resource, signal, sys, types, typing
 
 PROTO = sys.stdout
 sys.stdout = sys.stderr
 STEP_SECONDS = 20
 
-# World code has no network capability (clause 7.1). Audit hooks cannot be removed once added.
-_DENIED = ("socket.", "ctypes.", "subprocess.", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork", "os.forkpty", "_winapi.")
+# World code has no network or process capability (clause 7.1), cannot write outside the
+# scratch directory, signal other processes, change the environment or raise its own resource
+# limits. Audit hooks cannot be removed once added.
+_DENIED = ("socket.", "ctypes.", "subprocess.", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork", "os.forkpty", "_winapi.", "os.kill", "os.killpg", "signal.pthread_kill", "os.putenv", "os.unsetenv")
 _NATIVE = (".so", ".pyd", ".dylib", ".dll")
 # Modules that start processes or interpreters without raising any audit event of their own.
 _NO_IMPORT = ("_posixsubprocess", "_xxsubinterpreters", "_xxinterpchannels", "_interpreters", "_interpchannels", "_testcapi", "_testinternalcapi", "_testmultiphase", "_testsinglephase", "_testimportmultiple")
+# Events that change the filesystem, with the positions of their path arguments.
+_FS_EVENTS = {"os.remove": (0,), "os.rmdir": (0,), "os.mkdir": (0,), "os.chmod": (0,), "os.chown": (0,), "os.truncate": (0,), "os.utime": (0,), "os.rename": (0, 1), "os.link": (0, 1), "os.symlink": (0, 1), "shutil.rmtree": (0,), "shutil.copyfile": (1,), "shutil.copymode": (1,), "shutil.copystat": (1,), "shutil.copytree": (1,), "shutil.move": (0, 1), "shutil.chown": (0,), "shutil.make_archive": (0,), "shutil.unpack_archive": (1,)}
+_WRITE_FLAGS = 3 | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+SCRATCH = [None]
+IN_WORLD = [False]
 
 def _native(path):
     if isinstance(path, bytes):
         path = path.decode("utf-8", "replace")
     return isinstance(path, str) and path.lower().endswith(_NATIVE)
 
+def _inside(path):
+    if isinstance(path, int):
+        return True
+    try:
+        p = os.path.realpath(os.fsdecode(os.fspath(path)))
+    except (TypeError, ValueError):
+        return False
+    s = SCRATCH[0]
+    return s is not None and (p == s or p.startswith(s + os.sep))
+
 def _guard(event, args):
     if event.startswith(_DENIED):
-        raise PermissionError("contract tests: world code has no network or process capability (%s)" % event)
+        raise PermissionError("contract tests: world code has no network, process or environment capability (%s)" % event)
     if event == "import" and args and str(args[0]).split(".")[0] in _NO_IMPORT:
         raise PermissionError("contract tests: world code has no process capability (import %s)" % args[0])
-    if event == "open" and len(args) >= 3 and _native(args[0]):
+    if event == "open" and len(args) >= 3:
         mode, flags = args[1], args[2] or 0
-        if (isinstance(mode, str) and any(c in mode for c in "wax+")) or (mode is None and flags & 3):
-            raise PermissionError("contract tests: world code may not write native extension files")
-    if event in ("os.rename", "os.link", "os.symlink") and len(args) >= 2 and _native(args[1]):
-        raise PermissionError("contract tests: world code may not create native extension files")
+        if (isinstance(mode, str) and any(c in mode for c in "wax+")) or (mode is None and flags & _WRITE_FLAGS):
+            if _native(args[0]):
+                raise PermissionError("contract tests: world code may not write native extension files")
+            if not _inside(args[0]):
+                raise PermissionError("contract tests: world code may not write outside its scratch directory")
+    if event in _FS_EVENTS:
+        for i in _FS_EVENTS[event]:
+            if len(args) > i and not _inside(args[i]):
+                raise PermissionError("contract tests: world code may not change the filesystem outside its scratch directory (%s)" % event)
+        if event in ("os.rename", "os.link", "os.symlink") and len(args) >= 2 and _native(args[1]):
+            raise PermissionError("contract tests: world code may not create native extension files")
+    if event in ("resource.setrlimit", "resource.prlimit") and IN_WORLD[0]:
+        raise PermissionError("contract tests: world code may not change its resource limits")
 
 sys.addaudithook(_guard)
 
@@ -1109,6 +958,7 @@ I.libpaths = {}
 I.livepaths = {}
 I.records = {}
 I.version = ""
+I.cpu_seconds = 21
 I.lib = {}
 I.live = {}
 I.state = {}
@@ -1142,7 +992,8 @@ def load(rel, tag):
     path = I.root + "/" + rel
     spec = importlib.util.spec_from_file_location("_cwr_ephemeral_%s_%d" % (tag, I.counter), path)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # Module top-level code is world code: it runs under the same guard as a call.
+    guarded(spec.loader.exec_module, mod)
     return mod
 
 def state_hint(mod):
@@ -1251,12 +1102,27 @@ def by_type(v, t):
         return {k: by_type(x, fields.get(k, "")) for k, x in v.items()}
     return v
 
+_CPU_HARD = resource.getrlimit(resource.RLIMIT_CPU)[1]
+
+def _cpu_soft(seconds):
+    if _CPU_HARD != resource.RLIM_INFINITY:
+        seconds = min(seconds, _CPU_HARD)
+    resource.setrlimit(resource.RLIMIT_CPU, (seconds, _CPU_HARD))
+
 def guarded(fn, *args):
+    # Two guards per step of world code: SIGALRM after STEP_SECONDS of host time (interrupts
+    # Python code), and a soft CPU limit of limits.cpu_ms plus one second (SIGXCPU, whose default
+    # action ends the worker even inside native code). The host deadline backs both.
+    used = resource.getrusage(resource.RUSAGE_SELF)
+    _cpu_soft(int(used.ru_utime + used.ru_stime) + I.cpu_seconds)
     signal.alarm(STEP_SECONDS)
+    IN_WORLD[0] = True
     try:
         return fn(*args)
     finally:
+        IN_WORLD[0] = False
         signal.alarm(0)
+        _cpu_soft(resource.RLIM_INFINITY)
 
 def describe(e):
     text = "%s: %s" % (type(e).__name__, e)
@@ -1268,6 +1134,16 @@ def raised_code(e):
 
 def op_init(req):
     I.root = req["root"]
+    SCRATCH[0] = os.path.realpath(req["scratch"])
+    I.cpu_seconds = (int(req.get("cpu_ms") or 0) + 999) // 1000 + 1
+    # Address space capped at four times limits.memory_mb (at least 1 GiB), so a runaway
+    # allocation fails with MemoryError instead of exhausting the host; the per-turn memory
+    # limit itself is enforced by the kernel at run time.
+    cap = max(4 * int(req.get("memory_mb") or 0), 1024) * 1024 * 1024
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    if hard != resource.RLIM_INFINITY:
+        cap = min(cap, hard)
+    resource.setrlimit(resource.RLIMIT_AS, (cap, hard))
     I.libpaths = req["lib"]
     I.livepaths = req["live"]
     I.records = req["records"]
@@ -1495,37 +1371,145 @@ mod tests {
     use super::*;
 
     #[test]
-    fn records_parse() {
-        let r = Records::parse("text\n\n```text\nrecord Hit\n  title: str        content\n  tags: dict[str, int]   x\n\nrecord Empty\n```\n");
+    fn records_are_the_kernel_records() {
+        let text = "text\n\n```text\nrecord Hit\n  title: str        content\n  tags: dict[str, int]   x\n  odd: ???\n\nrecord Empty\n```\n";
+        let r = Records::parse(text);
         let hit = &r.0["Hit"];
-        assert_eq!(hit.len(), 2);
-        assert_eq!(hit[1].2, "dict[str, int]");
+        assert_eq!(hit.len(), 3);
         assert!(hit[1].1.is_some());
         assert!(r.0["Empty"].is_empty());
+        assert_eq!(
+            records_value(&r),
+            json!({"Empty": {}, "Hit": {"title": "str", "tags": "dict[str, int]", "odd": ""}})
+        );
     }
 
     #[test]
-    fn value_helpers() {
-        assert_eq!(b64_len("aGVsbG8="), 5);
-        assert_eq!(b64_len(""), 0);
-        assert_eq!(b64_len("="), 0);
-        assert!(!truthy(&json!({})));
-        assert_eq!(
-            compare(CmpOp::Lt, &json!(1), &json!("a")),
-            Err("cannot order a int and a str".into())
-        );
-        assert_eq!(len_of(&json!({"$bytes": "aGk="})).unwrap(), 2);
-        assert_eq!(len_of(&json!("héllo")).unwrap(), 5);
-        assert!(compare(CmpOp::Le, &json!(3), &json!(3)).unwrap());
-        assert!(compare(CmpOp::Lt, &json!("a"), &json!(1)).is_err());
-        assert!(!truthy(&json!({"$bytes": ""})));
-        let recs = Records::default();
+    fn shape_checks_agree_with_the_kernel() {
+        // The compiler's contract tests and the kernel's run-time check share one
+        // implementation: a return type naming a record the manual does not declare is
+        // refused in both, so a Build cannot pass contract tests and then fail every call.
+        let recs = Records::parse("record Hit\n  title: str\n");
+        let undeclared: TypeExpr = "Missing".parse().expect("record type");
+        let v = json!({"title": "x"});
+        let here = check_shape(&v, &undeclared, &recs);
+        let kernel = cwr_kernel::contract_check::check_shape(&v, &undeclared, &recs);
+        assert!(here.is_err());
+        assert_eq!(here, kernel);
+        let hit: TypeExpr = "Hit".parse().expect("record type");
+        assert_eq!(check_shape(&v, &hit, &recs), Ok(()));
         assert!(check_shape(&json!(true), &TypeExpr::Int, &recs).is_err());
         assert!(check_shape(
             &json!([{"$bytes": "aGk="}]),
-            &"list[bytes]".parse().unwrap(),
+            &"list[bytes]".parse().expect("type"),
             &recs
         )
         .is_ok());
+        assert!(!truthy(&json!({"$bytes": ""})));
+        assert!(has_bad_tag(&json!({"$invalid": 1})));
+    }
+
+    /// A temporary World Source root holding `lib/<module>.py`, and a scratch directory.
+    fn probe_root(tag: &str, module: &str, text: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!("cwr-eph-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, scratch) = (base.join("src"), base.join("scratch"));
+        std::fs::create_dir_all(root.join("lib")).expect("lib dir");
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        std::fs::write(root.join(format!("lib/{module}.py")), text).expect("lib file");
+        (root, scratch)
+    }
+
+    fn spawn(root: &Path, scratch: &Path, module: &str) -> Result<Worker, String> {
+        let lib: BTreeMap<String, String> = [(module.to_string(), format!("lib/{module}.py"))]
+            .into_iter()
+            .collect();
+        let settings = WorldSettings {
+            limits: [("cpu_ms".to_string(), 5000), ("memory_mb".to_string(), 256)]
+                .into_iter()
+                .collect(),
+            tick_per_primitive: 1,
+            tick_per_turn: 1,
+        };
+        Worker::spawn(
+            root,
+            scratch,
+            &lib,
+            &BTreeMap::new(),
+            &Records::default(),
+            "0.1.0",
+            &settings,
+        )
+    }
+
+    fn call(w: &mut Worker, name: &str) -> Result<Value, String> {
+        w.request(&json!({"op": "reset", "state": {}, "seed": 0, "randoms": [], "cassette": []}))?;
+        w.request(&json!({"op": "call", "fn": name, "args": [], "world_time": 0, "limits": {}, "ledger": []}))
+    }
+
+    fn have_python() -> bool {
+        Command::new(python()).arg("-V").output().is_ok()
+    }
+
+    /// World code reached past the lint (here: run directly) can neither write outside its
+    /// scratch directory nor read the compiler's environment.
+    #[test]
+    fn world_code_cannot_write_outside_scratch_or_read_the_environment() {
+        if !have_python() {
+            eprintln!("skipped: no python3");
+            return;
+        }
+        let (root, scratch) = probe_root("sandbox", "probe", "");
+        let target = root.join("pwned.txt");
+        let text = format!(
+            "import os\n\ndef write(state):\n    out = []\n    for path in ({:?}, 'scratch.txt'):\n        try:\n            with open(path, 'w') as h:\n                h.write('x')\n            out.append('wrote')\n        except OSError:\n            out.append('refused')\n    out.append(sorted(os.environ))\n    return out\n",
+            target.display().to_string()
+        );
+        std::fs::write(root.join("lib/probe.py"), text).expect("lib file");
+        let got = spawn(&root, &scratch, "probe").and_then(|mut w| call(&mut w, "probe.write"));
+        let pwned = target.exists();
+        let wrote_scratch = scratch.join("scratch.txt").exists();
+        let _ = std::fs::remove_dir_all(root.parent().expect("base"));
+        let r = got.expect("worker answered");
+        let result = r.get("result").and_then(Value::as_array).expect("a result");
+        assert_eq!(result.first(), Some(&json!("refused")), "{r}");
+        assert_eq!(result.get(1), Some(&json!("wrote")), "{r}");
+        assert!(!pwned && wrote_scratch);
+        let env: Vec<&str> = result
+            .get(2)
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        assert!(
+            env.iter()
+                .all(|k| matches!(*k, "PATH" | "PWD" | "LC_CTYPE")),
+            "the worker sees the compiler's environment: {env:?}"
+        );
+    }
+
+    /// A step of world code that loops in native code (where the in-worker alarm cannot
+    /// interrupt it) is ended by the host deadline: the worker is killed and every later
+    /// request fails, instead of hanging the compiler.
+    #[test]
+    fn a_hung_worker_is_killed_at_the_host_deadline() {
+        if !have_python() {
+            eprintln!("skipped: no python3");
+            return;
+        }
+        let text = "import math\n\ndef hang(state):\n    return math.factorial(10 ** 9)\n";
+        let (root, scratch) = probe_root("deadline", "slow", text);
+        let started = std::time::Instant::now();
+        let got = spawn(&root, &scratch, "slow").map(|mut w| {
+            w.set_deadline(Duration::from_secs(2));
+            let first = call(&mut w, "slow.hang");
+            let again = w.request(&json!({"op": "decode", "items": []}));
+            (first, again)
+        });
+        let _ = std::fs::remove_dir_all(root.parent().expect("base"));
+        let (first, again) = got.expect("worker started");
+        let e = first.expect_err("the hung call must fail");
+        assert!(e.contains("did not answer"), "{e}");
+        assert!(again.is_err());
+        assert!(started.elapsed() < Duration::from_secs(20));
     }
 }

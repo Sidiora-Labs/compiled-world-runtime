@@ -15,6 +15,11 @@
 //! is verified: a verifying directory is reported as already built and left untouched (exit 0); a
 //! directory that does not verify is a package failure (exit 7) and is also left untouched.
 //!
+//! The copied directories ([`COPIED_DIRS`]) are written from the parse stage's inventory, the
+//! exact bytes that were linted and contract-tested, and the World Source on disk is re-read
+//! first: a file added, changed or removed during compilation, or any entry the parse stage did
+//! not inventory, refuses the package stage instead of shipping unchecked code.
+//!
 //! `tests.json` is inside the hash (clause 4.5, task 1.3 do_3). It is written without the host
 //! durations of the contract-test runs, so it is a deterministic function of the World Source.
 //!
@@ -28,7 +33,10 @@ use std::path::{Path, PathBuf};
 
 use cwr_contract::kvx;
 
-use crate::manifest::Manifest;
+use crate::contract_tests::TestReport;
+use crate::diff::ContractDiff;
+use crate::manifest::{Generated, Manifest};
+use crate::parse::Parsed;
 use crate::{Context, Diagnostic, Location, Stage, StageRun};
 
 /// The source directories byte-copied into the Build.
@@ -178,31 +186,78 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|e| format!("create {}: {e}", to.display()))?;
-    if !from.is_dir() {
-        return Ok(());
+/// Whether a source-relative path lies in one of [`COPIED_DIRS`].
+fn is_copied(rel: &str) -> bool {
+    rel.split('/')
+        .next()
+        .is_some_and(|top| COPIED_DIRS.contains(&top))
+}
+
+/// Writes the copied source directories into the Build from the parse-stage inventory: the
+/// bytes that were parsed, linted and contract-tested, never a later read of the disk.
+fn write_sources(parsed: &Parsed, tmp: &Path) -> Result<(), String> {
+    for d in COPIED_DIRS {
+        fs::create_dir_all(tmp.join(d))
+            .map_err(|e| format!("create {}: {e}", tmp.join(d).display()))?;
     }
-    let mut entries: Vec<_> = fs::read_dir(from)
-        .map_err(|e| format!("read {}: {e}", from.display()))?
-        .filter_map(|e| e.ok())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let ft = e
-            .file_type()
-            .map_err(|err| format!("stat {}: {err}", e.path().display()))?;
-        let name = e.file_name();
-        if ft.is_symlink() || name == "__pycache__" {
-            continue;
+    for (rel, file) in parsed.files.iter().filter(|(rel, _)| is_copied(rel)) {
+        write(&tmp.join(rel), file.text.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Refuses a World Source whose copied directories changed after the parse stage read them:
+/// an entry the parse stage did not inventory (a new file, a symbolic link, a special file, a
+/// `__pycache__` directory), a file whose bytes differ, or an inventoried file that is gone.
+pub fn verify_unchanged(parsed: &Parsed, root: &Path) -> Result<(), String> {
+    fn walk(parsed: &Parsed, root: &Path, rel: &str, seen: &mut Vec<String>) -> Result<(), String> {
+        let dir = root.join(rel);
+        let mut entries: Vec<_> = fs::read_dir(&dir)
+            .map_err(|e| format!("read {}: {e}", dir.display()))?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let child = format!("{rel}/{}", e.file_name().to_string_lossy());
+            let ft = e
+                .file_type()
+                .map_err(|err| format!("stat {}: {err}", e.path().display()))?;
+            if ft.is_dir() && !ft.is_symlink() {
+                walk(parsed, root, &child, seen)?;
+                continue;
+            }
+            let changed = || {
+                format!("the World Source changed during compilation: {child} was not inventoried by the parse stage; refusing to package bytes that were not checked")
+            };
+            let Some(file) = parsed.files.get(&child) else {
+                return Err(changed());
+            };
+            if !ft.is_file() {
+                return Err(changed());
+            }
+            let bytes = fs::read(e.path()).map_err(|err| format!("read {child}: {err}"))?;
+            if bytes != file.text.as_bytes() {
+                return Err(format!("the World Source changed during compilation: {child} differs from the bytes the parse stage read and the contract tests ran; refusing to package it"));
+            }
+            seen.push(child);
         }
-        if ft.is_dir() {
-            copy_tree(&e.path(), &to.join(&name))?;
-        } else {
-            let bytes =
-                fs::read(e.path()).map_err(|err| format!("read {}: {err}", e.path().display()))?;
-            write(&to.join(&name), &bytes)?;
+        Ok(())
+    }
+    let mut seen = Vec::new();
+    for d in COPIED_DIRS {
+        if root.join(d).is_dir() {
+            walk(parsed, root, d, &mut seen)?;
         }
+    }
+    if let Some(gone) = parsed
+        .files
+        .keys()
+        .filter(|rel| is_copied(rel))
+        .find(|rel| !seen.contains(rel))
+    {
+        return Err(format!(
+            "the World Source changed during compilation: {gone} is gone; refusing to package"
+        ));
     }
     Ok(())
 }
@@ -276,26 +331,66 @@ fn fail(m: String) -> StageRun {
     )])
 }
 
-fn package(cx: &Context, tmp: &Path) -> Result<String, String> {
-    let g = cx.generated.as_ref().ok_or("generate did not run")?;
-    let diff = cx.diff.as_ref().ok_or("diff did not run")?;
+/// Everything one packaging writes into a Build directory.
+pub struct Contents<'a> {
+    /// Generated `contracts.json`, manual and SDK.
+    pub generated: &'a Generated,
+    /// The ContractDiff written as `contract_diff.json`; its `previous` enters the manifest.
+    pub diff: &'a ContractDiff,
+    /// The contract-test report written as `tests.json`.
+    pub tests: &'a TestReport,
+    /// The parse-stage inventory whose bytes fill the copied directories.
+    pub parsed: &'a Parsed,
+    /// The World Source directory, re-read to refuse a tree that changed during compilation.
+    pub root: &'a Path,
+    /// The flag of an experimental Build (compiler.md section 10); `None` for a Build.
+    pub experimental_flag: Option<&'a str>,
+    /// Files a flag adds (path relative to the Build, bytes); each must not exist already.
+    pub extra: &'a [(&'a str, Vec<u8>)],
+}
+
+impl<'a> Contents<'a> {
+    /// The contents of an ordinary Build from the context of a run through generate.
+    pub fn of(cx: &'a Context) -> Result<Contents<'a>, String> {
+        Ok(Contents {
+            generated: cx.generated.as_ref().ok_or("generate did not run")?,
+            diff: cx.diff.as_ref().ok_or("diff did not run")?,
+            tests: cx
+                .tests
+                .as_ref()
+                .ok_or("contract tests did not run; a Build carries tests.json")?,
+            parsed: cx.parsed.as_ref().ok_or("parse did not run")?,
+            root: cx.root,
+            experimental_flag: None,
+            extra: &[],
+        })
+    }
+}
+
+fn fill(c: &Contents, tmp: &Path) -> Result<String, String> {
+    let g = c.generated;
     write(&tmp.join("contracts.json"), g.contracts_json.as_bytes())?;
-    write(&tmp.join("contract_diff.json"), diff.to_json().as_bytes())?;
+    write(&tmp.join("contract_diff.json"), c.diff.to_json().as_bytes())?;
     write(&tmp.join("manual.md"), g.manual.as_bytes())?;
     fs::create_dir_all(tmp.join("sdk")).map_err(|e| format!("create sdk/: {e}"))?;
     for (rel, text) in &g.sdk {
         write(&tmp.join("sdk").join(rel), text.as_bytes())?;
     }
-    for d in COPIED_DIRS {
-        copy_tree(&cx.root.join(d), &tmp.join(d))?;
+    verify_unchanged(c.parsed, c.root)?;
+    write_sources(c.parsed, tmp)?;
+    for (rel, bytes) in c.extra {
+        let path = tmp.join(rel);
+        if path.exists() {
+            return Err(format!(
+                "the World Source already has {rel}, which an experimental Build reserves"
+            ));
+        }
+        write(&path, bytes)?;
     }
-    let tests = cx
-        .tests
-        .as_ref()
-        .ok_or("contract tests did not run; a Build carries tests.json")?;
-    write(&tmp.join("tests.json"), tests_json(tests)?.as_bytes())?;
-    let previous = diff.previous.clone().filter(|p| p.starts_with("sha256:"));
-    let manifest = Manifest::from_contracts(&g.contracts, previous);
+    write(&tmp.join("tests.json"), tests_json(c.tests)?.as_bytes())?;
+    let previous = c.diff.previous.clone().filter(|p| p.starts_with("sha256:"));
+    let mut manifest = Manifest::from_contracts(&g.contracts, previous);
+    manifest.experimental_flag = c.experimental_flag.map(str::to_string);
     write(&tmp.join("manifest.kvx"), manifest.render(None).as_bytes())?;
     let hex = cwr_kernel::Build::compute_hash(tmp).map_err(|e| e.to_string())?;
     write(
@@ -311,6 +406,82 @@ fn package(cx: &Context, tmp: &Path) -> Result<String, String> {
     Ok(hex)
 }
 
+/// Packages `c` into `<out>/<hex>` (compiler.md section 7): every file is written one level
+/// below a private staging directory of `out`, so that no directory directly under `out` ever
+/// holds a `manifest.kvx` before it is the finished Build; the manifest is written last with
+/// the hash; the result is re-verified, sealed read-only and renamed into place. An existing
+/// `<out>/<hex>` that verifies is reported as already built; one that does not verify is an
+/// error. Both are left untouched. The ordinary package stage and experimental Builds both
+/// package through this function.
+pub fn package_into(out: &Path, c: &Contents) -> Result<Built, String> {
+    fs::create_dir_all(out)
+        .map_err(|e| format!("cannot create the Build root {}: {e}", out.display()))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    // A racing compilation of the same world scans the Build root for its previous Build
+    // (diff stage) and must not pick up a half-written one.
+    let holder = out.join(format!(".tmp-{}-{nanos}", std::process::id()));
+    let tmp = holder.join("build");
+    let result = stage_and_rename(out, c, &tmp);
+    discard(&holder);
+    let (hex, already) = result?;
+    let target = out.join(&hex);
+    let built = Built {
+        hash: format!("sha256:{hex}"),
+        dir: target.display().to_string(),
+        already_built: already,
+    };
+    if already {
+        return Ok(built);
+    }
+    let _ = fs::File::open(out).and_then(|d| d.sync_all());
+    verify(&target)
+        .map_err(|m| format!("compiler defect: the packaged Build does not verify: {m}"))?;
+    if !sealed(&target) {
+        return Err(format!(
+            "Build {} has a writable file after sealing",
+            target.display()
+        ));
+    }
+    Ok(built)
+}
+
+/// Fills `tmp`, then seals and renames it to `<out>/<hex>`. Returns the hex and whether a
+/// verifying Build of that hash already existed.
+fn stage_and_rename(out: &Path, c: &Contents, tmp: &Path) -> Result<(String, bool), String> {
+    fs::create_dir_all(tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    let hex = fill(c, tmp)?;
+    let target = out.join(&hex);
+    let untouched = |m: String| {
+        format!(
+            "the output directory {} exists and does not verify: {m}; left untouched",
+            target.display()
+        )
+    };
+    if target.exists() {
+        return verify(&target)
+            .map(|_| (hex.clone(), true))
+            .map_err(untouched);
+    }
+    seal(tmp)?;
+    if let Err(e) = fs::rename(tmp, &target) {
+        // A racing build of the same source may have renamed first.
+        return if target.exists() {
+            verify(&target)
+                .map(|_| (hex.clone(), true))
+                .map_err(untouched)
+        } else {
+            Err(format!(
+                "cannot rename the packaged Build to {}: {e}",
+                target.display()
+            ))
+        };
+    }
+    Ok((hex, false))
+}
+
 /// The package stage.
 pub fn run_stage(cx: &mut Context) -> StageRun {
     let out = cx
@@ -318,89 +489,12 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
         .out
         .clone()
         .unwrap_or_else(|| PathBuf::from("build"));
-    if let Err(e) = fs::create_dir_all(&out) {
-        return fail(format!(
-            "cannot create the Build root {}: {e}",
-            out.display()
-        ));
-    }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    // The Build is assembled one level below a private staging directory, so that no directory
-    // directly under the Build root ever holds a manifest.kvx before it is the finished, sealed
-    // Build: a racing compilation of the same world scans the Build root for its previous Build
-    // (diff stage) and must not pick up a half-written one.
-    let holder = out.join(format!(".tmp-{}-{nanos}", std::process::id()));
-    let tmp = holder.join("build");
-    if let Err(e) = fs::create_dir_all(&tmp) {
-        discard(&holder);
-        return fail(format!("cannot create {}: {e}", tmp.display()));
-    }
-    let hex = match package(cx, &tmp) {
-        Ok(h) => h,
-        Err(m) => {
-            discard(&holder);
-            return fail(m);
+    match Contents::of(cx).and_then(|c| package_into(&out, &c)) {
+        Ok(built) => {
+            cx.built = Some(built);
+            StageRun::Passed
         }
-    };
-    let finalize = |cx: &mut Context, already: bool| {
-        cx.built = Some(Built {
-            hash: format!("sha256:{hex}"),
-            dir: out.join(&hex).display().to_string(),
-            already_built: already,
-        });
-        StageRun::Passed
-    };
-    let target = out.join(&hex);
-    let existing = |target: &Path| -> Option<Result<(), String>> {
-        if target.exists() {
-            Some(verify(target).map(|_| ()))
-        } else {
-            None
-        }
-    };
-    if let Some(r) = existing(&target) {
-        discard(&holder);
-        return match r {
-            Ok(()) => finalize(cx, true),
-            Err(m) => fail(format!(
-                "the output directory {} exists and does not verify: {m}; left untouched",
-                target.display()
-            )),
-        };
-    }
-    if let Err(m) = seal(&tmp) {
-        discard(&holder);
-        return fail(m);
-    }
-    if let Err(e) = fs::rename(&tmp, &target) {
-        discard(&holder);
-        // A racing build of the same source may have renamed first.
-        return match existing(&target) {
-            Some(Ok(())) => finalize(cx, true),
-            Some(Err(m)) => fail(format!(
-                "the output directory {} exists and does not verify: {m}; left untouched",
-                target.display()
-            )),
-            None => fail(format!(
-                "cannot rename the packaged Build to {}: {e}",
-                target.display()
-            )),
-        };
-    }
-    discard(&holder);
-    let _ = fs::File::open(&out).and_then(|d| d.sync_all());
-    match verify(&target) {
-        Ok(_) if sealed(&target) => finalize(cx, false),
-        Ok(_) => fail(format!(
-            "Build {} has a writable file after sealing",
-            target.display()
-        )),
-        Err(m) => fail(format!(
-            "compiler defect: the packaged Build does not verify: {m}"
-        )),
+        Err(m) => fail(m),
     }
 }
 
@@ -496,5 +590,58 @@ mod tests {
         ] {
             assert_eq!(rec(&bad), None, "{bad:?}");
         }
+    }
+
+    /// The package stage ships the bytes the earlier stages checked: a copied directory that
+    /// changed after parse (edited, added, linked or removed file) refuses packaging.
+    #[test]
+    fn packaging_refuses_a_source_that_changed_after_parse() {
+        use crate::parse::{File, Parsed};
+        use cwr_contract::FileClass;
+        let d = std::env::temp_dir().join(format!("cwr-pkg-unchanged-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        write(&d.join("lib/a.py"), b"X = 1\n").unwrap();
+        write(&d.join("contracts/a.kvx"), b"not copied\n").unwrap();
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            "lib/a.py".to_string(),
+            File {
+                class: FileClass::Lib,
+                module: Some("a".into()),
+                text: "X = 1\n".into(),
+            },
+        );
+        let parsed = Parsed {
+            files,
+            docs: Default::default(),
+            model: None,
+            deferred: Vec::new(),
+        };
+        assert_eq!(verify_unchanged(&parsed, &d), Ok(()));
+        let out = d.join("out");
+        write_sources(&parsed, &out).unwrap();
+        assert_eq!(fs::read(out.join("lib/a.py")).unwrap(), b"X = 1\n");
+        assert!(out.join("migrations").is_dir() && !out.join("contracts").exists());
+        fs::remove_dir_all(&out).unwrap();
+        write(&d.join("lib/a.py"), b"X = 2\n").unwrap();
+        assert!(verify_unchanged(&parsed, &d)
+            .unwrap_err()
+            .contains("lib/a.py differs"));
+        write(&d.join("lib/a.py"), b"X = 1\n").unwrap();
+        write(&d.join("lib/__pycache__/a.pyc"), b"\0").unwrap();
+        assert!(verify_unchanged(&parsed, &d)
+            .unwrap_err()
+            .contains("lib/__pycache__/a.pyc was not inventoried"));
+        fs::remove_dir_all(d.join("lib/__pycache__")).unwrap();
+        std::os::unix::fs::symlink("/etc/hostname", d.join("lib/b.py")).unwrap();
+        assert!(verify_unchanged(&parsed, &d)
+            .unwrap_err()
+            .contains("lib/b.py was not inventoried"));
+        fs::remove_file(d.join("lib/b.py")).unwrap();
+        fs::remove_file(d.join("lib/a.py")).unwrap();
+        assert!(verify_unchanged(&parsed, &d)
+            .unwrap_err()
+            .contains("lib/a.py is gone"));
+        let _ = fs::remove_dir_all(&d);
     }
 }

@@ -147,9 +147,10 @@ pub fn contracts_value(parsed: &Parsed) -> Result<Value, String> {
         .map(|c| json!({"code": c.as_str(), "meaning": meaning(*c), "guidance": c.guidance(), "retry_after": *c == Code::RateLimited}))
         .collect();
     let mut state = Map::new();
-    for (_, file) in parsed.of_class(FileClass::Lib) {
+    for (path, file) in parsed.of_class(FileClass::Lib) {
         if let Some(m) = &file.module {
-            state.insert(m.clone(), Value::String(state_shape(&file.text)));
+            let shape = state_shape(&file.text).map_err(|e| format!("{path}: {e}"))?;
+            state.insert(m.clone(), Value::String(shape));
         }
     }
     let mut releases: Vec<&cwr_contract::Release> = model.changelog.releases.iter().collect();

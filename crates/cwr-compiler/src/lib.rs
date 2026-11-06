@@ -8,7 +8,7 @@
 //! failing stage stops the run; its report lists every diagnostic of that stage and nothing
 //! from later stages. All eight stages are implemented: the front end (task 1.1), contract
 //! tests, diff and changelog gate (task 1.2), generate ([`manifest`], [`generate`]) and package
-//! ([`package`]) (task 1.3). A stage reported as `pending` stops the run without writing anything.
+//! ([`package`]) (task 1.3).
 //!
 //! Stage of each diagnostic class (compiler.md sections 2 and 3, world-source.md section 14):
 //!
@@ -22,8 +22,7 @@
 //! source print identical reports.
 //!
 //! Exit codes (compiler.md section 9): 0 success; 2 parse or resolve; 3 lint; 4 contract
-//! tests; 5 diff; 6 changelog gate; 7 package; 1 any other error, including reaching a stage
-//! this revision does not implement.
+//! tests; 5 diff; 6 changelog gate; 7 package; 1 any other error.
 
 #![warn(missing_docs)]
 
@@ -271,9 +270,7 @@ pub enum StageStatus {
     Passed,
     /// Ran and reported at least one diagnostic; the run stopped here.
     Failed,
-    /// Not implemented in this compiler revision; the run stopped here without output.
-    Pending,
-    /// Not run because an earlier stage failed or stopped, or the run ended earlier.
+    /// Not run because an earlier stage failed, or the run ended earlier.
     NotRun,
 }
 
@@ -283,7 +280,6 @@ impl StageStatus {
         match self {
             StageStatus::Passed => "passed",
             StageStatus::Failed => "failed",
-            StageStatus::Pending => "pending",
             StageStatus::NotRun => "not_run",
         }
     }
@@ -294,7 +290,7 @@ impl StageStatus {
 pub struct StageReport {
     /// The stage this entry describes.
     pub stage: Stage,
-    /// Whether it passed, failed, stopped or did not run.
+    /// Whether it passed, failed or did not run.
     pub status: StageStatus,
     /// Its sorted diagnostics; empty unless `status` is `Failed`.
     pub diagnostics: Vec<Diagnostic>,
@@ -309,7 +305,7 @@ pub struct Report {
     pub through: Stage,
     /// One entry per stage, in execution order.
     pub stages: Vec<StageReport>,
-    /// The stage that stopped the run (failed or pending), if any.
+    /// The stage that failed and stopped the run, if any.
     pub stopped_at: Option<Stage>,
     /// Process exit code of `cwr build` (compiler.md section 9).
     pub exit_code: i32,
@@ -321,6 +317,54 @@ pub struct Report {
 }
 
 impl Report {
+    /// The report of a run over `root` through `through` before any stage has run: every
+    /// stage `not_run`, exit code 0 and the success summary.
+    pub fn start(root: &Path, through: Stage) -> Report {
+        Report {
+            source: root.display().to_string(),
+            through,
+            stages: Stage::ALL
+                .iter()
+                .map(|&stage| StageReport {
+                    stage,
+                    status: StageStatus::NotRun,
+                    diagnostics: Vec::new(),
+                })
+                .collect(),
+            stopped_at: None,
+            exit_code: 0,
+            summary: format!("ok: stages parse through {through} passed"),
+            build: None,
+        }
+    }
+
+    /// Records that `stage` passed.
+    pub fn pass(&mut self, stage: Stage) {
+        if let Some(r) = self.stages.iter_mut().find(|r| r.stage == stage) {
+            r.status = StageStatus::Passed;
+        }
+    }
+
+    /// Stops the run at `stage`: its diagnostics sorted and stamped with `stage`, the stage's
+    /// exit code (compiler.md section 9) and the failure summary.
+    pub fn fail(&mut self, stage: Stage, mut diags: Vec<Diagnostic>) {
+        sort_diagnostics(&mut diags);
+        for d in &mut diags {
+            d.stage = stage;
+        }
+        let n = diags.len();
+        if let Some(r) = self.stages.iter_mut().find(|r| r.stage == stage) {
+            r.status = StageStatus::Failed;
+            r.diagnostics = diags;
+        }
+        self.stopped_at = Some(stage);
+        self.exit_code = stage.exit_code();
+        self.summary = format!(
+            "failed at stage {stage}: {n} diagnostic{}; nothing written",
+            if n == 1 { "" } else { "s" }
+        );
+    }
+
     /// The entry for `stage`, or `None` when the report has none.
     pub fn stage(&self, stage: Stage) -> Option<&StageReport> {
         self.stages.iter().find(|s| s.stage == stage)
@@ -452,8 +496,6 @@ pub enum StageRun {
     Passed,
     /// The stage failed with these diagnostics.
     Failed(Vec<Diagnostic>),
-    /// The stage is not implemented in this compiler revision.
-    Pending,
 }
 
 /// Runs one stage against the context. A stage whose prerequisite has not run fails with
@@ -502,55 +544,22 @@ pub fn run_stage(stage: Stage, cx: &mut Context) -> StageRun {
 /// Runs the pipeline over a World Source directory up to `options.through`.
 pub fn compile(root: &Path, options: &Options) -> Report {
     let mut cx = Context::new(root, options);
-    let mut stages: Vec<StageReport> = Stage::ALL
-        .iter()
-        .map(|&stage| StageReport {
-            stage,
-            status: StageStatus::NotRun,
-            diagnostics: Vec::new(),
-        })
-        .collect();
-    let mut stopped_at = None;
-    let mut exit_code = 0;
-    let mut summary = format!("ok: stages parse through {} passed", options.through);
-    for report in &mut stages {
-        let stage = report.stage;
+    let mut report = Report::start(root, options.through);
+    for stage in Stage::ALL {
         if stage > options.through {
             break;
         }
         match run_stage(stage, &mut cx) {
-            StageRun::Passed => report.status = StageStatus::Passed,
-            StageRun::Failed(mut diags) => {
-                sort_diagnostics(&mut diags);
-                for d in &mut diags {
-                    d.stage = stage;
-                }
-                let n = diags.len();
-                report.status = StageStatus::Failed;
-                report.diagnostics = diags;
-                stopped_at = Some(stage);
-                exit_code = stage.exit_code();
-                summary = format!(
-                    "failed at stage {stage}: {n} diagnostic{}; nothing written",
-                    if n == 1 { "" } else { "s" }
-                );
-                break;
-            }
-            StageRun::Pending => {
-                report.status = StageStatus::Pending;
-                stopped_at = Some(stage);
-                exit_code = 1;
-                summary = format!(
-                    "stopped at stage {stage}: not implemented in this compiler revision ({}); stages before it passed; no Build written",
-                    env!("CARGO_PKG_VERSION")
-                );
+            StageRun::Passed => report.pass(stage),
+            StageRun::Failed(diags) => {
+                report.fail(stage, diags);
                 break;
             }
         }
     }
     if let Some(b) = &cx.built {
-        if exit_code == 0 {
-            summary = format!(
+        if report.exit_code == 0 {
+            report.summary = format!(
                 "{} {} at {}",
                 if b.already_built {
                     "already built:"
@@ -562,15 +571,8 @@ pub fn compile(root: &Path, options: &Options) -> Report {
             );
         }
     }
-    Report {
-        source: root.display().to_string(),
-        through: options.through,
-        stages,
-        stopped_at,
-        exit_code,
-        summary,
-        build: cx.built.clone(),
-    }
+    report.build = cx.built;
+    report
 }
 
 #[cfg(test)]
@@ -582,7 +584,6 @@ mod tests {
         for s in [
             StageStatus::Passed,
             StageStatus::Failed,
-            StageStatus::Pending,
             StageStatus::NotRun,
         ] {
             assert_eq!(serde_json::to_value(s).ok(), Some(s.as_str().into()));

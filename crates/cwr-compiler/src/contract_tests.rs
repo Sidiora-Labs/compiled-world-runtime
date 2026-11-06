@@ -21,10 +21,12 @@
 //! pure, and its result validates against the new typed state records. Every migration named
 //! by the newest release must have migration fixtures.
 //!
-//! The whole suite runs twice, in two fresh worker processes, with the same seeds; the two
-//! outcome streams, compared as (status, shape, side-effect class) per case, must be equal
-//! (the compile-time half of clause 1.6). A failure names the primitive and is located at the
-//! fixture case or the contract section concerned.
+//! The whole suite runs twice, in two fresh worker processes sharing one scratch directory,
+//! with the same seeds; the two outcome streams, compared as (status, shape, side-effect class)
+//! per case, the per-case results and the failures found must be equal (the compile-time half
+//! of clause 1.6), and a failure found only by the second run is reported with those of the
+//! first. A defect in a case's `prior` calls fails the case. A failure names the primitive and
+//! is located at the fixture case or the contract section concerned.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;

@@ -24,17 +24,17 @@
 //!      `state_shape` change. This is `[meta].coverage_rule_doc`, with module-level `doc_only`
 //!      changes added so one change can declare several reworded docs of a module.
 //!    * A `manual/` prose entry (`prose_entries`; world-source.md section 11 counts `manual/`
-//!      prose under `doc_only`) is covered by any change of the newest release: prose is
-//!      world-wide and names no single target, and a release that changes rules rewrites the
-//!      prose describing them. A release whose only difference is prose needs a `doc_only`
-//!      change; its target is `manual`, the region (`manual/conventions.md`), or the primitive,
-//!      adapter or module the prose describes.
+//!      prose under `doc_only`) is covered by a `doc_only` change of the newest release that
+//!      names the prose (see step 5), or by any rule change (any kind but `doc_only`) of the
+//!      newest release: a release that changes rules rewrites the prose describing them. A
+//!      `doc_only` change on an unrelated target does not cover prose.
 //! 4. Every `state_shape` entry needs a `state_shape` change for the module naming an
 //!    existing file under `migrations/`; otherwise CWR-M001.
 //! 5. A change of the newest release that matches no diff entry is refused: the changelog may
 //!    not announce a change that did not happen. A `doc_only` change matches a doc entry on its
-//!    target or module, or a prose entry when its target is `manual`, a prose region, or a
-//!    primitive, adapter or module of this source; a
+//!    target or module, or a prose entry when its target is `manual`, exactly that prose region,
+//!    or a primitive, adapter or module of this source that the region's text (before or after
+//!    the change) names; a
 //!    `state_shape` change matches the module's state-shape entry; any other change matches an
 //!    entry of the same kind, or a `params` entry, on its target or within its module.
 //!
@@ -53,8 +53,9 @@ fn target_matches(change_target: &str, entry: &Entry) -> bool {
     change_target == entry.target || change_target == entry.module()
 }
 
-/// Whether `target` names something a prose `doc_only` change may describe: `manual`, a prose
-/// region, or a primitive, adapter or module of this source.
+/// Whether a `doc_only` change on `target` names the prose of entry `entry`: `target` is
+/// `manual`, exactly the entry's region, or a primitive, adapter or module of this source that
+/// the region names before or after the change (`fs` is named by `fs.write`).
 fn prose_target(target: &str, entry: &Entry, parsed: &Parsed) -> bool {
     if target_matches(target, entry) {
         return true;
@@ -62,7 +63,7 @@ fn prose_target(target: &str, entry: &Entry, parsed: &Parsed) -> bool {
     let Some(model) = parsed.model.as_ref() else {
         return false;
     };
-    model.world.world.modules.iter().any(|m| m == target)
+    let known = model.world.world.modules.iter().any(|m| m == target)
         || model
             .contracts
             .iter()
@@ -70,7 +71,15 @@ fn prose_target(target: &str, entry: &Entry, parsed: &Parsed) -> bool {
         || model
             .adapters
             .iter()
-            .any(|a| a.adapters.iter().any(|x| x.name == target))
+            .any(|a| a.adapters.iter().any(|x| x.name == target));
+    let names = |v: &Option<serde_json::Value>| {
+        v.as_ref().and_then(|v| v.as_str()).is_some_and(|text| {
+            text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+                .map(|w| w.trim_end_matches('.'))
+                .any(|w| w == target || w.strip_prefix(target).is_some_and(|r| r.starts_with('.')))
+        })
+    };
+    known && (names(&entry.before) || names(&entry.after))
 }
 
 fn locate(parsed: &Parsed, file: &str, section: &str, key: Option<&str>) -> Location {
@@ -299,14 +308,17 @@ pub fn check(diff: &ContractDiff, parsed: &Parsed) -> Vec<Diagnostic> {
         }
     }
     for e in &diff.prose_entries {
-        if changes.is_empty() {
+        let covered = changes
+            .iter()
+            .any(|c| c.kind != ChangeKind::DocOnly || prose_target(&c.target, e, parsed));
+        if !covered {
             out.push(
                 Diagnostic::new(
                     Stage::ChangelogGate,
                     None,
                     "uncovered_entry",
                     rel_loc.clone(),
-                    format!("ContractDiff prose entry {} (bump patch) is not covered: release {} declares no change; add a doc_only change with target manual (or the primitive, adapter or module the prose describes)", e.label(), release.version),
+                    format!("ContractDiff prose entry {} (bump patch) is not covered by any change in release {}: add a doc_only change with target manual, {} or a primitive, adapter or module the prose names", e.label(), release.version, e.target),
                 )
                 .with_primitive(&e.target),
             );

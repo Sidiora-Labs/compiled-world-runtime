@@ -30,6 +30,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::clock::{TickConfig, WorldClock};
+use crate::envelope::{trace_item, turn_envelope, Failure, Resources};
 use crate::ledger::{history_view, Kind, Ledger, Outcome, PreconditionEval, RecordDraft, TailSize};
 use crate::rng::{Pcg32, RngState};
 use crate::snapshot::Snapshot;
@@ -347,45 +348,63 @@ impl Build {
             .and_then(Value::as_bool)
             .ok_or_else(|| bad("rng.seed_visible missing".into()))?;
         let mut primitives = BTreeMap::new();
-        let mut add = |p: &Value| {
-            if let Some(n) = p.get("name").and_then(Value::as_str) {
-                let preconditions = p
-                    .get("preconditions")
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|pc| {
-                                Some((
-                                    pc.get(0)?.as_str()?.to_string(),
-                                    pc.get(1)?.as_str()?.to_string(),
-                                ))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                primitives.insert(
-                    n.to_string(),
-                    PrimitiveInfo {
-                        side_effect: p
-                            .get("side_effect")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        returns: p
-                            .get("returns")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        params: p.get("params").cloned().unwrap_or(json!({})),
-                        preconditions,
-                    },
-                );
+        // Strict, like the contract table of the atomic check: a contract that lacks a field or
+        // carries a malformed precondition refuses the Build instead of being read partially.
+        let mut add = |p: &Value| -> Result<()> {
+            let n = p
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("a contracts.json entry lacks name".into()))?;
+            let field = |k: &str| {
+                p.get(k)
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| bad(format!("contracts.json: {n} lacks {k}")))
+            };
+            let side_effect = field("side_effect")?;
+            if !["read_only", "mutating", "external"].contains(&side_effect.as_str()) {
+                return Err(bad(format!(
+                    "contracts.json: {n} has side_effect {side_effect:?}"
+                )));
             }
+            let mut preconditions = Vec::new();
+            for pc in p
+                .get("preconditions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                match (
+                    pc.get(0).and_then(Value::as_str),
+                    pc.get(1).and_then(Value::as_str),
+                ) {
+                    (Some(src), Some(code)) if code.parse::<Code>().is_ok() => {
+                        preconditions.push((src.to_string(), code.to_string()))
+                    }
+                    _ => {
+                        return Err(bad(format!(
+                            "contracts.json: {n} has a malformed precondition {pc}"
+                        )))
+                    }
+                }
+            }
+            primitives.insert(
+                n.to_string(),
+                PrimitiveInfo {
+                    side_effect,
+                    returns: field("returns")?,
+                    params: p.get("params").cloned().unwrap_or(json!({})),
+                    preconditions,
+                },
+            );
+            Ok(())
         };
         for list in ["primitives", "adapters"] {
             if let Some(items) = contracts.get(list).and_then(Value::as_array) {
                 for item in items {
-                    add(item);
+                    if item.get("name").is_some() {
+                        add(item)?;
+                    }
                     for nested in ["primitives", "adapters"] {
                         for p in item
                             .get(nested)
@@ -393,7 +412,7 @@ impl Build {
                             .into_iter()
                             .flatten()
                         {
-                            add(p);
+                            add(p)?;
                         }
                     }
                 }
@@ -411,7 +430,7 @@ impl Build {
                 .into_iter()
                 .flatten()
             {
-                add(p);
+                add(p)?;
             }
         }
         Ok(Build {
@@ -719,6 +738,9 @@ pub struct CreateOptions {
     pub initial: Option<Value>,
     /// Whether an experimental Build may be used.
     pub allow_experimental: bool,
+    /// Digest of the cassette set the harness replays against (`sha256:<64 hex>`), recorded in
+    /// the header as `cassette_digest` when present (experiments.md section 2); absent otherwise.
+    pub cassette_digest: Option<String>,
 }
 
 /// Default seed when `--seed` is absent: fixed so that an unseeded Instance is reproducible.
@@ -808,7 +830,10 @@ fn lock_dir(dir: &Path) -> Result<File> {
         .open(&p)
         .map_err(|e| io_err("open lock", &p, e))?;
     f.try_lock().map_err(|_| {
-        KernelError::State(format!("instance {} is busy (lock held)", dir.display()))
+        KernelError::Conflict(format!(
+            "instance {} is busy (lock held by another operation)",
+            dir.display()
+        ))
     })?;
     Ok(f)
 }
@@ -833,15 +858,57 @@ fn sha256_value(v: &Value) -> String {
 }
 
 impl Instance {
-    /// Directory of Instance `id` under `home`.
+    /// Directory of Instance `id` under `home`. The id is joined as given: callers holding
+    /// operator input use [`Instance::checked_dir`].
     pub fn dir_of(home: &Path, id: &str) -> PathBuf {
         instances_dir(home).join(id)
     }
 
+    /// Directory of Instance `id` under `home`, after checking that `id` is a ULID
+    /// ([`crate::is_ulid`]); anything else is refused, so operator input never escapes the store.
+    pub fn checked_dir(home: &Path, id: &str) -> Result<PathBuf> {
+        if !crate::is_ulid(id) {
+            return Err(KernelError::Refused(format!(
+                "{id:?} is not an Instance id (a 26-character ULID)"
+            )));
+        }
+        Ok(Self::dir_of(home, id))
+    }
+
     /// `cwr instance create`: verify the Build, write metadata, initial state and the header.
     pub fn create(home: &Path, build_dir: &Path, opts: CreateOptions) -> Result<Instance> {
+        Self::create_as(home, build_dir, opts, &crate::new_ulid())
+    }
+
+    /// [`Instance::create`] under an id chosen by the operator (`cwr instance replay --into`).
+    /// The id must be a ULID ([`crate::is_ulid`]) that names no Instance in `home` yet.
+    pub fn create_as(
+        home: &Path,
+        build_dir: &Path,
+        opts: CreateOptions,
+        id: &str,
+    ) -> Result<Instance> {
+        let dir = Self::checked_dir(home, id)?;
+        if dir.exists() {
+            return Err(KernelError::Refused(format!(
+                "an Instance {id} already exists in {}",
+                home.display()
+            )));
+        }
         let build = Build::load(build_dir)?;
         build.check_experimental(opts.allow_experimental)?;
+        if let Some(d) = &opts.cassette_digest {
+            let hex = d.strip_prefix("sha256:").unwrap_or("");
+            if hex.len() != 64
+                || !hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(KernelError::Refused(format!(
+                    "cassette digest {d:?} is not sha256:<64 lowercase hex>"
+                )));
+            }
+        }
         fs::create_dir_all(instances_dir(home)).map_err(|e| io_err("create", home, e))?;
         let home_abs = fs::canonicalize(home).map_err(|e| io_err("resolve", home, e))?;
         if home_abs.starts_with(&build.dir) {
@@ -898,8 +965,7 @@ impl Instance {
             .map(Pcg32::from_state)
             .unwrap_or_else(|| Pcg32::seeded(seed));
 
-        let id = crate::new_ulid();
-        let dir = Self::dir_of(home, &id);
+        let id = id.to_string();
         fs::create_dir(&dir).map_err(|e| io_err("create", &dir, e))?;
         sync_dir(&instances_dir(home))?;
         let lock = lock_dir(&dir)?;
@@ -940,6 +1006,10 @@ impl Instance {
             .with("model", json!(opts.model))
             .with("created_from", json!(created_from))
             .with("initial_state", json!(state_hash));
+        let header = match &opts.cassette_digest {
+            Some(d) => header.with("cassette_digest", json!(d)),
+            None => header,
+        };
         let rec = ledger.append(header)?;
         meta.status = "idle".into();
         meta.chain = rec["chain"].as_str().unwrap_or_default().to_string();
@@ -963,7 +1033,7 @@ impl Instance {
     /// Opens an Instance for operation: lock, verify the Build hash, strict ledger scan,
     /// metadata and state consistency.
     pub fn open(home: &Path, id: &str) -> Result<Instance> {
-        let dir = Self::dir_of(home, id);
+        let dir = Self::checked_dir(home, id)?;
         if !dir.is_dir() {
             return Err(KernelError::Refused(format!("no instance {id}")));
         }
@@ -1025,7 +1095,7 @@ impl Instance {
 
     /// The model-facing ledger tail (component 3 of the context).
     pub fn tail(&self) -> String {
-        crate::ledger::render_tail(&self.records, self.meta.tail_size)
+        crate::surface::tail::render(&self.records, self.meta.tail_size)
     }
 
     /// `world.history(n)`.
@@ -1072,11 +1142,17 @@ impl Instance {
         Ok(rec)
     }
 
+    /// Marks every record this handle appends from now on with `"language_guard": false`
+    /// (the operator diagnostic that switches off the sandbox's in-interpreter layer).
+    pub fn mark_language_guard_off(&mut self) {
+        self.ledger.mark_language_guard_off();
+    }
+
     /// Starts a turn: `idle` to `in_turn`; returns the turn number records will carry.
     pub fn begin_turn(&mut self) -> Result<u64> {
         if self.meta.status != "idle" {
-            return Err(KernelError::State(format!(
-                "CONFLICT: instance is {}, not idle",
+            return Err(KernelError::Conflict(format!(
+                "instance is {}, not idle",
                 self.meta.status
             )));
         }
@@ -1119,9 +1195,35 @@ impl Instance {
         Ok(rec)
     }
 
+    /// Ends the open turn as refused before anything executed (the turn protocol): appends
+    /// `draft`, which must be the `turn` record of the open turn, without advancing world time,
+    /// and returns to `idle`. Anything else is [`KernelError::Refused`] and nothing is written.
+    pub fn end_turn_refused(&mut self, draft: RecordDraft) -> Result<Value> {
+        let n = self
+            .current_turn
+            .ok_or_else(|| KernelError::State("no turn in progress".into()))?;
+        if draft.kind != Kind::Turn || draft.turn != n {
+            return Err(KernelError::Refused(format!(
+                "a refused turn {n} is closed only by its own turn record"
+            )));
+        }
+        let rec = self.ledger.append(draft)?;
+        self.meta.turn = n;
+        self.meta.status = "idle".into();
+        self.current_turn = None;
+        self.sync_meta_from_record(&rec)?;
+        Ok(rec)
+    }
+
     /// A kernel-direct turn over the kernel-owned `world.*` facilities, without a sandbox.
     /// Each call is validated, its precondition evaluated, executed, ticked and recorded
     /// durably before `on_result` sees its result; the turn ends with a `turn` record.
+    ///
+    /// A probe is a real turn, not a read-only inspection: it advances the turn counter and
+    /// `world_time` (by `tick_per_primitive` per executed call and `tick_per_turn` at the end),
+    /// every `world.random` call draws from the Instance's stream, and its records appear in the
+    /// model's ledger tail. It returns, and stores as the last result envelope, the standard
+    /// envelope shape of model-surface.md section 4 (`cpu_ms` is 0: no script ran).
     pub fn probe(
         &mut self,
         calls: &[ProbeCall],
@@ -1168,11 +1270,12 @@ impl Instance {
         };
         let limit = limit_of("primitive_calls")?;
         let adapter_limit = limit_of("adapter_calls")?;
+        let turn_started = Instant::now();
         let turn = self.begin_turn()?;
         let mut made = 0u64;
         let mut returned = Vec::new();
         let mut trace = Vec::new();
-        let mut failure: Option<Code> = None;
+        let mut failure: Option<Failure> = None;
         let mut mutated = false;
         for (c, (facility, info)) in calls.iter().zip(resolved) {
             let started = Instant::now();
@@ -1211,28 +1314,26 @@ impl Instance {
                         Facility::Now => json!(self.clock.now()),
                         Facility::Version => json!(self.build.version),
                         Facility::Seed => json!(self.meta.seed),
+                        // The same records the sandboxed path returns (manual records Limits and
+                        // LedgerRecord), so a probe and a script observe one world.
                         Facility::Limits => {
-                            let mut l: Map<String, Value> = self
-                                .build
-                                .limits
-                                .iter()
-                                .map(|(k, v)| (k.clone(), json!(v)))
-                                .collect();
-                            l.insert(
-                                "tick_per_primitive".into(),
-                                json!(self.build.clock.tick_per_primitive),
-                            );
-                            l.insert(
-                                "tick_per_turn".into(),
-                                json!(self.build.clock.tick_per_turn),
-                            );
-                            l.insert("remaining".into(), json!({"primitive_calls": limit - made, "adapter_calls": adapter_limit}));
-                            Value::Object(l)
+                            let budget = crate::limits::Budget {
+                                primitive_calls: made,
+                                adapter_calls: 0,
+                            };
+                            budget.limits_record(
+                                &crate::limits::Limits::of(&self.build)?,
+                                self.build.clock.tick_per_primitive,
+                                self.build.clock.tick_per_turn,
+                            )
                         }
                         Facility::Random => json!(self.rng.next_u32()),
-                        Facility::History => {
-                            Value::Array(self.history(c.params["n"].as_u64().unwrap_or(0) as usize))
-                        }
+                        Facility::History => Value::Array(
+                            self.history(c.params["n"].as_u64().unwrap_or(0) as usize)
+                                .iter()
+                                .map(crate::contract_check::ledger_record_view)
+                                .collect(),
+                        ),
                     };
                     self.clock.advance_primitive()?;
                     draft.world_time = self.clock.now();
@@ -1245,6 +1346,8 @@ impl Instance {
             draft.duration_us = started.elapsed().as_micros() as u64;
             let ok = draft.outcome.as_ref().map(|o| o.ok).unwrap_or(false);
             let code = draft.outcome.as_ref().and_then(|o| o.code);
+            let over_limit = draft.extra.contains_key("limit");
+            let failed_precondition = draft.preconditions.iter().any(|p| !p.passed);
             let rec = self.append(draft, None)?;
             let item = json!({
                 "primitive": c.primitive,
@@ -1254,33 +1357,57 @@ impl Instance {
                 "returned": result,
             });
             on_result(&item);
-            trace.push(json!({"primitive": c.primitive, "status": item["status"], "code": item["code"], "world_time": item["world_time"]}));
+            trace.push(trace_item(
+                &c.primitive,
+                code,
+                rec["world_time"].as_u64().unwrap_or(0),
+                true,
+            ));
             returned.push(item["returned"].clone());
             if !ok {
-                failure = code;
+                let code = code.unwrap_or(Code::Invalid);
+                failure = Some(if over_limit {
+                    Failure::limit(
+                        &c.primitive,
+                        "primitive_calls",
+                        format!("the turn already made its {limit} primitive calls"),
+                    )
+                } else if failed_precondition {
+                    Failure::precondition(
+                        code,
+                        &c.primitive,
+                        1,
+                        format!("precondition 1 `{HISTORY_PRECONDITION}` was false"),
+                    )
+                } else {
+                    Failure::new(
+                        code,
+                        &c.primitive,
+                        format!("{} parameters do not match its contract", c.primitive),
+                    )
+                });
                 break;
             }
         }
-        let status = match (failure, mutated) {
-            (None, _) => "ok",
-            (Some(_), true) => "partial",
-            (Some(_), false) => "error",
-        };
+        let status = crate::envelope::turn_status(failure.is_some(), mutated);
         let returned = Value::Array(returned);
-        let resources = json!({
-            "primitive_calls": made,
-            "adapter_calls": 0,
-            "remaining": {"primitive_calls": limit.saturating_sub(made), "adapter_calls": adapter_limit},
-        });
-        let rec = self.end_turn(status, failure, made, &returned, resources.clone())?;
-        Ok(json!({
-            "status": status,
-            "returned": returned,
-            "error": failure.map(|c| c.as_str()),
-            "trace": trace,
-            "world": {"version": self.build.version, "build": self.build.hash, "time": rec["world_time"], "turn": rec["turn"]},
-            "resources": resources,
-        }))
+        let resources = Resources {
+            cpu_ms: 0,
+            wall_ms: turn_started.elapsed().as_millis() as u64,
+            primitive_calls: made,
+            adapter_calls: 0,
+            remaining_primitive_calls: limit.saturating_sub(made),
+            remaining_adapter_calls: adapter_limit,
+        };
+        let code = failure.as_ref().map(|f| f.code);
+        let rec = self.end_turn(status, code, made, &returned, resources.ledger_json())?;
+        let world = json!({"version": self.build.version, "build": self.build.hash, "time": rec["world_time"], "turn": rec["turn"]});
+        let env = turn_envelope(status, returned, failure.as_ref(), trace, world, &resources);
+        write_atomic(
+            &self.dir.join(crate::executor::LAST_ENVELOPE),
+            format!("{}\n", canonical_json(&env)).as_bytes(),
+        )?;
+        Ok(env)
     }
 
     fn params_valid(&self, primitive: &str, params: &Value) -> bool {
@@ -1332,7 +1459,7 @@ impl Instance {
     /// clock, turn, RNG and K, and append a `recovery` record. Accepts a ledger whose final
     /// record is truncated: this is the explicit recovery path.
     pub fn restore(home: &Path, id: &str, reference: &str) -> Result<(Instance, Value)> {
-        let dir = Self::dir_of(home, id);
+        let dir = Self::checked_dir(home, id)?;
         if !dir.is_dir() {
             return Err(KernelError::Refused(format!("no instance {id}")));
         }
@@ -1469,9 +1596,27 @@ impl Instance {
         Ok((inst, rec))
     }
 
+    /// Instance-directory entries `destroy` releases: the state store, snapshots, the adapter
+    /// gateway's idempotency store, recorded turn inputs, the recovery and commit files, stored
+    /// notices and the last result envelope. The ledger, the metadata, retained ledger lineages,
+    /// a defect seal and the proposal outbox (which only the human owner reads) are kept.
+    pub const RELEASED_ON_DESTROY: [&'static str; 9] = [
+        "objects",
+        "snapshots",
+        crate::gateway::GATEWAY_DIR,
+        crate::replay::SCRIPTS_DIR,
+        crate::notice::NOTICE_DIR,
+        crate::recovery::INFLIGHT_FILE,
+        crate::recovery::COMMIT_FILE,
+        crate::recovery::JOURNAL_FILE,
+        crate::executor::LAST_ENVELOPE,
+    ];
+
     /// `cwr instance destroy`: seal and retain the ledger, release state and snapshots.
+    /// Allowed only from `idle` (kernel.md section 2); an Instance a crash left mid-turn is
+    /// recovered first by the caller.
     pub fn destroy(home: &Path, id: &str) -> Result<InstanceMeta> {
-        let dir = Self::dir_of(home, id);
+        let dir = Self::checked_dir(home, id)?;
         if !dir.is_dir() {
             return Err(KernelError::Refused(format!("no instance {id}")));
         }
@@ -1483,13 +1628,19 @@ impl Instance {
                     "instance {id} is already destroyed"
                 )))
             }
-            "in_turn" => return Err(KernelError::State(format!("instance {id} is in a turn"))),
-            _ => {}
+            "idle" => {}
+            other => {
+                return Err(KernelError::Conflict(format!(
+                    "instance {id} is {other}; destroy needs an idle instance (run `cwr instance recover {id}` after a crash)"
+                )))
+            }
         }
-        for sub in ["objects", "snapshots"] {
+        for sub in Self::RELEASED_ON_DESTROY {
             let p = dir.join(sub);
-            if p.exists() {
+            if p.is_dir() {
                 fs::remove_dir_all(&p).map_err(|e| io_err("remove", &p, e))?;
+            } else if p.exists() {
+                fs::remove_file(&p).map_err(|e| io_err("remove", &p, e))?;
             }
         }
         meta.status = "destroyed".into();
@@ -1508,6 +1659,6 @@ impl Instance {
 
     /// Reads metadata without locking (for `show` on any Instance, including destroyed ones).
     pub fn read_meta(home: &Path, id: &str) -> Result<InstanceMeta> {
-        read_meta(&Self::dir_of(home, id))
+        read_meta(&Self::checked_dir(home, id)?)
     }
 }

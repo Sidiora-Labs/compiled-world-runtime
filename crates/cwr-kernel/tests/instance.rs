@@ -176,15 +176,120 @@ fn module_state_outside_build_and_unknown_module_refused() {
     drop(inst);
     // A second open while in_turn is allowed to read but a new turn is refused (CONFLICT).
     let mut inst = Instance::open(&h, &id).unwrap();
-    assert!(matches!(inst.begin_turn(), Err(KernelError::State(_))));
+    assert!(matches!(inst.begin_turn(), Err(KernelError::Conflict(_))));
 }
 
 #[test]
 fn concurrent_open_refused() {
     let h = home("lock");
     let inst = Instance::create(&h, &fixture_for("lock"), CreateOptions::default()).unwrap();
+    let refused = Instance::open(&h, &inst.meta.id);
+    assert!(matches!(refused, Err(KernelError::Conflict(_))));
+    assert_eq!(
+        refused.map(|_| ()).unwrap_err().exit_code(),
+        cwr_kernel::EXIT_CONFLICT
+    );
+}
+
+#[test]
+fn replay_reproduces_protocol_refusals_and_probe_turns() {
+    use cwr_kernel::replay::{self, ReplayInputs};
+    use cwr_kernel::surface::protocol;
+
+    let h = home("replay");
+    let build = fixture_for("replay");
+    let mut inst = Instance::create(
+        &h,
+        &build,
+        CreateOptions {
+            seed: Some(3),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let id = inst.meta.id.clone();
+    let message = "Two plans.\n```python\nx = 1\n```\n```python\ny = 2\n```\n";
+    let violation = protocol::extract_script(message).unwrap_err();
+    replay::record_refusal(&inst, &violation).unwrap();
+    let refused = protocol::refuse(&mut inst, &violation).unwrap();
+    assert_eq!(refused["error"]["primitive"], protocol::PROTOCOL_PRIMITIVE);
+    let calls = vec![
+        ProbeCall {
+            primitive: "world.random".into(),
+            params: json!({}),
+        },
+        ProbeCall {
+            primitive: "world.now".into(),
+            params: json!({}),
+        },
+    ];
+    replay::record_probe(&inst, &calls).unwrap();
+    let probed = inst.probe(&calls, |_| {}).unwrap();
+    assert_eq!(probed["status"], "ok");
+    assert_eq!(probed["resources"]["cpu_ms"], 0);
+    assert_eq!(probed["trace"][0]["content_guaranteed"], true);
+    let initial_hash = inst.records()[0]["initial_state"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drop(inst);
+
+    let dir = Instance::dir_of(&h, &id);
+    let initial: Value = serde_json::from_slice(
+        &cwr_kernel::ObjectStore::new(dir.join("objects"))
+            .get(&initial_hash)
+            .unwrap(),
+    )
+    .unwrap();
+    let inputs = ReplayInputs {
+        ledger: dir.join("ledger.jsonl"),
+        build_dir: build.clone(),
+        initial,
+        cassette: None,
+        scripts: dir.join(replay::SCRIPTS_DIR),
+        home: h.join("replayed"),
+        into: None,
+        opts: cwr_kernel::TurnOptions::default(),
+    };
+    let report = replay::replay(&inputs).unwrap();
+    assert_eq!(report.divergence, None);
+    assert_eq!(report.turns, 2);
+
+    // The marker holds the rule broken, never the message text.
+    let marker = replay::refusal_file(&dir.join(replay::SCRIPTS_DIR), 1);
+    assert!(!std::fs::read_to_string(&marker).unwrap().contains("Two plans"));
+    // Without the marker the refusal is named, not reported as a missing file.
+    std::fs::remove_file(marker).unwrap();
+    match replay::replay(&inputs) {
+        Err(KernelError::Refused(m)) => assert!(m.contains("turn 1 was a protocol refusal"), "{m}"),
+        other => panic!("expected a named refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn operator_ids_are_ulids_and_destroy_needs_idle() {
+    let h = home("ids");
+    for bad in ["../x", "a/b", "", "01M6RJAB"] {
+        assert!(matches!(
+            Instance::open(&h, bad),
+            Err(KernelError::Refused(_))
+        ));
+        assert!(matches!(
+            Instance::destroy(&h, bad),
+            Err(KernelError::Refused(_))
+        ));
+    }
+    let mut inst = Instance::create(&h, &fixture_for("ids"), CreateOptions::default()).unwrap();
+    let id = inst.meta.id.clone();
+    assert!(cwr_kernel::is_ulid(&id));
+    inst.begin_turn().unwrap();
+    kv_set(&mut inst, "a", "1");
+    drop(inst);
+    // Left `in_turn`: destroy refuses until recovery has run.
     assert!(matches!(
-        Instance::open(&h, &inst.meta.id),
-        Err(KernelError::State(_))
+        Instance::destroy(&h, &id),
+        Err(KernelError::Conflict(_))
     ));
+    let dir = Instance::dir_of(&h, &id);
+    assert!(dir.join("objects").is_dir());
 }

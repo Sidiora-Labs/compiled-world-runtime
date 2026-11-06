@@ -200,8 +200,12 @@ every case and the owner's acceptance. No hypothesis has a result yet.
 Read the recorded outcome of any case with:
 
 ```sh
-python3 tests/cwr/check_evidence.py --status CWR-019
+python3 tests/cwr/check_evidence.py --status CWR-019 || echo "CWR-019 has no accepted attempt: exit $?"
 ```
+
+The checker prints the derived status of the case, its deciding record and every stale or rejected
+record as JSON. It exits 0 when it derives the status from an intact registry and a current
+record, and 1 when the deciding record is stale or the evidence store is damaged.
 
 How a release is cut and what it must contain is in [RELEASE.md](RELEASE.md). Changes are recorded
 in [CHANGELOG.md](CHANGELOG.md).

@@ -353,11 +353,16 @@ matrix: 60 tasks, 10 seeds and every arm.
 | `analyse` | Run the analysis per hypothesis |
 | `report` | Render the research reports |
 
-```sh
-python3 "$REPO/benchmark/campaigns/h1h2.py" status
-```
+A campaign runs on a frozen copy of the task suite and the suite cassette set, taken when the
+campaign was registered and kept under `.cwr/campaign-1/frozen`. Their digests are registered in
+[benchmark/campaigns/h1.kvx](../../benchmark/campaigns/h1.kvx),
+[benchmark/campaigns/h2.kvx](../../benchmark/campaigns/h2.kvx) and the pre-registration, so a later
+edit under `benchmark/tasks` never reaches a running campaign. The copy is local state of the
+checkout that registered the campaign. A release bundle does not carry it, so the subcommands run
+in that checkout:
 
 ```text
+$ python3 benchmark/campaigns/h1h2.py status
 {
  "H1/drift-1": {
   "done": 0,
@@ -392,7 +397,7 @@ The checker also runs on its own and reports the recorded status of a case:
 python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019 || echo "CWR-019 has no accepted attempt: exit $?"
 ```
 
-> **Implemented, not yet qualified (CWR-019).** The runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) and the checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) are in the tree. The registry lists [20261106T143532Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T143532Z-1.json) as the latest CWR-019 record, but it was written under evidence schema version 1 and the checker now reports it stale, so CWR-019 has no accepted attempt until it is re-qualified.
+> **Verified (CWR-019).** The independent checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) accepts the registry's latest CWR-019 record, [20261106T153524Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T153524Z-1.json), written by the runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) under evidence schema version 2. Earlier records of the case were written under version 1, and the checker lists them as stale.
 
 A hypothesis result needs the complete arm matrix with the pre-registered metric definitions; a
 component attempt never implies one, and a run containing `INVARIANT_VIOLATION` is excluded.

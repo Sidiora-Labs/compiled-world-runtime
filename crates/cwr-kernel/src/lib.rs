@@ -84,18 +84,27 @@ pub enum KernelError {
     Corrupt(String),
     /// The Instance is not in a state that allows the operation.
     State(String),
+    /// The Instance is busy: another operation holds its lock, or it is not `idle` when a turn
+    /// needs it to be. A turn refused this way executes nothing (kernel.md section 2: `CONFLICT`;
+    /// exit 8).
+    Conflict(String),
     /// A request the kernel refuses (unknown primitive, bad argument, lineage mismatch).
     Refused(String),
     /// Host I/O failure.
     Io(String),
 }
 
+/// Exit code of a CLI command refused because the Instance is busy or not idle (`CONFLICT`).
+pub const EXIT_CONFLICT: i32 = 8;
+
 impl KernelError {
-    /// Process exit code of the CLI for this error: 2 hash mismatch, 3 experimental, 1 otherwise.
+    /// Process exit code of the CLI for this error: 2 hash mismatch, 3 experimental, 8 conflict
+    /// (the Instance is busy or not idle), 1 otherwise.
     pub fn exit_code(&self) -> i32 {
         match self {
             KernelError::HashMismatch(_) => 2,
             KernelError::Experimental(_) => 3,
+            KernelError::Conflict(_) => EXIT_CONFLICT,
             _ => 1,
         }
     }
@@ -109,6 +118,7 @@ impl fmt::Display for KernelError {
             KernelError::Truncated(m) => write!(f, "ledger truncated: {m}"),
             KernelError::Corrupt(m) => write!(f, "ledger corrupt: {m}"),
             KernelError::State(m) => write!(f, "instance state: {m}"),
+            KernelError::Conflict(m) => write!(f, "CONFLICT: {m}"),
             KernelError::Refused(m) => write!(f, "refused: {m}"),
             KernelError::Io(m) => write!(f, "io: {m}"),
         }
@@ -208,6 +218,17 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Whether `id` is a ULID as [`new_ulid`] writes it: 26 characters of the Crockford base32
+/// alphabet in upper case, the first at most `7` (a 128-bit value). Instance ids given by an
+/// operator are checked with this before they are joined into a store path, so `../x` or `a/b`
+/// never names a directory.
+pub fn is_ulid(id: &str) -> bool {
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    id.len() == 26
+        && id.bytes().all(|b| ALPHABET.contains(&b))
+        && id.as_bytes().first().is_some_and(|b| *b <= b'7')
 }
 
 /// A new ULID (48-bit millisecond timestamp, 80 random bits, Crockford base32). The id is an

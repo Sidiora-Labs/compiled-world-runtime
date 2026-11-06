@@ -21,12 +21,13 @@
 use cwr_contract::Code;
 use serde_json::{json, Value};
 
+use crate::contract_check::ContractTable;
 use crate::envelope::{turn_envelope, Failure, Resources};
-use crate::executor::{sealed, LAST_ENVELOPE};
+use crate::executor::sealed;
 use crate::ledger::{Kind, RecordDraft};
 use crate::limits::Limits;
 use crate::state::Instance;
-use crate::{canonical_json, sha256_hex, write_atomic, KernelError, Result};
+use crate::{canonical_json, sha256_hex, KernelError, Result};
 
 /// The pseudo-primitive a protocol refusal names in its envelope and its `turn` record.
 pub const PROTOCOL_PRIMITIVE: &str = "turn.protocol";
@@ -199,10 +200,16 @@ pub fn extract_script(message: &str) -> std::result::Result<String, Violation> {
 /// Refuses the next turn of `inst` for `violation`, without executing anything.
 ///
 /// Guarantees: the Instance must be `idle` and not sealed (otherwise nothing is written); the turn
-/// counter advances by one, `world_time` does not; exactly one ledger record is appended, of kind
+/// counter advances by one, `world_time` does not; the refusal is one ledger record of kind
 /// `turn`, with status `error`, code `INVALID`, `calls` 0 and `primitive = "turn.protocol"`; the
-/// returned envelope (also stored as the Instance's last result envelope) has status `error`, an
-/// empty trace, zero resource use and the error `{code: INVALID, primitive: turn.protocol}`.
+/// returned envelope (also stored as the turn's result envelope) has status `error`, an empty
+/// trace, zero resource use and the error `{code: INVALID, primitive: turn.protocol}`.
+///
+/// On an `--x-drift` Build the refused turn is still a turn: every drift entry scheduled for it
+/// is recorded (kind `drift`, before the refusal's `turn` record) exactly as an executed turn
+/// would record it, so the ledger records the injection either way (model-surface.md section 8).
+/// The turn is opened (`idle` to `in_turn`) before those records, so a crash between them is
+/// closed by recovery like any interrupted turn.
 pub fn refuse(inst: &mut Instance, violation: &Violation) -> Result<Value> {
     if let Some(s) = sealed(inst) {
         return Err(KernelError::State(format!(
@@ -212,20 +219,22 @@ pub fn refuse(inst: &mut Instance, violation: &Violation) -> Result<Value> {
         )));
     }
     if inst.meta.status != "idle" {
-        return Err(KernelError::State(format!(
-            "CONFLICT: instance is {}, not idle",
+        return Err(KernelError::Conflict(format!(
+            "instance is {}, not idle",
             inst.meta.status
         )));
     }
     let limits = Limits::of(&inst.build)?;
+    let mut table = ContractTable::load(&inst.build)?;
+    let drift = crate::drift_injector::prepare(&inst.build, &mut table, inst.meta.turn + 1)?;
     let failure = Failure::new(Code::Invalid, PROTOCOL_PRIMITIVE, violation.detail());
     let resources = Resources {
         remaining_primitive_calls: limits.primitive_calls,
         remaining_adapter_calls: limits.adapter_calls,
         ..Resources::default()
     };
-    let previous_turn = inst.meta.turn;
-    let turn = previous_turn + 1;
+    let turn = inst.begin_turn()?;
+    drift.record(inst, turn)?;
     let returned_hash = format!(
         "sha256:{}",
         sha256_hex(canonical_json(&Value::Null).as_bytes())
@@ -237,15 +246,7 @@ pub fn refuse(inst: &mut Instance, violation: &Violation) -> Result<Value> {
         .with("returned_hash", json!(returned_hash))
         .with("resources", resources.ledger_json());
     draft.primitive = Some(PROTOCOL_PRIMITIVE.to_string());
-    // The metadata write that follows the durable record carries the new turn number.
-    inst.meta.turn = turn;
-    let rec = match inst.append(draft, None) {
-        Ok(r) => r,
-        Err(e) => {
-            inst.meta.turn = previous_turn;
-            return Err(e);
-        }
-    };
+    let rec = inst.end_turn_refused(draft)?;
     let world = json!({
         "version": inst.build.version,
         "build": inst.build.hash,
@@ -260,10 +261,7 @@ pub fn refuse(inst: &mut Instance, violation: &Violation) -> Result<Value> {
         world,
         &resources,
     );
-    write_atomic(
-        &inst.dir.join(LAST_ENVELOPE),
-        format!("{}\n", canonical_json(&env)).as_bytes(),
-    )?;
+    super::envelope_render::store(&inst.dir, &rec, &env)?;
     Ok(env)
 }
 

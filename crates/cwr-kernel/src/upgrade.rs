@@ -192,7 +192,10 @@ fn lock(dir: &Path) -> crate::Result<File> {
         .open(&p)
         .map_err(|e| io_err("open lock", &p, e))?;
     f.try_lock().map_err(|_| {
-        KernelError::State(format!("instance {} is busy (lock held)", dir.display()))
+        KernelError::Conflict(format!(
+            "instance {} is busy (lock held by another operation)",
+            dir.display()
+        ))
     })?;
     Ok(f)
 }
@@ -217,7 +220,7 @@ fn remove_journal(dir: &Path) -> crate::Result<()> {
 
 /// Whether Instance `id` has an open (interrupted) upgrade.
 pub fn interrupted(home: &Path, id: &str) -> crate::Result<bool> {
-    let dir = Instance::dir_of(home, id);
+    let dir = Instance::checked_dir(home, id)?;
     Ok(dir.join(JOURNAL).is_file() || Instance::read_meta(home, id)?.status == "upgrading")
 }
 
@@ -262,7 +265,7 @@ fn cut_ledger(dir: &Path, snap: &Snapshot, seq: u64) -> crate::Result<()> {
 /// Resolves an interrupted upgrade of Instance `id` (see the module documentation). Returns None
 /// when there is nothing to resolve.
 pub fn resolve_interrupted(home: &Path, id: &str) -> Result<Option<Resolution>> {
-    let dir = Instance::dir_of(home, id);
+    let dir = Instance::checked_dir(home, id)?;
     if !dir.is_dir() {
         return Err(KernelError::Refused(format!("no instance {id}")).into());
     }

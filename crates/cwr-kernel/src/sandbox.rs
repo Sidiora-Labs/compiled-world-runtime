@@ -18,17 +18,27 @@
 //!   set. The only inherited descriptor besides stdio (null, null, a capture pipe) is the RPC
 //!   socket at fd 3. Address-space randomisation is disabled so object identities do not become
 //!   a host random source.
+//! * **One process**: bubblewrap installs a seccomp filter ([`no_fork_filter`]) on the interpreter
+//!   just before it executes: `fork`, `vfork` and every `clone` without `CLONE_THREAD` fail with
+//!   `EPERM` and `clone3` with `ENOSYS` (so threads fall back to `clone`). The script is therefore
+//!   one process (threads allowed), whatever the in-interpreter layer misses, and the per-process
+//!   limits below bound the whole sandbox.
 //! * **Resource limits**: `RLIMIT_AS = memory_mb` (address space, which bounds resident memory),
 //!   `RLIMIT_CPU` as a hard backstop just above `cpu_ms`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE` and
 //!   `RLIMIT_CORE = 0`; the kernel also polls the process tree's CPU time and resident memory
-//!   and kills it the moment `cpu_ms` or `memory_mb` is exceeded, and kills it at `wall_ms`.
+//!   and kills it the moment `cpu_ms` or `memory_mb` is exceeded, and kills it at `wall_ms`. The
+//!   turn's CPU time is that tree's own: the sandbox child is reaped with `wait4`, never measured
+//!   through `RUSAGE_CHILDREN` of the whole kernel process.
 //! * **Language layer**: `sdk/python/cwr/_runner.py`, embedded here, guards imports, files,
 //!   sockets, processes, the clock and frame introspection from inside the interpreter.
 //!
 //! Without bubblewrap the kernel refuses to run a turn (fail closed); it never runs a script
 //! unsandboxed. The kernel-side world-code worker ([`crate::contract_check::LibWorker`]) runs in
 //! the same kind of view with the Build's `lib/` instead of the SDK and no scratch directory, so
-//! `lib/` has no network capability either (clause 7.1).
+//! `lib/` has no network capability either (clause 7.1). Every worker ([`spawn_worker`]: world
+//! code, adapter code, migrations) runs under [`WORKER_MEMORY_MB`] of address space and
+//! [`WORKER_CPU_SECONDS`] of CPU time. The one-process filter applies to the script sandbox only:
+//! worker code is the Build's own, not the model's.
 
 use std::fs;
 use std::io::Read;
@@ -80,11 +90,13 @@ struct RUsage {
 
 extern "C" {
     fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
-    fn getrusage(who: i32, usage: *mut RUsage) -> i32;
+    fn wait4(pid: i32, status: *mut i32, options: i32, usage: *mut RUsage) -> i32;
+    fn kill(pid: i32, sig: i32) -> i32;
     fn personality(persona: u64) -> i32;
     fn dup2(oldfd: i32, newfd: i32) -> i32;
     fn fcntl(fd: i32, cmd: i32, ...) -> i32;
     fn sysconf(name: i32) -> i64;
+    fn pipe2(fds: *mut i32, flags: i32) -> i32;
 }
 
 const RLIMIT_CPU: i32 = 0;
@@ -92,10 +104,21 @@ const RLIMIT_FSIZE: i32 = 1;
 const RLIMIT_CORE: i32 = 4;
 const RLIMIT_NOFILE: i32 = 7;
 const RLIMIT_AS: i32 = 9;
-const RUSAGE_CHILDREN: i32 = -1;
 const ADDR_NO_RANDOMIZE: u64 = 0x0040000;
-const F_SETFD: i32 = 2;
+const F_DUPFD_CLOEXEC: i32 = 1030;
+const O_CLOEXEC: i32 = 0o2000000;
 const SC_CLK_TCK: i32 = 2;
+const WNOHANG: i32 = 1;
+const SIGKILL: i32 = 9;
+const EINTR: i32 = 4;
+
+/// The descriptor number bubblewrap reads the one-process seccomp program from.
+pub const SECCOMP_FD: i32 = 4;
+/// Address-space cap of every worker process (world code, adapter code, migrations), in MiB.
+pub const WORKER_MEMORY_MB: u64 = 2048;
+/// CPU-time cap of every worker process, in seconds. A worker lives for one turn or one upgrade;
+/// the turn's `wall_ms` deadline ends a world-code exchange long before this backstop.
+pub const WORKER_CPU_SECONDS: u64 = 300;
 
 fn clk_tck() -> u64 {
     // SAFETY: sysconf has no preconditions.
@@ -107,19 +130,133 @@ fn clk_tck() -> u64 {
     }
 }
 
-/// CPU time (ms) of all children of this process that have been waited for.
-pub fn children_cpu_ms() -> u64 {
-    let mut u = RUsage {
-        utime: TimeVal { sec: 0, usec: 0 },
-        stime: TimeVal { sec: 0, usec: 0 },
-        rest: [0; 14],
-    };
-    // SAFETY: u is a valid, writable rusage-sized buffer.
-    if unsafe { getrusage(RUSAGE_CHILDREN, &mut u) } != 0 {
-        return 0;
+impl RUsage {
+    fn zero() -> RUsage {
+        RUsage {
+            utime: TimeVal { sec: 0, usec: 0 },
+            stime: TimeVal { sec: 0, usec: 0 },
+            rest: [0; 14],
+        }
     }
-    let ms = |t: &TimeVal| (t.sec.max(0) as u64) * 1000 + (t.usec.max(0) as u64) / 1000;
-    ms(&u.utime) + ms(&u.stime)
+
+    /// User plus system time, in milliseconds.
+    fn cpu_ms(&self) -> u64 {
+        let ms = |t: &TimeVal| (t.sec.max(0) as u64) * 1000 + (t.usec.max(0) as u64) / 1000;
+        ms(&self.utime) + ms(&self.stime)
+    }
+}
+
+/// Reaps `pid` with `wait4`: `Some((status, cpu_ms))` once it has exited, where `cpu_ms` is the
+/// CPU time of that process and the descendants it waited for, and nothing else; `None` while it
+/// still runs (only with `nohang`) or when it cannot be waited for.
+fn reap(pid: i32, nohang: bool) -> Option<(ExitStatus, u64)> {
+    use std::os::unix::process::ExitStatusExt;
+    loop {
+        let mut status = 0i32;
+        let mut u = RUsage::zero();
+        // SAFETY: status and u are valid, writable buffers; pid is a child of this process that
+        // nothing else waits for.
+        let r = unsafe { wait4(pid, &mut status, if nohang { WNOHANG } else { 0 }, &mut u) };
+        if r == pid {
+            return Some((ExitStatus::from_raw(status), u.cpu_ms()));
+        }
+        if r < 0 && std::io::Error::last_os_error().raw_os_error() == Some(EINTR) {
+            continue;
+        }
+        return None;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The one-process seccomp program
+// ---------------------------------------------------------------------------------------------
+
+const BPF_LD_W_ABS: u16 = 0x20;
+const BPF_JEQ_K: u16 = 0x15;
+const BPF_JGE_K: u16 = 0x35;
+const BPF_JSET_K: u16 = 0x45;
+const BPF_RET_K: u16 = 0x06;
+const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+const SECCOMP_RET_EPERM: u32 = 0x0005_0000 | 1;
+const SECCOMP_RET_ENOSYS: u32 = 0x0005_0000 | 38;
+const CLONE_THREAD: u32 = 0x0001_0000;
+
+/// (audit arch, clone, clone3, fork, vfork) for this target; aarch64 has no fork or vfork, so
+/// clone stands in for both.
+#[cfg(target_arch = "x86_64")]
+const FORK_NRS: Option<(u32, u32, u32, u32, u32)> = Some((0xC000_003E, 56, 435, 57, 58));
+#[cfg(target_arch = "aarch64")]
+const FORK_NRS: Option<(u32, u32, u32, u32, u32)> = Some((0xC000_00B7, 220, 435, 220, 220));
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+const FORK_NRS: Option<(u32, u32, u32, u32, u32)> = None;
+
+/// The one-process seccomp program as the bytes of a `struct sock_filter` array, the form
+/// bubblewrap's `--seccomp` reads: a foreign syscall ABI, `fork`, `vfork` and `clone` without
+/// `CLONE_THREAD` fail with `EPERM`; `clone3` fails with `ENOSYS`, so the C library creates
+/// threads with `clone`; everything else is allowed. `None` on a target without a program, where
+/// the kernel refuses to start a sandbox (fail closed). `seccomp_data` is
+/// `{nr: u32, arch: u32, ip: u64, args: [u64; 6]}`; the low word of `args[0]` is at offset 16.
+pub fn no_fork_filter() -> Option<Vec<u8>> {
+    let (arch, clone, clone3, fork, vfork) = FORK_NRS?;
+    let prog: [(u16, u8, u8, u32); 13] = [
+        (BPF_LD_W_ABS, 0, 0, 4),               // 0: A = arch
+        (BPF_JEQ_K, 1, 0, arch),               // 1: native ABI -> 3
+        (BPF_RET_K, 0, 0, SECCOMP_RET_EPERM),  // 2
+        (BPF_LD_W_ABS, 0, 0, 0),               // 3: A = nr
+        (BPF_JGE_K, 8, 0, 0x4000_0000),        // 4: x32 ABI -> 13 (EPERM)
+        (BPF_JEQ_K, 6, 0, clone3),             // 5: -> 12 (ENOSYS)
+        (BPF_JEQ_K, 6, 0, fork),               // 6: -> 13 (EPERM)
+        (BPF_JEQ_K, 5, 0, vfork),              // 7: -> 13 (EPERM)
+        (BPF_JEQ_K, 1, 0, clone),              // 8: -> 10
+        (BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW),  // 9
+        (BPF_LD_W_ABS, 0, 0, 16),              // 10: A = low word of clone flags
+        (BPF_JSET_K, 2, 1, CLONE_THREAD),      // 11: thread -> 14 (ALLOW), else -> 13 (EPERM)
+        (BPF_RET_K, 0, 0, SECCOMP_RET_ENOSYS), // 12
+    ];
+    let tail: [(u16, u8, u8, u32); 2] = [
+        (BPF_RET_K, 0, 0, SECCOMP_RET_EPERM), // 13
+        (BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW), // 14
+    ];
+    let mut out = Vec::with_capacity((prog.len() + tail.len()) * 8);
+    for (code, jt, jf, k) in prog.iter().chain(tail.iter()) {
+        out.extend_from_slice(&code.to_ne_bytes());
+        out.push(*jt);
+        out.push(*jf);
+        out.extend_from_slice(&k.to_ne_bytes());
+    }
+    Some(out)
+}
+
+/// A pipe whose read end holds the one-process seccomp program, for bubblewrap's `--seccomp`.
+/// Both ends are close-on-exec; [`apply_limits`] places the read end at [`SECCOMP_FD`].
+fn seccomp_pipe() -> Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let prog = no_fork_filter().ok_or_else(|| {
+        KernelError::Refused(format!(
+            "sandbox unavailable: no one-process seccomp program for target architecture {}",
+            std::env::consts::ARCH
+        ))
+    })?;
+    let mut fds = [0i32; 2];
+    // SAFETY: fds is a valid two-element buffer.
+    if unsafe { pipe2(fds.as_mut_ptr(), O_CLOEXEC) } != 0 {
+        return Err(KernelError::Io(format!(
+            "seccomp pipe: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    // SAFETY: pipe2 returned two fresh descriptors that this process now owns.
+    let (read, write) = unsafe {
+        (
+            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+        )
+    };
+    let mut w = fs::File::from(write);
+    std::io::Write::write_all(&mut w, &prog)
+        .map_err(|e| KernelError::Io(format!("seccomp pipe: {e}")))?;
+    drop(w);
+    Ok(read)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -307,8 +444,9 @@ pub fn bwrap() -> Result<PathBuf> {
     Err(KernelError::Refused("sandbox unavailable: bubblewrap (bwrap) is not installed; the kernel never runs a script unsandboxed".into()))
 }
 
-/// One line describing the mechanism, for operators and drivers.
-pub fn describe() -> String {
+/// One line describing the mechanism actually in use for a turn, including whether the
+/// in-interpreter language guard is on, for operators and drivers.
+pub fn describe(language_guard: bool) -> String {
     let b = bwrap().map(|p| {
         let v = Command::new(&p)
             .arg("--version")
@@ -320,9 +458,14 @@ pub fn describe() -> String {
     });
     let i = interpreter().map(|i| format!("{} {}", i.executable.display(), i.version));
     format!(
-        "sandbox=bubblewrap bwrap={} python={} namespaces=user,mount,net,pid,ipc,uts,cgroup rlimits=AS,CPU,FSIZE,NOFILE,CORE language_guard=sdk/python/cwr/_runner.py",
+        "sandbox=bubblewrap bwrap={} python={} namespaces=user,mount,net,pid,ipc,uts,cgroup rlimits=AS,CPU,FSIZE,NOFILE,CORE language_guard={}",
         b.unwrap_or_else(|e| e.to_string()),
-        i.unwrap_or_else(|e| e.to_string())
+        i.unwrap_or_else(|e| e.to_string()),
+        if language_guard {
+            "sdk/python/cwr/_runner.py"
+        } else {
+            "off (operator diagnostic; every record of the turn carries language_guard=false)"
+        }
     )
 }
 
@@ -375,7 +518,14 @@ struct ProcLimits {
     open_files: u64,
 }
 
-fn apply_limits(l: ProcLimits, rpc_fd: Option<i32>) -> std::io::Result<()> {
+/// Runs in the forked child before `bwrap` executes: places the RPC socket (if any) at
+/// [`RPC_FD`] and the seccomp program (if any) at [`SECCOMP_FD`], both inheritable, then applies
+/// `l`.
+fn apply_limits(
+    l: ProcLimits,
+    rpc_fd: Option<i32>,
+    seccomp_fd: Option<i32>,
+) -> std::io::Result<()> {
     let set = |res: i32, cur: u64, max: u64| -> std::io::Result<()> {
         let r = RLimit { cur, max };
         // SAFETY: r is a valid rlimit; setrlimit is async-signal-safe.
@@ -384,18 +534,38 @@ fn apply_limits(l: ProcLimits, rpc_fd: Option<i32>) -> std::io::Result<()> {
         }
         Ok(())
     };
-    if let Some(fd) = rpc_fd {
-        // SAFETY: plain descriptor syscalls on descriptors this process owns.
-        unsafe {
-            if fd == RPC_FD {
-                if fcntl(fd, F_SETFD, 0) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            } else if dup2(fd, RPC_FD) != RPC_FD {
+    // Copy both descriptors above the targets first (close-on-exec copies), so that placing one
+    // can never overwrite the other; dup2 then makes the targets inheritable.
+    // SAFETY: plain descriptor syscalls on descriptors this process owns.
+    unsafe {
+        let high = |fd: i32| -> std::io::Result<i32> {
+            let h = fcntl(fd, F_DUPFD_CLOEXEC, 16);
+            if h < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(h)
+            }
+        };
+        let sec = match seccomp_fd {
+            Some(fd) => Some(high(fd)?),
+            None => None,
+        };
+        let rpc = match rpc_fd {
+            Some(fd) => Some(high(fd)?),
+            None => None,
+        };
+        if let Some(fd) = rpc {
+            if dup2(fd, RPC_FD) != RPC_FD {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        if let Some(fd) = sec {
+            if dup2(fd, SECCOMP_FD) != SECCOMP_FD {
                 return Err(std::io::Error::last_os_error());
             }
         }
     }
+
     if let Some(b) = l.address_space {
         set(RLIMIT_AS, b, b)?;
     }
@@ -446,11 +616,12 @@ pub struct ScriptSandbox {
     /// When the sandbox process was spawned (wall-limit origin).
     pub started: Instant,
     stderr: Arc<Mutex<Vec<u8>>>,
-    cpu_before: u64,
     ticks: u64,
     last_cpu_ms: u64,
     peak_rss_kb: u64,
     exited: Option<ExitStatus>,
+    /// CPU time of the reaped sandbox child and the descendants it waited for (`wait4`).
+    reaped_cpu_ms: u64,
 }
 
 impl ScriptSandbox {
@@ -463,8 +634,11 @@ impl ScriptSandbox {
         let (kernel_end, child_end) =
             UnixStream::pair().map_err(|e| KernelError::Io(format!("socketpair: {e}")))?;
         let mem = limits.memory_mb.saturating_mul(1024 * 1024);
+        let seccomp = seccomp_pipe()?;
         let mut args = base_args(interp);
         args.extend([
+            "--seccomp".into(),
+            SECCOMP_FD.to_string(),
             "--setenv".into(),
             "CWR_RPC_FD".into(),
             RPC_FD.to_string(),
@@ -495,7 +669,7 @@ impl ScriptSandbox {
             open_files: 64,
         };
         let fd = child_end.as_raw_fd();
-        let cpu_before = children_cpu_ms();
+        let sfd = seccomp.as_raw_fd();
         let mut cmd = Command::new(&bw);
         cmd.args(&args)
             .env_clear()
@@ -505,7 +679,7 @@ impl ScriptSandbox {
         // SAFETY: the closure only performs async-signal-safe syscalls (dup2, fcntl, setrlimit,
         // personality) between fork and exec.
         unsafe {
-            cmd.pre_exec(move || apply_limits(pl, Some(fd)));
+            cmd.pre_exec(move || apply_limits(pl, Some(fd), Some(sfd)));
         }
         let mut child = cmd.spawn().map_err(|e| {
             KernelError::Refused(format!(
@@ -514,6 +688,7 @@ impl ScriptSandbox {
             ))
         })?;
         drop(child_end);
+        drop(seccomp);
         let stderr = spawn_stderr_reader(&mut child);
         kernel_end
             .set_read_timeout(Some(Duration::from_millis(10)))
@@ -523,11 +698,11 @@ impl ScriptSandbox {
             sock: kernel_end,
             started: Instant::now(),
             stderr,
-            cpu_before,
             ticks: clk_tck(),
             last_cpu_ms: 0,
             peak_rss_kb: 0,
             exited: None,
+            reaped_cpu_ms: 0,
         })
     }
 
@@ -541,9 +716,11 @@ impl ScriptSandbox {
         if self.exited.is_some() {
             return (self.last_cpu_ms, self.peak_rss_kb);
         }
+        // The one-process filter keeps the tree to bubblewrap, its pid-namespace init and the
+        // interpreter, so the walk is complete without a cap.
         let mut pids = vec![self.child.id()];
         let mut i = 0;
-        while i < pids.len() && pids.len() < 64 {
+        while i < pids.len() {
             pids.extend(children_of(pids[i]));
             i += 1;
         }
@@ -559,27 +736,32 @@ impl ScriptSandbox {
         (self.last_cpu_ms, rss)
     }
 
-    /// Whether the sandbox process has exited (without blocking).
+    fn pid_i32(&self) -> i32 {
+        i32::try_from(self.child.id()).unwrap_or(-1)
+    }
+
+    /// Whether the sandbox process has exited (without blocking). An exited process is reaped
+    /// here with `wait4`, which also yields its own CPU time.
     pub fn try_wait(&mut self) -> Option<ExitStatus> {
         if self.exited.is_none() {
-            if let Ok(Some(s)) = self.child.try_wait() {
+            if let Some((s, cpu)) = reap(self.pid_i32(), true) {
                 self.exited = Some(s);
+                self.reaped_cpu_ms = cpu;
             }
         }
         self.exited
     }
 
     /// Kills the process tree (bwrap dies, `--die-with-parent` and the pid namespace take the
-    /// interpreter with it) and reaps it. Returns the exit status and the CPU time of the tree.
+    /// interpreter with it) and reaps it. Returns the exit status and the CPU time of the tree:
+    /// the larger of the reaped child's own `wait4` usage and the last `/proc` sample of the
+    /// tree, never the CPU of any other child of the kernel.
     pub fn finish(mut self) -> (Option<ExitStatus>, u64, String) {
         self.sample();
         if self.exited.is_none() {
-            let _ = self.child.kill();
-            self.exited = self.child.wait().ok();
+            self.kill_and_reap();
         }
-        let cpu = children_cpu_ms()
-            .saturating_sub(self.cpu_before)
-            .max(self.last_cpu_ms);
+        let cpu = self.reaped_cpu_ms.max(self.last_cpu_ms);
         // Give the stderr reader a moment to drain what the dead process left.
         let deadline = Instant::now() + Duration::from_millis(50);
         while Arc::strong_count(&self.stderr) > 1 && Instant::now() < deadline {
@@ -595,13 +777,28 @@ impl ScriptSandbox {
     pub fn peak_rss_kb(&self) -> u64 {
         self.peak_rss_kb
     }
+
+    /// Sends SIGKILL to the unreaped sandbox child and reaps it with `wait4`.
+    fn kill_and_reap(&mut self) {
+        let pid = self.pid_i32();
+        if pid <= 0 {
+            return;
+        }
+        // SAFETY: pid is our child and has not been reaped, so it cannot have been reused.
+        unsafe {
+            kill(pid, SIGKILL);
+        }
+        if let Some((s, cpu)) = reap(pid, false) {
+            self.exited = Some(s);
+            self.reaped_cpu_ms = cpu;
+        }
+    }
 }
 
 impl Drop for ScriptSandbox {
     fn drop(&mut self) {
         if self.exited.is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            self.kill_and_reap();
         }
     }
 }
@@ -673,8 +870,8 @@ pub fn spawn_worker(lib_dir: Option<&Path>, source: &str) -> Result<Child> {
         source.to_string(),
     ]);
     let pl = ProcLimits {
-        address_space: None,
-        cpu_seconds: None,
+        address_space: Some(WORKER_MEMORY_MB * 1024 * 1024),
+        cpu_seconds: Some(WORKER_CPU_SECONDS),
         file_size: None,
         open_files: 64,
     };
@@ -686,7 +883,7 @@ pub fn spawn_worker(lib_dir: Option<&Path>, source: &str) -> Result<Child> {
         .stderr(Stdio::null());
     // SAFETY: as in ScriptSandbox::spawn.
     unsafe {
-        cmd.pre_exec(move || apply_limits(pl, None));
+        cmd.pre_exec(move || apply_limits(pl, None, None));
     }
     cmd.spawn().map_err(|e| {
         KernelError::Refused(format!(
@@ -704,6 +901,84 @@ mod tests {
     fn runner_is_embedded() {
         assert!(RUNNER.contains("def _cwr_main"));
         assert!(RUNNER.contains("sys.addaudithook"));
+    }
+
+    #[test]
+    fn the_script_sandbox_filter_allows_one_process_with_threads() {
+        let src = r#"
+import os, sys, threading
+out = []
+try:
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0)
+    out.append("forked")
+except OSError as e:
+    out.append("fork:%d" % e.errno)
+t = threading.Thread(target=lambda: out.append("thread"))
+t.start(); t.join()
+sys.stdout.write(" ".join(out) + "\n")
+"#;
+        // The same bubblewrap arguments, seccomp descriptor placement and limits as
+        // ScriptSandbox::spawn, without the SDK and RPC socket a real turn needs.
+        let interp = interpreter().expect("interpreter");
+        let seccomp = seccomp_pipe().expect("seccomp program");
+        let mut args = base_args(interp);
+        args.extend([
+            "--seccomp".to_string(),
+            SECCOMP_FD.to_string(),
+            "--remount-ro".into(),
+            "/".into(),
+            "--".into(),
+            interp.executable.display().to_string(),
+            "-c".into(),
+            src.into(),
+        ]);
+        let pl = ProcLimits {
+            address_space: Some(256 * 1024 * 1024),
+            cpu_seconds: Some(10),
+            file_size: None,
+            open_files: 64,
+        };
+        let sfd = seccomp.as_raw_fd();
+        let mut cmd = Command::new(bwrap().expect("bubblewrap"));
+        cmd.args(&args)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // SAFETY: as in ScriptSandbox::spawn.
+        unsafe {
+            cmd.pre_exec(move || apply_limits(pl, None, Some(sfd)));
+        }
+        let out = cmd.output().unwrap();
+        drop(seccomp);
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("fork:1"),
+            "fork must fail with EPERM: {text} {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(text.contains("thread"), "threads stay allowed: {text}");
+    }
+
+    #[test]
+    fn workers_run_under_their_address_space_cap() {
+        let src = "import resource, sys\nsys.stdout.write('as:%d\\n' % resource.getrlimit(resource.RLIMIT_AS)[0])\n";
+        let child = spawn_worker(None, src).expect("bubblewrap sandbox");
+        let out = child.wait_with_output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains(&format!("as:{}", WORKER_MEMORY_MB * 1024 * 1024)),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_filter_is_whole_sock_filter_entries() {
+        let f = no_fork_filter().unwrap();
+        assert_eq!(f.len() % 8, 0);
+        assert_eq!(f.len() / 8, 15);
     }
 
     #[test]

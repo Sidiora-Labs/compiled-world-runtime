@@ -35,6 +35,7 @@ build:
 test: build
 	$(CARGO) test --workspace
 	$(PYTHON) -m unittest discover -s benchmark/harness/tests -t .
+	$(PYTHON) -m unittest discover -s benchmark/predicates/tests -t .
 	$(PYTHON) -m unittest discover -s core/tests -t .
 	$(PYTHON) -m unittest discover -s tools/tests -t .
 	$(PYTHON) benchmark/stubs/selftest.py
@@ -71,7 +72,7 @@ closure:
 
 vendor:
 	$(CARGO) vendor vendor/cargo > /dev/null
-	@echo "vendor/cargo refreshed; .cargo/config.toml points cargo at it"
+	@echo "vendor/cargo refreshed; to build from it, add the source replacement shown in vendor/README.md to .cargo/config.toml"
 
 release: check test qualify
 	$(PYTHON) tools/release.py

@@ -51,7 +51,7 @@ use serde_json::{json, Map, Value};
 
 use crate::contract_check::{Contract, ContractTable, Gateway, GatewayOutcome};
 use crate::envelope::{trace_item, turn_envelope, Failure, Resources};
-use crate::executor::LAST_ENVELOPE;
+
 use crate::gateway::cassette::request_hash;
 use crate::gateway::idempotency::{KeyStore, Slot, Stored};
 use crate::gateway::{ordinals_from_ledger, GATEWAY_DIR};
@@ -213,10 +213,15 @@ impl<G: Gateway> Gateway for Journaled<G> {
     fn evidence(&mut self) -> Option<Value> {
         self.evidence.take()
     }
+
+    fn set_deadline(&mut self, deadline: std::time::Instant) {
+        self.inner.set_deadline(deadline);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // Recovery
+
 // ---------------------------------------------------------------------------------------------
 
 /// What one recovery did (operator report; the ledger records are the evidence).
@@ -298,7 +303,7 @@ fn write_meta(dir: &Path, meta: &InstanceMeta) -> Result<()> {
 /// truncated final record, or its metadata is not at the ledger's last record. An Instance whose
 /// lock is held by a live process never needs recovery.
 pub fn needs_recovery(home: &Path, id: &str) -> Result<bool> {
-    let dir = Instance::dir_of(home, id);
+    let dir = Instance::checked_dir(home, id)?;
     if !dir.is_dir() {
         return Err(KernelError::Refused(format!("no instance {id}")));
     }
@@ -322,7 +327,7 @@ pub fn needs_recovery(home: &Path, id: &str) -> Result<bool> {
 /// True when the ledger of `id` ends in a truncated record while the Instance is not in a state a
 /// kernel crash leaves behind (`in_turn`, `recovering`, `upgrading` or a recovery journal).
 fn torn_without_crash_state(home: &Path, id: &str) -> Result<bool> {
-    let dir = Instance::dir_of(home, id);
+    let dir = Instance::checked_dir(home, id)?;
     let meta = Instance::read_meta(home, id)?;
     if matches!(meta.status.as_str(), "in_turn" | "recovering" | "upgrading")
         || dir.join(JOURNAL_FILE).is_file()
@@ -385,13 +390,13 @@ pub fn open_recovering(home: &Path, id: &str) -> Result<(Instance, Option<Recove
 /// Instance whose lock is held, a destroyed one, an interrupted upgrade (rolled back by the upgrade
 /// transaction) and a ledger whose complete records fail the seq or chain check.
 pub fn recover(home: &Path, id: &str) -> Result<(Instance, RecoveryReport)> {
-    let dir = Instance::dir_of(home, id);
+    let dir = Instance::checked_dir(home, id)?;
     if !dir.is_dir() {
         return Err(KernelError::Refused(format!("no instance {id}")));
     }
     // Phase 1, under the lock: compute the capture at the last durable record.
     let lock = try_lock(&dir)?.ok_or_else(|| {
-        KernelError::State(format!(
+        KernelError::Conflict(format!(
             "instance {id} is busy (lock held by a live kernel); nothing to recover"
         ))
     })?;
@@ -723,10 +728,7 @@ fn close_turn(inst: &mut Instance, n: u64) -> Result<Value> {
     );
     let world = json!({"version": inst.build.version, "build": inst.build.hash, "time": rec["world_time"], "turn": rec["turn"]});
     let env = turn_envelope(status, Value::Null, Some(&failure), trace, world, &res);
-    write_atomic(
-        &inst.dir.join(LAST_ENVELOPE),
-        format!("{}\n", canonical_json(&env)).as_bytes(),
-    )?;
+    crate::surface::envelope_render::store(&inst.dir, &rec, &env)?;
     Ok(rec)
 }
 

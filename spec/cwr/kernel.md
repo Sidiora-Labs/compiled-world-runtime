@@ -42,7 +42,7 @@ An Instance is bound to one Build for its life unless explicitly upgraded. Its i
 | `recovering` | Kernel restart with an Instance left in `in_turn` or `upgrading` | `idle` after recovery record |
 | `destroyed` | `destroy` | None |
 
-A `turn` request against an Instance that is not `idle` is refused with `CONFLICT` before anything executes; no concurrent turns exist within one Instance. Instances of one Build share nothing but the Build.
+A `turn` request against an Instance that is not `idle`, or whose lock another operation holds, is refused with `CONFLICT` before anything executes, with exit code 8 ([decisions.md](decisions.md) C02); no concurrent turns exist within one Instance. Instances of one Build share nothing but the Build.
 
 ## 3. Sandbox contract
 
@@ -88,7 +88,7 @@ Scripts are not transactional. Each primitive is atomic; a script is a sequence 
 - Status `error`: the script ended with an uncaught exception, or was terminated by a limit, and no mutating or external primitive succeeded during the turn.
 - Status `partial`: the script ended with an uncaught exception, or was terminated by a limit, after at least one mutating or external primitive succeeded. Successful mutations stand; nothing is rolled back.
 - The trace lists every primitive call of the turn in order with its outcome, so the model never has to infer which effects happened.
-- The optional top-level `return` value is serialised through the SDK codec into `returned`; a value the codec cannot serialise makes the turn `error` with code `INVALID` after all effects have been applied, and the trace still shows them.
+- The optional top-level `return` value is serialised through the SDK codec into `returned`; a value the codec cannot serialise is a failure with code `INVALID` naming `turn.return`, raised after all effects have been applied, and the trace still shows them. The status follows the two rules above: `error` when no mutating or external primitive succeeded during the turn, `partial` otherwise ([decisions.md](decisions.md) C01).
 
 The result envelope shape is fixed and specified with examples in [model-surface.md](model-surface.md).
 

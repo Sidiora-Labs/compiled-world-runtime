@@ -53,3 +53,15 @@ A campaign freezes its arms, seeds, cassette digest, suite digest and metric def
 ## Format, envelope and baseline choices
 
 Three choices shape the whole pack. World Source files use KVX rather than TOML, matching the repository's own configuration format and allowing one strict parser for the whole pack. The failure envelope includes INVARIANT_VIOLATION so that a kernel or Build defect can never be reported as an ordinary outcome. Every hypothesis arm is an internal ablation Build; no comparison baseline exists.
+
+## Clarifications recorded during implementation
+
+Each entry settles a reading of a contract chapter that the implementation exposed. The chapter text names the entry where it changed.
+
+| ID | Clarification | Where it applies |
+|---|---|---|
+| C01 | A top-level return value the SDK codec cannot encode is a failure (`INVALID`, `turn.return`) like any other. The turn status follows the ordinary rules: `error` when no mutating or external primitive succeeded, `partial` otherwise. Reporting `error` after applied effects would contradict the definition of `error` and undercount `partial_rate`. | [kernel.md](kernel.md) section 5 |
+| C02 | A turn refused because the Instance is busy (its lock is held) or not `idle` executes and records nothing. `cwr instance turn` prints the refusal envelope with `CONFLICT` naming `kernel.instance` on stdout and exits 8, so a harness can tell it from every other kernel error. | [kernel.md](kernel.md) section 2 |
+| C03 | `cwr instance probe` is an operator diagnostic that runs a recorded turn of kernel-owned `world` calls: it ticks, draws from `world.random` and appears in the ledger tail. Its envelope has the standard shape. Replay reproduces it from the call list the kernel records with it, and reproduces a protocol refusal from the refusal marker the kernel records with it: the rule broken and the fence lines, never the message text, which the turn protocol does not record ([model-surface.md](model-surface.md) section 3). | [kernel.md](kernel.md) sections 2 and 9 |
+| C04 | A turn run with the sandbox's in-interpreter language guard switched off (an operator diagnostic) stamps `"language_guard": false` on every record it appends, so such a ledger is never mistaken for one produced with full closure (D11). | [kernel.md](kernel.md) sections 3 and 8 |
+| C05 | A migration file is bound to its change by the changelog entry's `migration` path. `migrations/<from>_<to>_<name>.py` is a naming convention; the compiler does not enforce it, and the refworld example `0_2_0_kv_namespaces.py`, whose Build hash campaigns pin, keeps its name. | [world-source.md](world-source.md) sections 1 and 12 |

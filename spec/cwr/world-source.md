@@ -22,7 +22,7 @@ Every file is KVX: sections in brackets, one key per line, one JSON literal per 
 | `lib/<module>.py` | Kernel-side implementation of each primitive against the kernel state API | World author | `lib/` in the Build, executed by the kernel, never by the sandbox |
 | `contracts/<module>.kvx` | Rule contracts for the module's primitives | World author | `contracts.json`, manual entries, SDK stubs, enforcement table |
 | `adapters/<module>.kvx` and `adapters/<module>/live.py` | Adapter contracts and gateway-side implementation | World author | `contracts.json`, `adapters/` in the Build |
-| `migrations/<from>_<to>_<name>.py` | Pure state functions between Builds | World author, when state shape changes | `migrations/` in the Build, applied by `cwr instance upgrade` |
+| `migrations/<name>.py` (by convention `<from>_<to>_<name>.py`) | Pure state functions between Builds | World author, when state shape changes | `migrations/` in the Build, applied by `cwr instance upgrade` |
 | `fixtures/<module>/*.kvx` | Initial states and adapter responses that reach every declared failure | World author | `fixtures/` in the Build, consumed by contract tests |
 | `manual/*.md` | Hand-written prose sections merged into the generated manual | World author | `manual.md` |
 
@@ -220,7 +220,7 @@ Illustration in [examples/refworld/CHANGELOG.kvx](examples/refworld/CHANGELOG.kv
 
 ## 12. Migrations
 
-A migration is a pure function `migrate(state: dict) -> dict` in `migrations/<from>_<to>_<name>.py`, illustrated by [examples/refworld/migrations/0_2_0_kv_namespaces.py](examples/refworld/migrations/0_2_0_kv_namespaces.py).
+A migration is a pure function `migrate(state: dict) -> dict` in a file under `migrations/`, illustrated by [examples/refworld/migrations/0_2_0_kv_namespaces.py](examples/refworld/migrations/0_2_0_kv_namespaces.py). The changelog entry's `migration` path binds the file to its change; `<from>_<to>_<name>.py` is the naming convention, not a rule the compiler enforces ([decisions.md](decisions.md) C05).
 
 - It receives the full prior Instance state as plain data and returns the full new state. It never mutates its argument.
 - It has the same forbidden-import list as `lib/` and additionally may not import `cwr_state`: no clock, no RNG, no adapters, no ledger.

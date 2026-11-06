@@ -335,7 +335,16 @@ pub struct Ledger {
     instance: String,
     build: String,
     experimental: Option<String>,
+    language_guard_off: bool,
+    /// Length of the file up to the end of the last durable record.
+    durable_len: u64,
+    /// Set by a failed append; every later append is refused until the ledger is reopened.
+    poisoned: bool,
 }
+
+/// The field stamped `false` on every record appended while the sandbox's in-interpreter language
+/// guard is switched off by the operator diagnostic; absent on every other record.
+pub const LANGUAGE_GUARD_FIELD: &str = "language_guard";
 
 impl Ledger {
     /// Creates a new, empty ledger file; the first append must be the header.
@@ -361,6 +370,9 @@ impl Ledger {
             instance: instance.into(),
             build: build.into(),
             experimental: experimental.map(str::to_string),
+            language_guard_off: false,
+            durable_len: 0,
+            poisoned: false,
         })
     }
 
@@ -419,6 +431,9 @@ impl Ledger {
             instance: instance.into(),
             build: build.into(),
             experimental: experimental.map(str::to_string),
+            language_guard_off: false,
+            durable_len: scan.raw.len() as u64,
+            poisoned: false,
         };
         Ok((ledger, scan))
     }
@@ -444,8 +459,25 @@ impl Ledger {
         self.experimental = experimental.map(str::to_string);
     }
 
+    /// Marks every record appended from now on through this handle with
+    /// `"language_guard": false`, so a ledger written with part of the sandbox switched off is
+    /// distinguishable from a normal one (D11). The mark is never removed from this handle.
+    pub fn mark_language_guard_off(&mut self) {
+        self.language_guard_off = true;
+    }
+
     /// Appends one record and fsyncs before returning it.
+    ///
+    /// On a failed write or fsync the file is cut back to the end of the last durable record and
+    /// the handle is poisoned: this and every later append return an error until the ledger is
+    /// reopened, so a torn or unacknowledged record never has another record appended after it.
     pub fn append(&mut self, draft: RecordDraft) -> Result<Value> {
+        if self.poisoned {
+            return Err(KernelError::Io(format!(
+                "{}: an earlier append failed; reopen the ledger before appending",
+                self.path.display()
+            )));
+        }
         if (self.next_seq == 0) != (draft.kind == Kind::Header) {
             return Err(KernelError::Refused(
                 "the header is exactly the record at seq 0".into(),
@@ -491,20 +523,61 @@ impl Ledger {
         m.insert("duration_us".into(), json!(draft.duration_us));
         m.insert("host_ts".into(), json!(crate::host_ts()));
         m.insert("experimental".into(), json!(self.experimental));
+        if self.language_guard_off {
+            m.insert(LANGUAGE_GUARD_FIELD.into(), json!(false));
+        }
         let mut record = Value::Object(m);
         let chain = chain_of(&self.last_chain, &record);
         record["chain"] = json!(chain);
         let mut line = canonical_json(&record);
         line.push('\n');
-        self.file
-            .write_all(line.as_bytes())
-            .map_err(|e| io_err("append ledger", &self.path, e))?;
-        self.file
-            .sync_data()
-            .map_err(|e| io_err("fsync ledger", &self.path, e))?;
+        let written = write_record(&mut self.file, line.as_bytes())
+            .map_err(|e| io_err("append ledger", &self.path, e))
+            .and_then(|()| {
+                self.file
+                    .sync_data()
+                    .map_err(|e| io_err("fsync ledger", &self.path, e))
+            });
+        if let Err(e) = written {
+            self.poisoned = true;
+            let cut = self
+                .file
+                .set_len(self.durable_len)
+                .and_then(|()| self.file.sync_data());
+            return Err(match cut {
+                Ok(()) => e,
+                Err(c) => KernelError::Io(format!(
+                    "{e}; cutting {} back to its last durable record also failed: {c}",
+                    self.path.display()
+                )),
+            });
+        }
+        self.durable_len += line.len() as u64;
         self.next_seq += 1;
         self.last_chain = chain;
         Ok(record)
+    }
+}
+
+/// Writes one record line. Tests can make it tear after a given number of bytes.
+#[cfg(not(test))]
+fn write_record(file: &mut File, bytes: &[u8]) -> std::io::Result<()> {
+    file.write_all(bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEAR_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn write_record(file: &mut File, bytes: &[u8]) -> std::io::Result<()> {
+    match TEAR_AFTER.with(|t| t.take()) {
+        Some(n) => {
+            file.write_all(&bytes[..n.min(bytes.len())])?;
+            Err(std::io::Error::other("injected torn write"))
+        }
+        None => file.write_all(bytes),
     }
 }
 
@@ -559,102 +632,6 @@ impl FromStr for TailSize {
             ))),
         }
     }
-}
-
-/// Record kinds the tail renders (model-surface.md section 6).
-pub const TAIL_KINDS: [&str; 5] = ["primitive", "adapter", "turn", "drift", "proposal"];
-
-fn status_code_extras(status: &str, code: Option<&str>, extras: &[String]) -> String {
-    let mut s = format!("{status:<6}");
-    match code {
-        Some(c) => {
-            s.push(' ');
-            s.push_str(c);
-            for e in extras {
-                s.push_str("  ");
-                s.push_str(e);
-            }
-        }
-        None => {
-            for (i, e) in extras.iter().enumerate() {
-                s.push_str(if i == 0 { " " } else { "  " });
-                s.push_str(e);
-            }
-        }
-    }
-    s
-}
-
-/// Renders one record as one tail line, or None for kinds the tail omits.
-pub fn render_line(r: &Value) -> Option<String> {
-    let kind = r["kind"].as_str()?;
-    if !TAIL_KINDS.contains(&kind) {
-        return None;
-    }
-    let turn = format!("t{}", r["turn"].as_u64().unwrap_or(0));
-    let wt = format!("wt{}", r["world_time"].as_u64().unwrap_or(0));
-    let line = match kind {
-        "turn" => {
-            let status = r["status"].as_str().unwrap_or("error");
-            let code = r["code"].as_str();
-            let mut extras = Vec::new();
-            if let Some(n) = r["calls"].as_u64() {
-                extras.push(format!("calls={n}"));
-            }
-            format!(
-                "{turn:<3}  {:<28}{}",
-                "turn",
-                status_code_extras(status, code, &extras)
-            )
-        }
-        // Task 3.2: a drift record is rendered only when it is marked visible; the drift grammar
-        // has no visibility key, so injected drift never reaches the tail (model-surface.md 8).
-        "drift" if !visible_to_model(r) => return None,
-        "drift" => {
-            let name = r["primitive"].as_str().unwrap_or("drift");
-            let what = r["change"]
-                .as_str()
-                .map(|s| vec![s.to_string()])
-                .unwrap_or_default();
-            format!(
-                "{turn:<3}  {wt:<5}  {name:<20} {}",
-                status_code_extras("drift", None, &what)
-            )
-        }
-        _ => {
-            let name = r["primitive"].as_str().unwrap_or(kind);
-            let outcome = &r["outcome"];
-            let status = outcome["status"].as_str().unwrap_or("ok");
-            let code = outcome["code"].as_str();
-            let mut extras = Vec::new();
-            if let Some(n) = r["retry_after"].as_u64() {
-                extras.push(format!("retry_after={n}"));
-            }
-            if let Some(l) = r["limit"].as_str() {
-                extras.push(format!("limit={l}"));
-            }
-            format!(
-                "{turn:<3}  {wt:<5}  {name:<20} {}",
-                status_code_extras(status, code, &extras)
-            )
-        }
-    };
-    Some(line.trim_end().to_string())
-}
-
-/// Component 3 of the context: the last K renderable records, oldest first, one per line.
-pub fn render_tail(records: &[Value], k: TailSize) -> String {
-    let lines: Vec<String> = records.iter().filter_map(render_line).collect();
-    let skip = match k {
-        TailSize::Full => 0,
-        TailSize::Last(k) => lines.len().saturating_sub(k as usize),
-    };
-    let mut out = String::new();
-    for l in &lines[skip..] {
-        out.push_str(l);
-        out.push('\n');
-    }
-    out
 }
 
 /// Fields `world.history` never returns: host fields, the Instance id (a ULID whose time
@@ -731,6 +708,32 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_append_is_cut_back_and_poisons_the_handle() {
+        let p = tmp("torn");
+        let mut l = Ledger::create(&p, "I", "sha256:00", None).unwrap();
+        l.append(header()).unwrap();
+        let durable = fs::read(&p).unwrap();
+        TEAR_AFTER.with(|t| t.set(Some(17)));
+        let mut d = RecordDraft::new(Kind::Primitive, 1, 1);
+        d.primitive = Some("world.now".into());
+        assert!(l.append(d.clone()).is_err(), "the torn write is reported");
+        assert_eq!(fs::read(&p).unwrap(), durable, "torn bytes are cut back");
+        assert!(
+            l.append(d.clone()).is_err(),
+            "the handle refuses every later append"
+        );
+        assert_eq!(Ledger::scan(&p).unwrap().records.len(), 1);
+        let (mut l, _) = Ledger::open(&p, "I", "sha256:00", None).unwrap();
+        let r = l.append(d).unwrap();
+        assert_eq!(
+            r["seq"],
+            json!(1),
+            "a reopened ledger continues at the next seq"
+        );
+        assert_eq!(Ledger::scan(&p).unwrap().records.len(), 2);
+    }
+
+    #[test]
     fn truncated_tail_refused_strict_reported_lenient() {
         let p = tmp("trunc");
         let mut l = Ledger::create(&p, "I", "sha256:00", None).unwrap();
@@ -746,34 +749,6 @@ mod tests {
         let s = Ledger::scan_lenient(&p).unwrap();
         assert_eq!(s.records.len(), 1);
         assert_eq!(s.truncated_tail.as_deref(), Some(&b"{\"seq\":1,\"kin"[..]));
-    }
-
-    #[test]
-    fn tail_format_matches_model_surface() {
-        let r = |turn: u64, wt: u64, name: &str, status: &str, code: Option<&str>| {
-            json!({"kind": "primitive", "turn": turn, "world_time": wt, "primitive": name,
-                   "outcome": {"status": status, "code": code}})
-        };
-        let mut rate = r(38, 415, "publish.post", "error", Some("RATE_LIMITED"));
-        rate["retry_after"] = json!(30);
-        let records = vec![
-            json!({"kind": "header", "turn": 0, "world_time": 0}),
-            r(36, 410, "fs.delete", "error", Some("LOCKED")),
-            r(37, 412, "fs.unlock", "ok", None),
-            r(37, 413, "fs.delete", "ok", None),
-            json!({"kind": "turn", "turn": 37, "world_time": 423, "status": "ok", "code": null, "calls": 2}),
-            rate,
-        ];
-        let expected = "\
-t36  wt410  fs.delete            error  LOCKED
-t37  wt412  fs.unlock            ok
-t37  wt413  fs.delete            ok
-t37  turn                        ok     calls=2
-t38  wt415  publish.post         error  RATE_LIMITED  retry_after=30
-";
-        assert_eq!(render_tail(&records, TailSize::Full), expected);
-        assert_eq!(render_tail(&records, TailSize::Last(2)).lines().count(), 2);
-        assert_eq!(render_tail(&records, TailSize::DEFAULT).lines().count(), 5);
     }
 
     #[test]

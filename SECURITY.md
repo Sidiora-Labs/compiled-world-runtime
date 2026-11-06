@@ -111,7 +111,10 @@ defect to report.
 - Immutability: a Build is content-addressed; any change to its bytes changes its identity and is
   refused by the kernel.
 - Ledger integrity and replay: the ledger is append-only and hash-chained; replay from a ledger and
-  recorded cassettes reproduces the same state; a tampered ledger is refused.
+  recorded cassettes reproduces the same state; a truncated ledger, and any edit made without
+  recomputing the chain, is refused. The chain is unkeyed: someone with write access to the
+  Instance directory can edit a record and recompute the chain. Such an edit does not survive
+  replay. Protect the Instance store with file permissions.
 - Controlled change: rules change only through a human recompilation with a declared changelog, a
   version bump and a notice the model sees.
 - Gateway: adapter failures are normalised into declared codes only, idempotency keys prevent

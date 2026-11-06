@@ -1222,13 +1222,13 @@ def imports() -> None:
         "lib/fs.py",
         "from typing import TYPE_CHECKING, Any, TypedDict",
         "import json, re, math\nimport collections.abc\nfrom itertools import chain\nfrom dataclasses import dataclass\n"
-        "from cwr_state import random as _rng\nimport cwr\n_DOC = \"import os\"  # import sys\n_T = '''\nimport socket\n'''",
+        "from cwr_state import random as _rng\n_DOC = \"import os\"  # import sys\n_T = '''\nimport socket\n'''",
     )
     rc, rep, _ = cwr("lint", root)
     R.check(
         "3.5",
         rc == 0,
-        f"permitted imports (json, re, math, collections.abc, itertools, dataclasses, cwr_state, cwr) and "
+        f"permitted imports (json, re, math, collections.abc, itertools, dataclasses, cwr_state) and "
         f"'import' inside strings and comments: exit {rc} [{brief(rep)}]",
     )
     root = fresh("live_import")
@@ -1246,16 +1246,28 @@ def imports() -> None:
     text = (root / rel).read_text()
     marker = "\n\ndef migrate("
     (root / rel).write_text(
-        text.replace(marker, "\n\nimport cwr_state\nimport datetime\n" + marker, 1)
+        text.replace(marker, "\n\nimport cwr_state\nimport datetime\nimport cwr\n" + marker, 1)
     )
     l1 = line_of(root, rel, "import cwr_state")
     expect(
         "3.5",
-        "migration imports cwr_state and datetime",
+        "migration imports cwr_state, datetime and the generated SDK cwr",
         root,
         stage="lint",
         codes={"CWR-L001"},
-        where=[("CWR-L001", rel, l1), ("CWR-L001", rel, l1 + 1)],
+        where=[("CWR-L001", rel, l1), ("CWR-L001", rel, l1 + 1), ("CWR-L001", rel, l1 + 2)],
+    )
+    root = fresh("lib_sdk_import")
+    line = insert_after(
+        root, "lib/fs.py", "from typing import TYPE_CHECKING, Any, TypedDict", "import cwr"
+    )
+    expect(
+        "3.5",
+        "lib/fs.py imports the generated SDK cwr (world-source.md section 8)",
+        root,
+        stage="lint",
+        codes={"CWR-L001"},
+        where=[("CWR-L001", "lib/fs.py", line)],
     )
 
 

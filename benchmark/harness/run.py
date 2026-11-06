@@ -230,6 +230,27 @@ class KernelCommandError(RuntimeError):
         self.returncode = returncode
 
 
+def _last_envelope(stdout: str) -> dict[str, Any]:
+    """The result envelope `cwr instance turn` printed: its last non-blank stdout line.
+
+    Lines end at LF only. serde_json leaves U+0085, U+2028 and U+2029 raw inside strings, so
+    `str.splitlines()` would cut an envelope that carries one. Output that is not one JSON object is
+    a KernelCommandError, never a JSONDecodeError.
+    """
+    lines = [line for line in stdout.split("\n") if line.strip()]
+    if not lines:
+        return protocol_refusal("no envelope", None)
+    try:
+        envelope = json.loads(lines[-1])
+    except json.JSONDecodeError as error:
+        raise KernelCommandError(
+            "instance turn", 0, f"stdout line is not a JSON envelope: {error}"
+        ) from None
+    if not isinstance(envelope, dict):
+        raise KernelCommandError("instance turn", 0, "stdout line is not a JSON object")
+    return envelope
+
+
 def extract_blocks(message: str) -> list[tuple[str, str | None]]:
     """Fenced blocks of a model message as (language, body); body None when the fence never closes.
 
@@ -537,8 +558,7 @@ class CwrCliKernel(KernelAdapter):
         self._turn_stderr[instance] = proc.stderr
         if proc.returncode not in (0, 4):
             raise KernelCommandError("instance turn", proc.returncode, proc.stderr)
-        lines = [line for line in proc.stdout.splitlines() if line.strip()]
-        envelope = json.loads(lines[-1]) if lines else protocol_refusal("no envelope", None)
+        envelope = _last_envelope(proc.stdout)
         self._envelopes[instance] = envelope
         return envelope
 
@@ -1100,6 +1120,57 @@ def _campaign_file(campaigns_dir: Path, hypothesis: str) -> dict[str, dict[str, 
     return read_kvx(path)
 
 
+def _pair_path(pair_name: str | None, key: str, value: Any) -> Path:
+    """A repository-relative path named by an h4.kvx pair, refused unless it stays inside REPO."""
+    if not isinstance(value, str) or not value or Path(value).is_absolute():
+        raise PreflightRefused(
+            2, f"pair {pair_name} {key} must be a repository-relative path, not {value!r}"
+        )
+    if not (REPO / value).resolve().is_relative_to(REPO):
+        raise PreflightRefused(2, f"pair {pair_name} {key} {value!r} leaves the repository")
+    return REPO / value
+
+
+def _pair_inputs(
+    pair_name: str | None, pair: Mapping[str, Any]
+) -> tuple[int, dict[str, Any], Path, Path, Path]:
+    """The checked inputs of one h4.kvx pair: upgrade turn, metric pair, task dir, predicate, initial.
+
+    A missing or mistyped field is a PreflightRefused (code 2) naming the pair and the field.
+    """
+    after = pair.get("upgrade_after_turn")
+    if isinstance(after, bool) or not isinstance(after, int) or after < 1:
+        raise PreflightRefused(
+            2, f"pair {pair_name} upgrade_after_turn must be a positive integer, not {after!r}"
+        )
+    changed = pair.get("changed_primitives") or []
+    if not isinstance(changed, list) or not all(isinstance(c, str) and c for c in changed):
+        raise PreflightRefused(
+            2, f"pair {pair_name} changed_primitives must be a list of primitive names"
+        )
+    misuse_code = pair.get("misuse_code")
+    if misuse_code is not None and not isinstance(misuse_code, str):
+        raise PreflightRefused(2, f"pair {pair_name} misuse_code must be a string or null")
+    scope = pair.get("misuse_scope", "call")
+    if scope not in metrics.MISUSE_SCOPES:
+        raise PreflightRefused(
+            2, f"pair {pair_name} misuse_scope {scope!r} is not one of {metrics.MISUSE_SCOPES}"
+        )
+    task_dir = _pair_path(pair_name, "task_dir", pair.get("task_dir"))
+    predicate = pair.get("predicate", f"{pair.get('task_dir')}/success.py")
+    predicate_path = _pair_path(pair_name, "predicate", predicate)
+    if pair.get("initial"):
+        initial = _pair_path(pair_name, "initial", pair["initial"])
+    else:
+        initial = task_dir / "initial.kvx"
+    metric_pair = {
+        "changed_primitives": list(changed),
+        "misuse_code": misuse_code,
+        "misuse_scope": scope,
+    }
+    return after, metric_pair, task_dir, predicate_path, initial
+
+
 def preflight(
     hypothesis: str,
     arm_key: str,
@@ -1175,15 +1246,8 @@ def preflight(
             raise PreflightRefused(
                 2, f"pair {pair_name} registers no build_a or build_b[{arm.key}]"
             )
-        upgrade = UpgradePlan(int(pair["upgrade_after_turn"]), build_b, pair_name)
-        upgrade_pair = {
-            "changed_primitives": list(pair.get("changed_primitives") or []),
-            "misuse_code": pair.get("misuse_code"),
-            "misuse_scope": pair.get("misuse_scope", "call"),
-        }
-        task_dir = REPO / pair["task_dir"]
-        predicate_path = REPO / pair.get("predicate", f"{pair['task_dir']}/success.py")
-        initial = REPO / pair["initial"] if pair.get("initial") else task_dir / "initial.kvx"
+        after, upgrade_pair, task_dir, predicate_path, initial = _pair_inputs(pair_name, pair)
+        upgrade = UpgradePlan(after, build_b, pair_name)
         bin_name, info = pair.get("bin"), {}
         extra.append((build_b, arm.flag, f"Build B of arm {arm.hypothesis}/{arm.key}"))
         registered_upgrades = campaign.get("upgrades_digest")

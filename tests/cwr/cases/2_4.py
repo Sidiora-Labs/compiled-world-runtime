@@ -1079,6 +1079,73 @@ def replay_checks(wd: World) -> None:
     )
 
 
+def message_replay(wd: World) -> None:
+    """8.4: message turns (accepted and refused by the turn protocol) and probe turns replay into an
+    identical ledger, `--into` names the replay Instance, and a lifecycle record is refused by name
+    before anything is created."""
+    iid = wd.create(seed=11)
+    messages = [
+        "Two plans.\n```python\nimport kv\nkv.set(ns='a', key='x', value=b'1')\n```\n"
+        "```python\nimport kv\nkv.set(ns='a', key='y', value=b'2')\n```\n",
+        "One plan.\n\n```python\nimport kv, world\nkv.set(ns='a', key='x', value=b'1')\n"
+        "return world.random()\n```\n",
+        "```text\nnot a script\n```\n",
+    ]
+    codes = []
+    for i, text in enumerate(messages):
+        f = wd.scratch / f"message-{i}.md"
+        f.write_text(text)
+        p = run([wd.cwr, "instance", "turn", iid, "--home", wd.home, "--message", f])
+        codes.append(p.returncode)
+    probe = run([wd.cwr, "instance", "probe", iid, "world.random", "world.now", "--home", wd.home])
+    codes.append(probe.returncode)
+    orig = wd.ledger(iid)
+    refusals = [r for r in orig if r["kind"] == "turn" and r.get("primitive") == "turn.protocol"]
+    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    into = "01" + "".join(alphabet[b % 32] for b in os.urandom(24))
+    into_home = wd.scratch / "messagehome"
+    p = run(
+        [
+            wd.cwr,
+            "instance",
+            "replay",
+            iid,
+            "--home",
+            wd.home,
+            "--into",
+            into,
+            "--into-home",
+            into_home,
+        ]
+    )
+    rep = json.loads(p.stdout.strip().splitlines()[-1]) if p.returncode in (0, 7) else {}
+    R.check(
+        "8.4",
+        codes == [4, 0, 4, 0]
+        and len(refusals) == 2
+        and p.returncode == 0
+        and rep.get("identical") is True
+        and rep.get("into") == into
+        and rep.get("turns") == 4
+        and wd.ledger_path(into, into_home).is_file(),
+        f"a ledger with {len(refusals)} protocol refusals, an accepted message turn and a probe turn "
+        f"(exit codes {codes}) replays identically into the named Instance {into[:10]}.. "
+        f"(rc={p.returncode}, turns={rep.get('turns')})"
+        + ("" if p.returncode == 0 else f" {p.stderr.strip()[-300:]}"),
+    )
+    snap = run([wd.cwr, "instance", "snapshot", iid, "--home", wd.home]).stdout.strip()
+    run([wd.cwr, "instance", "restore", iid, snap, "--home", wd.home])
+    refused_home = wd.scratch / "lifecyclehome"
+    p2 = run([wd.cwr, "instance", "replay", iid, "--home", wd.home, "--into-home", refused_home])
+    created = (refused_home / "instances").is_dir() and any((refused_home / "instances").iterdir())
+    R.check(
+        "8.4",
+        p2.returncode == 1 and "recovery record" in p2.stderr and not created,
+        f"a ledger holding a recovery record is refused by name before anything is created "
+        f"(rc={p2.returncode}: {p2.stderr.strip()[-160:]})",
+    )
+
+
 def main() -> int:
     cwr, tests_ok, tests_ev = build_binaries()
     R.check("8.3", tests_ok, tests_ev)
@@ -1105,6 +1172,7 @@ def main() -> int:
         rng_checks(wd)
         with OBS.observe("CWR-010.a4", match="replay|final state digest"):
             replay_checks(wd)
+            message_replay(wd)
     finally:
         for s in stubs.values():
             s.stop()

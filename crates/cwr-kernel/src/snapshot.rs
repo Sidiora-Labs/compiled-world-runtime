@@ -95,15 +95,27 @@ impl Snapshot {
         format!("{}.json", hash.trim_start_matches("sha256:"))
     }
 
-    /// Loads and verifies a snapshot file: its bytes must hash to its file name and the inline
-    /// state must hash to `state_hash`. Any mismatch is [`KernelError::HashMismatch`].
+    /// Loads and verifies a snapshot file: it must be named `<sha256 of its bytes>.json`, its
+    /// bytes must hash to that name and the inline state must hash to `state_hash`. Any mismatch,
+    /// including a file under another name, is [`KernelError::HashMismatch`] with a message that
+    /// says which rule failed.
     pub fn load(path: &Path) -> Result<(Snapshot, String)> {
         let bytes = fs::read(path).map_err(|e| io_err("read snapshot", path, e))?;
         let hex = sha256_hex(&bytes);
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let named_by_hash = stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit());
+        if !named_by_hash {
+            return Err(KernelError::HashMismatch(format!(
+                "snapshot files must be named <sha256 of their bytes>.json, which is their only \
+                 integrity anchor; {} is not, and its bytes hash to sha256:{hex} (copy it to \
+                 {hex}.json to use it)",
+                path.display()
+            )));
+        }
         if stem != hex {
             return Err(KernelError::HashMismatch(format!(
-                "snapshot {} hashes to sha256:{hex}",
+                "snapshot {} is named for sha256:{stem} but its bytes hash to sha256:{hex}; the \
+                 file was altered",
                 path.display()
             )));
         }
@@ -190,10 +202,19 @@ mod tests {
         let text = fs::read_to_string(&path)
             .unwrap()
             .replace("\"world_time\":12", "\"world_time\":13");
-        fs::write(&path, text).unwrap();
-        assert!(matches!(
-            Snapshot::load(&path),
-            Err(KernelError::HashMismatch(_))
-        ));
+        fs::write(&path, &text).unwrap();
+        match Snapshot::load(&path) {
+            Err(KernelError::HashMismatch(m)) => assert!(m.contains("altered"), "{m}"),
+            other => panic!("expected a hash mismatch, got {other:?}"),
+        }
+        let copy = dir.join("other.json");
+        fs::write(&copy, snap.bytes()).unwrap();
+        match Snapshot::load(&copy) {
+            Err(KernelError::HashMismatch(m)) => {
+                assert!(m.contains("must be named"), "{m}");
+                assert!(m.contains(&h), "{m}");
+            }
+            other => panic!("expected the naming rule, got {other:?}"),
+        }
     }
 }

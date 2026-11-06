@@ -20,6 +20,9 @@ pub const TURN_SCRIPT: &str = "turn.script";
 pub const TURN_RETURN: &str = "turn.return";
 /// Reported for failures of the sandbox process itself (exit, signal, process limit).
 pub const SANDBOX_PROCESS: &str = "sandbox.process";
+/// Reported, with `CONFLICT`, for a turn refused because the Instance is busy or not `idle`.
+/// Such a refusal executes and records nothing, so the model never sees this name.
+pub const KERNEL_INSTANCE: &str = "kernel.instance";
 /// Reported for an import the sandbox closure refuses.
 pub const SANDBOX_IMPORT: &str = "sandbox.import";
 
@@ -67,7 +70,9 @@ impl Failure {
         }
     }
 
-    /// A failure of precondition `index` (1-based) of `primitive`.
+    /// A failure of precondition `index` (1-based) of `primitive`. A declared precondition that
+    /// raises `LIMIT` names itself as the limit, `precondition:<index>`, so `limit` is set on
+    /// every `LIMIT` failure as the manual and the failure envelope of world-source.md state.
     pub fn precondition(
         code: Code,
         primitive: &str,
@@ -76,6 +81,7 @@ impl Failure {
     ) -> Failure {
         Failure {
             precondition_index: Some(index),
+            limit: (code == Code::Limit).then(|| format!("precondition:{index}")),
             ..Failure::new(code, primitive, detail)
         }
     }
@@ -251,6 +257,9 @@ mod tests {
         assert_eq!(v["retry_after"], Value::Null);
         assert_eq!(v["limit"], Value::Null);
         assert_eq!(parse_failure(&v), Some(f));
+        let p = Failure::precondition(Code::Limit, "jobs.submit", 2, "n <= 4 was false");
+        assert_eq!(p.to_json()["limit"], json!("precondition:2"));
+        assert_eq!(p.to_json()["precondition_index"], json!(2));
         let l = Failure::limit("world.now", "primitive_calls", "");
         assert_eq!(l.to_json()["limit"], json!("primitive_calls"));
         assert!(

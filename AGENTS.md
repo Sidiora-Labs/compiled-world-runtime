@@ -96,6 +96,37 @@ ledgers, evidence, cassettes, results, vendored code) are exempt.
   `benchmark/analyse.py`. Fewer seeds than pre-registered is a recorded
   deviation, never a PASS.
 
+## Commits
+
+Every completed unit of work ends with a commit and a push by the agent that
+did the work. Enable the hooks once: `git config core.hooksPath .githooks`.
+
+- Stage explicit paths (`git add <paths>`), never `git add -A`. Commit only
+  the files of the unit you finished.
+- Message format, enforced by `tools/commit_msg.py` as the commit-msg hook:
+
+  ```
+  [spec:cwr/2.4] Recover a killed turn and replay the ledger
+
+  Recovery keeps every primitive the ledger committed and discards the one
+  in flight; replay rebuilds state from the ledger and cassettes.
+
+  Task: 2.4
+  Cases: CWR-010
+  Verify: python3 tests/cwr/cases/2_4.py (exit 0)
+  Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+  ```
+
+  Scopes: `spec:cwr/W.N` for a specification task (Task, Cases and Verify
+  trailers required), `spec:cwr` for the pack, `docs`, `tooling`,
+  `review:<area>`, `suite`, `campaign`, `release`, `chore`. Subject is
+  imperative, capitalised, 72 characters at most, no final period. The body
+  says what changed and why. An AI agent always adds its Co-Authored-By line.
+- Push immediately: `git pull --rebase origin main && git push origin main`.
+  On an index lock or a rejected push, wait and retry; never force-push.
+- The pre-commit hook refuses credential files, credential-looking hunks and
+  files without the source header.
+
 ## The loop
 
 1. Read the task in `spec/cwr/spec.kvx` and the clauses it owns.

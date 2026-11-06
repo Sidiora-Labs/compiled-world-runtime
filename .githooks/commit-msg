@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Enforces the CWR commit message format. Enable with: git config core.hooksPath .githooks
+set -euo pipefail
+exec python3 "$(git rev-parse --show-toplevel)/tools/commit_msg.py" "$1"

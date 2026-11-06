@@ -64,6 +64,8 @@ STYLE_BY_NAME: dict[str, tuple[str, str]] = {
     "LICENSE": ("# ", ""),
     "NOTICE": ("# ", ""),
     "Dockerfile": ("# ", ""),
+    "commit-msg": ("# ", ""),  # git hooks under .githooks
+    "pre-commit": ("# ", ""),
     ".gitmodules": ("# ", ""),
     ".hyperfideignore": ("# ", ""),
 }

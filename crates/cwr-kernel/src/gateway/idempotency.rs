@@ -22,7 +22,12 @@
 //! design.body.md pillar 4), and `RATE_LIMITED`, which is the service declining to process the
 //! request at all and naming in `retry_after` when the same call may be repeated (clause 7.3: a
 //! retry is the model's decision, informed by `retry_after`; storing it would answer that retry
-//! with a stale rate limit and make `retry_after` meaningless for the key). A `pending` entry
+//! with a stale rate limit and make `retry_after` meaningless for the key). Releasing the key on
+//! `RATE_LIMITED` departs from the literal text of kernel.md section 7 ("the declared failure the
+//! call produced (a defect releases the key)"), under which a declared `RATE_LIMITED` would be
+//! stored; it is recorded as a deviation of task 2.3. The refworld manual's rate-limit example
+//! (manual/examples.md, repeat `publish.post` under the same key at `retry_at`) and the benchmark's
+//! reference simulator (benchmark/tasks/_authoring/refsim.py) both rely on the release. A `pending` entry
 //! left by a crash is visible through [`KeyStore::pending`] for recovery (task 2.4).
 
 use std::collections::BTreeMap;
@@ -343,6 +348,38 @@ impl KeyStore {
     pub fn slot(&self, adapter: &str, key: &str) -> Option<&Slot> {
         self.slots.get(&(adapter.to_string(), key.to_string()))
     }
+
+    /// Reads the store under `dir` without creating anything: an absent directory is an empty
+    /// store. Used by `cwr instance keys`, which must not write to the Instance it inspects.
+    pub fn read(dir: &Path) -> Result<KeyStore, String> {
+        if dir.is_dir() {
+            KeyStore::open(dir)
+        } else {
+            Ok(KeyStore {
+                path: dir.join(STORE_FILE),
+                slots: BTreeMap::new(),
+            })
+        }
+    }
+
+    /// Every completed slot as one `done` event (`adapter`, `key`, `payload_hash`,
+    /// `request_hash`, `outcome`, `failure`), in (adapter, key) order; pending slots are omitted.
+    pub fn done_events(&self) -> Vec<Value> {
+        self.slots
+            .iter()
+            .filter_map(|((adapter, key), slot)| match slot {
+                Slot::Done {
+                    payload_hash,
+                    request_hash,
+                    outcome,
+                } => {
+                    let (ok, failure) = outcome.fields();
+                    Some(json!({"event": "done", "adapter": adapter, "key": key, "payload_hash": payload_hash, "request_hash": request_hash, "outcome": ok, "failure": failure}))
+                }
+                Slot::Pending { .. } => None,
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -407,6 +444,33 @@ mod tests {
         );
         assert!(failed.describe().contains("TIMEOUT"));
         assert!(s.pending().is_empty());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn read_lists_done_slots_without_creating_anything() {
+        let d = tmp("c");
+        let empty = KeyStore::read(&d).unwrap();
+        assert!(empty.done_events().is_empty());
+        assert!(!d.exists());
+        let mut s = KeyStore::open(&d).unwrap();
+        s.begin("publish.post", "\"a\"", "sha256:pa", "sha256:ra")
+            .unwrap();
+        s.begin("publish.post", "\"b\"", "sha256:pb", "sha256:rb")
+            .unwrap();
+        let receipt = Stored::Ok(json!({"post_id": "p1"}));
+        s.complete("publish.post", "\"b\"", "sha256:pb", "sha256:rb", &receipt)
+            .unwrap();
+        drop(s);
+        let events = KeyStore::read(&d).unwrap().done_events();
+        assert_eq!(
+            events,
+            vec![
+                json!({"event": "done", "adapter": "publish.post", "key": "\"b\"",
+                "payload_hash": "sha256:pb", "request_hash": "sha256:rb",
+                "outcome": {"post_id": "p1"}, "failure": null})
+            ]
+        );
         let _ = fs::remove_dir_all(&d);
     }
 

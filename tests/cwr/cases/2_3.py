@@ -57,6 +57,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.request
 from pathlib import Path
 
@@ -67,6 +68,13 @@ REFWORLD = REPO / "examples/refworld"
 STUBS = REPO / "benchmark/stubs"
 CLAUSES = ["1.3", "7.1", "7.2", "7.3", "7.4", "7.5", "7.6"]
 TIMEOUT = 900
+# The driver's aligned copies of refworld raise limits.wall_ms from 30 s to this. wall_ms is a host
+# timer on the whole turn (kernel.md section 3, not a clause of task 2.3); the failure-path turns
+# carry many adapter calls plus timeout stalls, and on a host loaded by parallel builds one adapter
+# call can take several seconds of host time, which would end a 30 s turn with LIMIT wall_ms before
+# the gateway behaviour under test is observed. The byte-identical shipped refworld keeps 30 s and
+# is driven with short turns instead (shipped_refworld).
+WALL_MS = 300000
 ENDPOINT_PATHS = {
     "search.query": "/v1/query",
     "publish.post": "/v1/post",
@@ -156,23 +164,25 @@ def request_hash(adapter: str, params: dict) -> str:
 # ------------------------------------------------------------------------------------------------
 
 
+STUB_LAUNCH = (
+    "import os, runpy, sys; p = os.environ['CWR_2_3_STUB_SERVER']; sys.argv = [p] + sys.argv[1:]; "
+    "runpy.run_path(p, run_name='__main__')"
+)
+
+
 class Stub:
     def __init__(self, name: str, seed: int, scratch: Path) -> None:
         self.name = name
+        # Started through runpy with the stub path in the environment, so the command line names no
+        # stub file: a host-wide `pkill -f <name>_server.py` from a concurrent run cannot end this
+        # stub mid-scenario (its schedule, request log and rate windows live in the process).
         self.proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-I",
-                str(STUBS / f"{name}_server.py"),
-                "--port",
-                "0",
-                "--seed",
-                str(seed),
-            ],
+            [sys.executable, "-I", "-c", STUB_LAUNCH, "--port", "0", "--seed", str(seed)],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=(scratch / f"stub-{name}-{seed}.stderr.log").open("w"),
             text=True,
             cwd=scratch,
+            env={**os.environ, "CWR_2_3_STUB_SERVER": str(STUBS / f"{name}_server.py")},
         )
         line = self.proc.stdout.readline()
         ready = json.loads(line)
@@ -242,7 +252,7 @@ class Listener:
 # filesystem allows it: a direct socket; a child process started through _posixsubprocess.fork_exec,
 # which raises no audit event (so an interpreter-level guard alone cannot see it), whose child connects;
 # and the kernel's view of the process (/proc/self/status Seccomp and NoNewPrivs).
-PROBE_FN = """def _probe_network() -> None:
+PROBE_IMPL = """def _probe_impl() -> None:
     b = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
     imp = b["__imp" + "ort__"]
     notes = []
@@ -276,8 +286,27 @@ PROBE_FN = """def _probe_network() -> None:
 """
 
 
+# The compiler's closure lint (CWR-L001, crates/cwr-compiler/src/pyimports.rs) refuses
+# `__builtins__`, `vars`, `exec` and the other reflective routes by token. A hostile author is not
+# bound by that list's spelling: Python folds identifiers to NFKC, so the fullwidth `ｅｘｅｃ` below
+# is the builtin `exec` at run time while the lexical lint sees an unknown name. The probe body
+# travels as a string literal, which the lint skips. This is what lets the probe reach the
+# kernel's runtime network seal (clause 7.1's defence in depth) from compiled world code at all;
+# the same probe written with plain names is refused at build time (closure_lint_refuses_probe).
+EXEC_NFKC = "\uff45\uff58\uff45\uff43"
+
+
+def probe_impl(port: int, report: Path) -> str:
+    return PROBE_IMPL.replace("__PROBE_PORT__", str(port)).replace("__PROBE_REPORT__", str(report))
+
+
 def probe_code(port: int, report: Path) -> str:
-    return PROBE_FN.replace("__PROBE_PORT__", str(port)).replace("__PROBE_REPORT__", str(report))
+    return (
+        "def _probe_network() -> None:\n"
+        "    ns = {}\n"
+        f"    {EXEC_NFKC}({probe_impl(port, report)!r}, ns)\n"
+        '    ns["_probe_impl"]()\n'
+    )
 
 
 def probe_report(report: Path) -> list[str]:
@@ -286,7 +315,7 @@ def probe_report(report: Path) -> list[str]:
 
 LIB_PROBE = (
     "\n\n"
-    + PROBE_FN
+    + "__PROBE_CODE__"
     + """
 
 def version(state: Any) -> str:"""
@@ -336,6 +365,11 @@ class World:
         `probe-<name>.txt` in the scratch directory."""
         src = self.scratch / name
         shutil.copytree(REFWORLD, src, ignore=shutil.ignore_patterns("README.md", "__pycache__"))
+        wk = src / "world.kvx"
+        w, n = re.subn(r"(?m)^wall_ms = \d+$", f"wall_ms = {WALL_MS}", wk.read_text())
+        if n != 1:
+            raise SystemExit("could not set limits.wall_ms in the copy of world.kvx")
+        wk.write_text(w)
         # The shipped adapters speak the stub wire protocol; only the network probe is added,
         # called first thing in publish.delete.
         report = self.scratch / f"probe-{name}.txt"
@@ -362,9 +396,7 @@ class World:
             raise SystemExit("could not place the network probe in lib/world.py")
         s = s.replace(
             old,
-            LIB_PROBE.replace("__PROBE_PORT__", str(probe_port)).replace(
-                "__PROBE_REPORT__", str(report)
-            ),
+            LIB_PROBE.replace("__PROBE_CODE__", probe_code(probe_port, report)),
             1,
         )
         s = re.sub(
@@ -533,6 +565,22 @@ def code(o: dict | None) -> str | None:
     return None if "ok" in o else o.get("code")
 
 
+def completed(clause: str, what: str, rc: int, env: dict | None, err: str) -> dict | None:
+    """The `returned` object of a turn that completed with status ok. Anything else (no envelope, or a
+    partial/error envelope such as LIMIT wall_ms with `returned: null`) is recorded as a FAIL of
+    `clause` with the envelope's status and error as evidence, and None is returned."""
+    r = (env or {}).get("returned")
+    if env is not None and env.get("status") == "ok" and isinstance(r, dict):
+        return r
+    R.check(
+        clause,
+        False,
+        f"{what}: turn did not complete (rc={rc} status={(env or {}).get('status')} "
+        f"error={(env or {}).get('error')}) {err[-300:] if env is None else ''}",
+    )
+    return None
+
+
 def contracts(build: Path) -> dict[str, dict]:
     c = json.loads((build / "contracts.json").read_text())
     return {p["name"]: p for p in c["primitives"] + c["adapters"]}
@@ -685,13 +733,13 @@ def failure_paths(
         ("p_repeat_rl", "publish.post", {"key": "k5", "title": "T", "body": "b"}),
         ("p_natural_rl", "publish.post", {"key": "k9", "title": "T", "body": "b"}),
     ]
-    for calls in (t1, t2):
+    for n, calls in ((1, t1), (2, t2)):
         rc, env, err, _took = world.turn(iid, script(calls))
         all_calls += calls
-        if env is None:
-            R.check("7.2", False, f"turn failed rc={rc} {err[-400:]}")
+        got = completed("7.2", f"failure-path turn {n}", rc, env, err)
+        if got is None:
             return
-        outcomes.update(env["returned"])
+        outcomes.update(got)
     receipt = outcomes["p_ok"].get("ok") or {}
     pid = receipt.get("id", "none")
     # Turn 3: publish.status (natural) and publish.delete.
@@ -708,18 +756,21 @@ def failure_paths(
     # Turn 4: the stub's own search rate limit (10 accepted per 50 ticks), then a world primitive that
     # runs lib/ (world.version, carrying the network probe).
     t4 = [(f"q{i}", "search.query", {"q": f"topic {i}", "limit": 2}) for i in range(11)]
-    for calls, tail in ((t3, ""), (t4, "r['version'] = world.version()")):
+    for n, calls, tail in ((3, t3, ""), (4, t4, "r['version'] = world.version()")):
         rc, env, err, _took = world.turn(iid, script(calls, tail))
         all_calls += calls
-        if env is None:
-            R.check("7.2", False, f"turn failed rc={rc} {err[-400:]}")
+        got = completed("7.2", f"failure-path turn {n}", rc, env, err)
+        if got is None:
             return
-        outcomes.update(env["returned"])
+        outcomes.update(got)
     # Turn 5: the key store holds across turns: identical replay of k1 sends nothing.
     t5 = [("p_replay_turn5", "publish.post", {"key": "k1", "title": "T", "body": "hello"})]
     rc, env, err, _took = world.turn(iid, script(t5))
     all_calls += t5
-    outcomes.update((env or {}).get("returned") or {})
+    got = completed("7.4", "failure-path turn 5", rc, env, err)
+    if got is None:
+        return
+    outcomes.update(got)
 
     recs = world.adapter_records(iid)
     by_label: dict[str, dict] = {}
@@ -1137,12 +1188,12 @@ def modes(world: World, build: Path, stubs: dict[str, Stub], scratch: Path) -> N
             cassette=cas,
             extra=["--cassette-label", "cwr-009/seed-21"],
         )
-        if env is None:
-            R.check("7.5", False, f"record turn failed rc={rc} {err[-400:]}")
+        got = completed("7.5", f"record turn {i + 1}", rc, env, err)
+        if got is None:
             return
         rec_envs.append(env)
         if i == 0:
-            pid = (env["returned"]["d"].get("ok") or {}).get("id")
+            pid = ((got.get("d") or {}).get("ok") or {}).get("id")
     got = {**rec_envs[0]["returned"], **rec_envs[1]["returned"]}
     # l repeats f (key r2), which was RATE_LIMITED: the key was released, so l is sent and accepted.
     R.check(
@@ -1222,7 +1273,7 @@ def modes(world: World, build: Path, stubs: dict[str, Stub], scratch: Path) -> N
     R.check(
         "7.5",
         env is not None
-        and code(env["returned"]["a"]) is None
+        and code(((env or {}).get("returned") or {}).get("a")) is None
         and rc2 != 0
         and env2 is None
         and not new_scratch
@@ -1250,12 +1301,12 @@ def modes(world: World, build: Path, stubs: dict[str, Stub], scratch: Path) -> N
         rc, env, err, _ = world.turn(
             pid_, script(calls), mode="replay", cassette=cas, stubs=offline, strace_out=so
         )
-        if env is None:
-            R.check("7.5", False, f"replay turn failed rc={rc} {err[-400:]}")
+        got = completed("7.5", f"replay turn {i + 1}", rc, env, err)
+        if got is None:
             return
         rep_envs.append(env)
         if i == 0:
-            pidv = (env["returned"]["d"].get("ok") or {}).get("id")
+            pidv = ((got.get("d") or {}).get("ok") or {}).get("id")
         lines = so.read_text().splitlines()
         traced += sum(1 for ln in lines if "socket" in ln)
         inet += [ln for ln in lines if re.search(r"AF_INET6?\b|sin6?_port", ln)]
@@ -1376,20 +1427,20 @@ def modes(world: World, build: Path, stubs: dict[str, Stub], scratch: Path) -> N
         t1 == t2 == t3 and len(t1) == 3,
         f"three Instances under equal visible conditions give equal outcomes (status, code, shape, side-effect) for every adapter call: {t1}",
     )
-    pay1 = (e1 or {}).get("returned", {}).get("a", {}).get("ok")
-    pay3 = (e3 or {}).get("returned", {}).get("a", {}).get("ok")
+    pay1 = (((e1 or {}).get("returned") or {}).get("a") or {}).get("ok")
+    pay3 = (((e3 or {}).get("returned") or {}).get("a") or {}).get("ok")
     R.check(
         "1.3",
         pay1 is not None
         and pay3 is not None
         and pay1 != pay3
-        and canonical(e1["returned"]) == canonical(e2["returned"]),
+        and canonical(e1["returned"]) == canonical((e2 or {}).get("returned")),
         "the payload of search.query differs under a service with another content seed while the outcome is equal: payload equality is not claimed",
     )
     tr = [
         t
         for e in (e1, e2, e3)
-        for t in (e or {}).get("trace", [])
+        for t in (e or {}).get("trace") or []
         if t["primitive"] in ("search.query", "publish.post")
     ]
     m = re.search(
@@ -1452,6 +1503,26 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
         f"({len(cases)} cases, three builds); the probe listener saw {probe.count} connections: the compiler's world-code worker has no network; "
         f"the probe's {len(main_report)} reports all say the direct socket and the _posixsubprocess.fork_exec child were refused ({main_report[:1]})",
     )
+    # Compile-time closure: the same probe with plain reflective names (`__builtins__`, `vars`) in
+    # lib/world.py is refused by cwr build before any world code runs.
+    plain = world.prepare(probe.port, "src-plain-probe")
+    lw = plain / "lib/world.py"
+    lw.write_text(
+        lw.read_text().rstrip("\n")
+        + "\n\n\n"
+        + probe_impl(probe.port, world.scratch / "probe-plain.txt")
+    )
+    rc4, rep4, _err4 = world.compile(plain, "builds-plain-probe")
+    msgs4 = diagnostics(rep4)
+    refl = [m for m in msgs4 if "__builtins__" in m]
+    R.check(
+        "7.1",
+        rc4 != 0
+        and not (rep4.get("build") or {}).get("dir")
+        and bool(refl)
+        and not probe_report(world.scratch / "probe-plain.txt"),
+        f"closure_lint_refuses_probe: lib/world.py carrying the probe with plain reflective names is refused by cwr build (exit {rc4}, {len(msgs4)} diagnostics: {refl[:1]}) and none of it ran",
+    )
     # No bubblewrap (CWR_BWRAP names a missing file): the worker's audit hook plus the kernel's seccomp
     # network seal, which an escape past the hook (a process spawned without any audit event) would meet.
     nb = world.prepare(probe.port, "src-no-bwrap")
@@ -1509,12 +1580,13 @@ def compile_time(world: World, build: Path, probe: Listener) -> None:
 
 def rate_limit_retry(world: World, build: Path, stubs: dict[str, Stub]) -> None:
     """7.3 and 7.4: the manual's same-key retry after RATE_LIMITED works as documented. The stub's own
-    window (three accepted posts per 100 ticks) rate-limits the fourth post; the script waits retry_after
-    ticks of world time and repeats the identical call under the same key."""
+    window (three accepted posts per 100 ticks) rate-limits the fourth post; the script returns
+    retry_at = now + retry_after, the model waits by ending turns (conventions.md: "waiting means
+    ending the turn"), and a later turn repeats the identical call under the same key."""
     for s in stubs.values():
         s.schedule([], allow_undeclared=False)
     iid = world.create(build, 51)
-    body = (
+    first = (
         PRE
         + """import world
 r = {}
@@ -1523,21 +1595,46 @@ for i in (1, 2, 3):
 r['d4'] = call(publish.post, key='digest-4', title='Digest 4', body='b')
 r['retry_at'] = world.now() + r['d4']['retry_after'] if 'retry_after' in r['d4'] and r['d4']['retry_after'] else -1
 r['d4_now'] = call(publish.post, key='digest-4', title='Digest 4', body='b')
-while world.now() < r['retry_at']:
+return r
+"""
+    )
+    rc, env, err, _ = world.turn(iid, first)
+    o = completed("7.3", "rate-limit turn (posts d1..d4)", rc, env, err)
+    if o is None:
+        return
+    retry_at = o.get("retry_at", -1)
+    # Wait turns: each executed turn advances world time by tick_per_turn (plus one tick for now()).
+    waited, now = 0, -1
+    while retry_at > 0 and waited < 20:
+        rc, env, err, _ = world.turn(iid, "import world\nreturn world.now()\n")
+        if env is None or env.get("status") != "ok" or not isinstance(env.get("returned"), int):
+            R.check(
+                "7.3",
+                False,
+                f"rate-limit wait turn {waited + 1} did not complete (rc={rc} {(env or {}).get('error')})",
+            )
+            return
+        waited, now = waited + 1, env["returned"]
+        if now + 1 >= retry_at:
+            break
+    last = (
+        PRE
+        + f"""import world
+r = {{}}
+while world.now() < {retry_at}:
     pass
 r['d4_after'] = call(publish.post, key='digest-4', title='Digest 4', body='b')
 r['d4_again'] = call(publish.post, key='digest-4', title='Digest 4', body='b')
 return r
 """
     )
-    rc, env, err, _ = world.turn(iid, body)
-    if not R.check(
-        "7.3",
-        env is not None,
-        f"rate-limit retry turn ran (rc={rc}) {err[-300:] if env is None else ''}",
-    ):
+    rc, env, err, _ = world.turn(iid, last)
+    after = completed(
+        "7.3", f"rate-limit retry turn (after {waited} wait turns, now {now})", rc, env, err
+    )
+    if after is None:
         return
-    o = env["returned"]
+    o.update(after)
     recs = world.adapter_records(iid)
     rh = request_hash("publish.post", {"key": "digest-4", "title": "Digest 4", "body": "b"})
     d4 = [r for r in recs if (r.get("gateway") or {}).get("request_hash") == rh]
@@ -1876,16 +1973,27 @@ def shipped_refworld(world: World, stubs: dict[str, Stub], scratch: Path) -> Non
     )
     calls_all: list[tuple[str, str, dict]] = []
     returned: dict[str, dict] = {}
+
+    def record(calls: list[tuple[str, str, dict]]) -> bool:
+        """Drives `calls` two per turn: the shipped world's wall_ms (30 s) must hold on a loaded host
+        with a timeout stall in the turn. The oracle below reads each outcome from the recorded
+        response, so how the calls are spread over turns does not change what is checked."""
+        nonlocal calls_all
+        for at in range(0, len(calls), 2):
+            chunk = calls[at : at + 2]
+            rc, env, err, _ = world.turn(iid, script(chunk), mode="record", cassette=cas)
+            got = completed(
+                "7.2", f"shipped refworld record turn {[c[0] for c in chunk]}", rc, env, err
+            )
+            if got is None:
+                return False
+            calls_all += chunk
+            returned.update(got)
+        return True
+
     for calls in (t1, t2):
-        rc, env, err, _ = world.turn(iid, script(calls), mode="record", cassette=cas)
-        if not R.check(
-            "7.2",
-            env is not None,
-            f"shipped refworld record turn ran (rc={rc}) {err[-300:] if env is None else ''}",
-        ):
+        if not record(calls):
             return
-        calls_all += calls
-        returned.update(env["returned"])
     entries = [json.loads(ln) for ln in cas.read_text().splitlines()[1:]]
     first_post = next(
         (e for e in entries if e["adapter"] == "publish.post" and e["params"]["key"] == "a1"), None
@@ -1903,15 +2011,8 @@ def shipped_refworld(world: World, stubs: dict[str, Stub], scratch: Path) -> Non
         ("d1", "publish.delete", {"post_id": pid}),
         ("d2", "publish.delete", {"post_id": pid}),
     ]
-    rc, env, err, _ = world.turn(iid, script(t3), mode="record", cassette=cas)
-    if not R.check(
-        "7.2",
-        env is not None,
-        f"shipped refworld record turn ran (rc={rc}) {err[-300:] if env is None else ''}",
-    ):
+    if not record(t3):
         return
-    calls_all += t3
-    returned.update(env["returned"])
     entries = {
         (e["adapter"], e["request_hash"], e["seq"]): e
         for e in (json.loads(ln) for ln in cas.read_text().splitlines()[1:])
@@ -1976,7 +2077,7 @@ def shipped_refworld(world: World, stubs: dict[str, Stub], scratch: Path) -> Non
         + f". Observed refworld/stub disagreements the gateway normalised as declared (task 4.1): statuses the shipped STATUS_CODES do not map {sorted(undeclared_statuses)} "
         f"went to undeclared_status; {empty_ok} ok results carry empty content because the shipped live.py reads keys the stub bodies do not have",
     )
-    codes = sorted({code(returned[ln]) or "ok" for ln, _, _ in calls_all})
+    codes = sorted({code(returned.get(ln)) or "ok" for ln, _, _ in calls_all})
     bad = [
         (r["primitive"], r["outcome"].get("code"))
         for r in recs_l
@@ -2003,7 +2104,11 @@ def main() -> int:
         probe = Listener()
         decoy = Listener()
         build = world.build(probe.port)
-        compile_time(world, build, probe)
+        try:
+            compile_time(world, build, probe)
+        except Exception as exc:
+            tb = traceback.format_exc().strip().splitlines()
+            R.check("7.1", False, f"compile_time raised {exc!r} at {tb[-3:]}")
         stubs = {
             "search": Stub("search", 7, scratch),
             "publish": Stub("publish", 7, scratch),
@@ -2014,13 +2119,20 @@ def main() -> int:
             "publish": stubs["publish"].url,
             "decoy": f"http://127.0.0.1:{decoy.port}",
         }
-        failure_paths(world, build, stubs, probe, decoy)
-        closure_and_endpoints(world, build, stubs)
-        modes(world, build, stubs, scratch)
-        rate_limit_retry(world, build, stubs)
-        retry_ratio(world, stubs, probe)
-        gateway_needs(world, probe)
-        shipped_refworld(world, stubs, scratch)
+        for clause, scenario, args in (
+            ("7.2", failure_paths, (world, build, stubs, probe, decoy)),
+            ("7.1", closure_and_endpoints, (world, build, stubs)),
+            ("7.5", modes, (world, build, stubs, scratch)),
+            ("7.3", rate_limit_retry, (world, build, stubs)),
+            ("7.2", retry_ratio, (world, stubs, probe)),
+            ("7.2", gateway_needs, (world, probe)),
+            ("7.2", shipped_refworld, (world, stubs, scratch)),
+        ):
+            try:
+                scenario(*args)
+            except Exception as exc:  # recorded as a clause failure with evidence, never swallowed
+                tb = traceback.format_exc().strip().splitlines()
+                R.check(clause, False, f"{scenario.__name__} raised {exc!r} at {tb[-3:]}")
         # Control: the very probe code, run on the host without any sandbox, does reach the listener,
         # so the zero counts above (cwr build and kernel turns, never reset) are real.
         before = probe.count

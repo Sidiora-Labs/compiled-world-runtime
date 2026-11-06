@@ -35,12 +35,28 @@ impl PartialOrd for Version {
     }
 }
 
+/// A string that is not a semantic version `MAJOR.MINOR.PATCH`; carries the refused text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionError(pub String);
+
+impl fmt::Display for VersionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?} is not a semantic version MAJOR.MINOR.PATCH",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for VersionError {}
+
 impl FromStr for Version {
-    type Err = String;
+    type Err = VersionError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split('.').collect();
-        let bad = || format!("{s:?} is not a semantic version MAJOR.MINOR.PATCH");
+        let bad = || VersionError(s.to_string());
         if parts.len() != 3 {
             return Err(bad());
         }
@@ -119,38 +135,84 @@ impl TypeExpr {
     }
 }
 
+/// Deepest nesting of `list[` and `dict[str, ` a type may use; the same bound as the KVX
+/// reader's JSON nesting limit, so no type text can exhaust the stack.
+pub const MAX_TYPE_DEPTH: usize = 64;
+
+/// Why a string is not a type of the closed type language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeError {
+    /// The text (the innermost refused part of a nested type) is not a builtin, a
+    /// `list[T]`, a `dict[str, T]` or a `CamelCase` record name.
+    NotAType(String),
+    /// The type nests `list[` and `dict[str, ` deeper than [`MAX_TYPE_DEPTH`] levels.
+    TooDeep(String),
+}
+
+impl fmt::Display for TypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeError::NotAType(s) => write!(
+                f,
+                "{s:?} is not a type: use str, int, bool, bytes, Path, None, list[T], dict[str, T] or a CamelCase record name"
+            ),
+            TypeError::TooDeep(s) => write!(
+                f,
+                "type {s:?} nests list[ and dict[ deeper than {MAX_TYPE_DEPTH} levels"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TypeError {}
+
+fn parse_type(whole: &str, s: &str, depth: usize) -> Result<TypeExpr, TypeError> {
+    Ok(match s {
+        "str" => TypeExpr::Str,
+        "int" => TypeExpr::Int,
+        "bool" => TypeExpr::Bool,
+        "bytes" => TypeExpr::Bytes,
+        "Path" => TypeExpr::Path,
+        "None" => TypeExpr::None,
+        _ => {
+            let inner = s
+                .strip_prefix("list[")
+                .and_then(|r| r.strip_suffix(']'))
+                .map(|r| (r, true))
+                .or_else(|| {
+                    s.strip_prefix("dict[str, ")
+                        .and_then(|r| r.strip_suffix(']'))
+                        .map(|r| (r, false))
+                });
+            if let Some((inner, list)) = inner {
+                if depth >= MAX_TYPE_DEPTH {
+                    let shown: String = whole.chars().take(80).collect();
+                    return Err(TypeError::TooDeep(shown));
+                }
+                let t = Box::new(parse_type(whole, inner, depth + 1)?);
+                if list {
+                    TypeExpr::List(t)
+                } else {
+                    TypeExpr::Dict(t)
+                }
+            } else {
+                let mut chars = s.chars();
+                let record = matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
+                    && chars.all(|c| c.is_ascii_alphanumeric());
+                if !record {
+                    return Err(TypeError::NotAType(s.to_string()));
+                }
+                TypeExpr::Record(s.to_string())
+            }
+        }
+    })
+}
+
 impl FromStr for TypeExpr {
-    type Err = String;
+    type Err = TypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "str" => TypeExpr::Str,
-            "int" => TypeExpr::Int,
-            "bool" => TypeExpr::Bool,
-            "bytes" => TypeExpr::Bytes,
-            "Path" => TypeExpr::Path,
-            "None" => TypeExpr::None,
-            _ => {
-                if let Some(inner) = s.strip_prefix("list[").and_then(|r| r.strip_suffix(']')) {
-                    TypeExpr::List(Box::new(inner.parse()?))
-                } else if let Some(inner) = s
-                    .strip_prefix("dict[str, ")
-                    .and_then(|r| r.strip_suffix(']'))
-                {
-                    TypeExpr::Dict(Box::new(inner.parse()?))
-                } else {
-                    let mut chars = s.chars();
-                    let record = matches!(chars.next(), Some(c) if c.is_ascii_uppercase())
-                        && chars.all(|c| c.is_ascii_alphanumeric());
-                    if !record {
-                        return Err(format!(
-                            "{s:?} is not a type: use str, int, bool, bytes, Path, None, list[T], dict[str, T] or a CamelCase record name"
-                        ));
-                    }
-                    TypeExpr::Record(s.to_string())
-                }
-            }
-        })
+        parse_type(s, s, 0)
     }
 }
 
@@ -316,5 +378,31 @@ mod tests {
         ] {
             assert!(bad.parse::<TypeExpr>().is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn deeply_nested_types_are_an_error_not_a_crash() {
+        let n = 10_000;
+        for open in ["list[", "dict[str, "] {
+            let text = format!("{}int{}", open.repeat(n), "]".repeat(n));
+            assert!(matches!(
+                text.parse::<TypeExpr>(),
+                Err(TypeError::TooDeep(_))
+            ));
+            let json = serde_json::to_string(&text).unwrap();
+            assert!(serde_json::from_str::<TypeExpr>(&json).is_err());
+        }
+        let ok = format!(
+            "{}int{}",
+            "list[".repeat(MAX_TYPE_DEPTH),
+            "]".repeat(MAX_TYPE_DEPTH)
+        );
+        assert_eq!(ok.parse::<TypeExpr>().unwrap().to_string(), ok);
+        let deep = format!(
+            "{}int{}",
+            "list[".repeat(MAX_TYPE_DEPTH + 1),
+            "]".repeat(MAX_TYPE_DEPTH + 1)
+        );
+        assert!(deep.parse::<TypeExpr>().is_err());
     }
 }

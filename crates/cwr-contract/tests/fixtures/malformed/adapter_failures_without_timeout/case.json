@@ -1,0 +1,15 @@
+{
+  "class": "adapter_failures_without_timeout",
+  "clause": "3.3",
+  "description": "An adapter failure set without TIMEOUT, which the gateway produces itself.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 17,
+      "col": 12,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Drift schedule fixture.
+
+[meta]
+format = "cwr.drift"
+schema_version = 1
+
+[drift.1]
+turn = 8
+primitive = "fs.delete"
+change = "precondition_added"
+expr = "path.parent"
+failure = "LOCKED"
+doc = "From turn 8, fs.delete refuses files of 4 KiB or more."

@@ -1,0 +1,15 @@
+{
+  "class": "adapter_undeclared_status_not_declared",
+  "clause": "3.3",
+  "description": "An undeclared_status that is not one of the adapter's declared failures.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 20,
+      "col": 21,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

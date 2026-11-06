@@ -1,0 +1,15 @@
+{
+  "class": "adapter_file_endpoint",
+  "clause": "3.3",
+  "description": "An endpoint with a local-file scheme.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 19,
+      "col": 12,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

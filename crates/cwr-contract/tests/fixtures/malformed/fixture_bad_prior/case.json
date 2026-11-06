@@ -1,0 +1,15 @@
+{
+  "class": "fixture_bad_prior",
+  "clause": "3.1",
+  "description": "A prior call with a key the prior-call shape does not define.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/search/query.kvx",
+      "line": 14,
+      "col": 10,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

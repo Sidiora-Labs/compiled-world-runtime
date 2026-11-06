@@ -179,63 +179,40 @@ impl Changelog {
     pub fn change(&self, id: &str) -> Option<&Change> {
         self.changes.iter().find(|c| c.id == id)
     }
+}
 
-    /// Model-level consistency rules, for a changelog that did not come from KVX.
-    pub fn consistency_errors(&self, migration_exists: &dyn Fn(&str) -> bool) -> Vec<String> {
-        let mut out = Vec::new();
-        for (i, r) in self.releases.iter().enumerate() {
-            if self.releases[..i].iter().any(|o| o.version == r.version) {
-                out.push(format!("release {} is declared twice", r.version));
+/// Why a path named as a migration is not one: the reasons the changelog and migration
+/// fixtures report, located at the naming value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationRefError {
+    /// The path is not under `migrations/`.
+    NotUnderMigrations(String),
+    /// The path is under `migrations/` but is not `migrations/<name>.py`.
+    NotAMigrationPath(String),
+    /// No such file exists in the source.
+    Missing(String),
+    /// The file does not define `migrate(state)` at top level.
+    NoMigrate(String),
+}
+
+impl std::fmt::Display for MigrationRefError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MigrationRefError::NotUnderMigrations(m) => {
+                write!(f, "migration {m:?} must be a path under migrations/")
             }
-            if !is_iso_date(&r.date) {
-                out.push(format!(
-                    "release {} date {:?} is not an ISO date",
-                    r.version, r.date
-                ));
+            MigrationRefError::NotAMigrationPath(m) => {
+                write!(f, "migration {m:?} must be migrations/<name>.py")
             }
-            if r.summary.trim().is_empty() {
-                out.push(format!("release {} summary is empty", r.version));
-            }
-        }
-        for (i, c) in self.changes.iter().enumerate() {
-            if self.changes[..i].iter().any(|o| o.id == c.id) {
-                out.push(format!("change {} is declared twice", c.id));
-            }
-            let owners = self
-                .releases
-                .iter()
-                .flat_map(|r| r.changes.iter())
-                .filter(|id| **id == c.id)
-                .count();
-            if owners != 1 {
-                out.push(format!(
-                    "change {} must belong to exactly one release, found {owners}",
-                    c.id
-                ));
-            }
-            if c.kind == ChangeKind::StateShape && c.migration.is_empty() {
-                out.push(format!(
-                    "CWR-M001: state_shape change {} declares no migration",
-                    c.id
-                ));
-            }
-            if !c.migration.is_empty() && !migration_exists(&c.migration) {
-                out.push(format!(
-                    "CWR-M001: change {} names migration {} which does not exist",
-                    c.id, c.migration
-                ));
+            MigrationRefError::Missing(m) => write!(f, "migration file {m} does not exist"),
+            MigrationRefError::NoMigrate(m) => {
+                write!(f, "migration file {m} does not define migrate(state)")
             }
         }
-        for r in &self.releases {
-            for id in &r.changes {
-                if self.change(id).is_none() {
-                    out.push(format!("release {} lists unknown change {id}", r.version));
-                }
-            }
-        }
-        out
     }
 }
+
+impl std::error::Error for MigrationRefError {}
 
 /// True exactly when `s` is a valid calendar date `YYYY-MM-DD` (leap years included).
 pub fn is_iso_date(s: &str) -> bool {
@@ -269,12 +246,12 @@ fn is_change_id(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Reads `CHANGELOG.kvx`. `migration_ok` returns `Err(message)` when a named migration path
-/// does not exist or is malformed.
+/// Reads `CHANGELOG.kvx`. `migration_ok` refuses a named migration path that does not exist
+/// or is malformed.
 pub(crate) fn read_changelog(
     ctx: &mut Ctx,
     doc: &Document,
-    migration_ok: &dyn Fn(&str) -> Result<(), String>,
+    migration_ok: &dyn Fn(&str) -> Result<(), MigrationRefError>,
 ) -> Option<Changelog> {
     let (example, _) = read::meta(ctx, doc, CHANGELOG_FORMAT, &[])?;
     let mut ok = true;

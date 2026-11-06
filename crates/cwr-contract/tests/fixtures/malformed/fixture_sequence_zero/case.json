@@ -1,0 +1,15 @@
+{
+  "class": "fixture_sequence_zero",
+  "clause": "3.1",
+  "description": "A fixture sequence of 0; sequences are one-based.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/search/query.kvx",
+      "line": 19,
+      "col": 12,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

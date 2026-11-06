@@ -1,0 +1,15 @@
+{
+  "class": "migration_fixture_missing_after",
+  "clause": "3.6",
+  "description": "A migration fixture case without the state migrate must return.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/kv/migration_0_2_0.kvx",
+      "line": 11,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

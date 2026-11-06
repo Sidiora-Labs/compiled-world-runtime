@@ -17,4 +17,6 @@ timeout_ms = 3000
 failures = ["INVALID", "LIMIT", "RATE_LIMITED", "UNAVAILABLE", "TIMEOUT"]
 content_guaranteed = true
 endpoint = "stub://search/v1/query"
+undeclared_status = "INVALID"
+retry_after_ratio = 7
 doc = "Search the external index; hits are content, not guaranteed."

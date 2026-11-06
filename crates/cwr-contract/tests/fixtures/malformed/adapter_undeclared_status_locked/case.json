@@ -1,0 +1,15 @@
+{
+  "class": "adapter_undeclared_status_locked",
+  "clause": "3.3",
+  "description": "An undeclared_status other than UNAVAILABLE or INVALID.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 20,
+      "col": 21,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

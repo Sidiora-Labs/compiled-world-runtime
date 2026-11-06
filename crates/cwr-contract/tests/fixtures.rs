@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cwr_contract::{SourceTree, WorldSource};
+use cwr_contract::{
+    AdapterFile, Code, ContractFile, DriftFile, ErrorKind, SourceTree, WorldSource,
+};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -73,6 +75,9 @@ fn valid_fixture_is_accepted_and_round_trips() {
     );
     assert_eq!(set.preconditions[1].code(), cwr_contract::Code::Limit);
     assert_eq!(src.adapter_contracts().count(), 1);
+    let query = src.adapter_contracts().next().unwrap();
+    assert_eq!(query.undeclared_status, Some(Code::Invalid));
+    assert_eq!(query.retry_ratio(), 7);
     assert_eq!(src.migrations[0].changes, ["kv_namespaces"]);
     assert_round_trips(&src, &tree);
 }
@@ -238,6 +243,52 @@ fn json_model_rejects_values_the_kvx_reader_would_reject() {
             "\"effects\": [\n            \"not fs.exists(path)\"\n          ]",
             "\"effects\": []",
         ),
+        // Fixture values and names.
+        ("\"primitive\": \"fs.delete\"", "\"primitive\": \"fs.nonexistent\""),
+        ("\"sequence\": 1,", "\"sequence\": -4,"),
+        ("\"sequence\": 1,", "\"sequence\": 0,"),
+        ("\"world_time\": 0,\n", "\"world_time\": 0, \"seed\": \"abc\",\n"),
+        (
+            "\"request_hash\": \"sha256:5531",
+            "\"request_hash\": \"sha256:XY31",
+        ),
+        // Adapter endpoint, optional keys and failure sets.
+        (
+            "\"endpoint\": \"stub://search/v1/query\"",
+            "\"endpoint\": \"file:///etc/passwd\"",
+        ),
+        (
+            "\"endpoint\": \"stub://search/v1/query\"",
+            "\"endpoint\": \"stub://a\\nb\"",
+        ),
+        (
+            "\"undeclared_status\": \"INVALID\"",
+            "\"undeclared_status\": \"LOCKED\"",
+        ),
+        ("\"retry_after_ratio\": 7", "\"retry_after_ratio\": 0"),
+        ("\"idempotency\": \"none\"", "\"idempotency\": \"key\""),
+        ("\"TIMEOUT\"\n", "\"REJECTED\"\n"),
+        // Names, modules and paths.
+        ("\"name\": \"search.query\"", "\"name\": \"search.Query\""),
+        ("\"name\": \"search.query\"", "\"name\": \"fs.query\""),
+        ("\"module\": \"search\"", "\"module\": \"Search\""),
+        ("\"path\": \"contracts/fs.kvx\"", "\"path\": \"contracts/kv2.kvx\""),
+        // Inventory: class, digest, completeness; migration links.
+        (
+            "\"path\": \"lib/fs.py\",\n      \"class\": \"lib\"",
+            "\"path\": \"lib/fs.py\",\n      \"class\": \"manual\"",
+        ),
+        ("\"sha256\": \"", "\"sha256\": \"zz"),
+        (
+            "\"path\": \"manual/intro.md\",",
+            "\"path\": \"manual/notes.md\",",
+        ),
+        ("\"changes\": [\n        \"kv_namespaces\"\n      ]\n    }\n  ],\n  \"fixtures\"", "\"changes\": []\n    }\n  ],\n  \"fixtures\""),
+        // Deep nesting is an error, not a crash.
+        (
+            "\"returns\": \"list[SearchHit]\"",
+            "\"returns\": \"list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[list[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\"",
+        ),
     ];
     for (old, new) in cases {
         assert!(json.contains(old), "fixture JSON lacks {old}");
@@ -246,5 +297,94 @@ fn json_model_rejects_values_the_kvx_reader_would_reject() {
             WorldSource::from_json(&tampered).is_err(),
             "accepted tampered model: {old} -> {new}"
         );
+    }
+}
+
+#[test]
+fn json_model_errors_are_typed_and_located() {
+    let src = WorldSource::load_dir(&fixtures().join("valid")).unwrap();
+    let json = src.to_json().expect("model serialises");
+    // A rule violation is the KVX reader's own error, located in the file it concerns.
+    let tampered = json.replacen(
+        "\"endpoint\": \"stub://search/v1/query\"",
+        "\"endpoint\": \"file:///etc/passwd\"",
+        1,
+    );
+    let errors = WorldSource::from_json(&tampered).unwrap_err();
+    assert_eq!(errors.0.len(), 1, "{errors}");
+    assert_eq!(errors.0[0].file, "adapters/search.kvx");
+    assert_eq!(errors.0[0].kind, ErrorKind::BadValue);
+    assert!(errors.0[0].line > 1);
+    // A reclassified inventory entry is reported at its path.
+    let tampered = json.replacen(
+        "\"path\": \"lib/fs.py\",\n      \"class\": \"lib\"",
+        "\"path\": \"lib/fs.py\",\n      \"class\": \"manual\"",
+        1,
+    );
+    let errors = WorldSource::from_json(&tampered).unwrap_err();
+    assert!(errors.0.iter().all(|e| e.file == "lib/fs.py"), "{errors}");
+    // JSON syntax errors carry the line and column of the JSON text.
+    let errors = WorldSource::from_json("{\n  \"world\": ]").unwrap_err();
+    assert_eq!(
+        (
+            errors.0[0].file.as_str(),
+            errors.0[0].line,
+            errors.0[0].kind
+        ),
+        ("<json>", 2, ErrorKind::Json)
+    );
+}
+
+#[test]
+fn single_files_parse_with_the_source_rules() {
+    let valid = fixtures().join("valid");
+    let read = |p: &str| fs::read_to_string(valid.join(p)).unwrap();
+    let contract = ContractFile::parse("contracts/fs.kvx", &read("contracts/fs.kvx")).unwrap();
+    assert_eq!(contract.module, "fs");
+    let adapter = AdapterFile::parse("adapters/search.kvx", &read("adapters/search.kvx")).unwrap();
+    assert_eq!(adapter.adapters[0].retry_ratio(), 7);
+    let drift = read("drift/drift-1.kvx");
+    let schedule = DriftFile::parse("drift/drift-1.kvx", &drift, &|n| n == "fs.delete").unwrap();
+    assert_eq!(schedule.entries[0].n, 1);
+    // The per-file reader refuses what load_tree refuses, located in the file.
+    let errors = DriftFile::parse("drift/drift-1.kvx", &drift, &|_| false).unwrap_err();
+    assert_eq!(errors.0[0].kind, ErrorKind::BadValue);
+    let leading_zero = drift.replace("[drift.1]", "[drift.01]");
+    let errors = DriftFile::parse("drift/drift-1.kvx", &leading_zero, &|_| true).unwrap_err();
+    assert_eq!(errors.0[0].kind, ErrorKind::UnknownSection);
+    let no_doc = drift.replace(
+        "doc = \"From turn 8, fs.delete refuses files of 4 KiB or more.\"\n",
+        "",
+    );
+    assert!(DriftFile::parse("drift/drift-1.kvx", &no_doc, &|_| true).is_err());
+    let unknown_key = format!("{drift}note = 1\n");
+    assert!(DriftFile::parse("drift/drift-1.kvx", &unknown_key, &|_| true).is_err());
+    // A path of another class is refused before reading.
+    let errors =
+        ContractFile::parse("adapters/search.kvx", &read("adapters/search.kvx")).unwrap_err();
+    assert_eq!(errors.0[0].kind, ErrorKind::UnknownFile);
+    // The module must match the file name.
+    assert!(ContractFile::parse("contracts/kv.kvx", &read("contracts/fs.kvx")).is_err());
+}
+
+#[test]
+fn deeply_nested_values_in_a_source_are_errors_not_crashes() {
+    let base = read_tree(&fixtures().join("valid"));
+    let n = 10_000;
+    let nested_expr = format!("{}len(q){} > 0", "(".repeat(n), ")".repeat(n));
+    let nested_type = format!("{}int{}", "list[".repeat(n), "]".repeat(n));
+    let adapter = |t: &SourceTree| {
+        String::from_utf8(t.files["adapters/search.kvx"].clone().unwrap()).unwrap()
+    };
+    for (old, new) in [
+        ("\"len(q) > 0\"", format!("\"{nested_expr}\"")),
+        ("\"list[SearchHit]\"", format!("\"{nested_type}\"")),
+    ] {
+        let mut t = base.clone();
+        let text = adapter(&t).replacen(old, &new, 1);
+        t.files
+            .insert("adapters/search.kvx".into(), Some(text.into_bytes()));
+        let errors = WorldSource::load_tree(&t).expect_err("bounded nesting");
+        assert_eq!(errors.0[0].file, "adapters/search.kvx", "{errors}");
     }
 }

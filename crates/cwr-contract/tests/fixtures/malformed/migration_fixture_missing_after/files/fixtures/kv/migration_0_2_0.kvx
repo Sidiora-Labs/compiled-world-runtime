@@ -1,0 +1,12 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Migration fixture.
+
+[meta]
+format = "cwr.migration-fixture"
+schema_version = 1
+module = "kv"
+migration = "migrations/0_2_0_kv_namespaces.py"
+
+[migration.flat]
+before = {"kv": {"a": "1"}}

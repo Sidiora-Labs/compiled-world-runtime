@@ -1,0 +1,15 @@
+{
+  "class": "fixture_bad_request_hash",
+  "clause": "3.1",
+  "description": "A fixture request_hash that is not sha256 and 64 lowercase hex digits.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/search/query.kvx",
+      "line": 18,
+      "col": 16,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

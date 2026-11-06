@@ -1,0 +1,20 @@
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
+# Adapter fixture for search.query in cassette form.
+
+[meta]
+format = "cwr.fixture"
+schema_version = 1
+module = "search"
+primitive = "search.query"
+
+[case.rate_limited]
+world_time = 0
+state = {}
+prior = [{"params": {"q": "tennis", "limit": 5}, "request_hash": "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9", "response": {"status": 503, "body": {}}, "sequence": 1, "world_time": 0}]
+params = {"q": "tennis", "limit": 5}
+expect = "RATE_LIMITED"
+precondition = null
+request_hash = "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9"
+sequence = 0
+response = {"status": 429, "body": {"retry_after": 30}}

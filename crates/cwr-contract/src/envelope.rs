@@ -7,7 +7,14 @@
 //! so no other code can be constructed in Rust, and its parser and deserialiser accept
 //! only the eleven exact upper-case spellings, so no other code can be parsed.
 //! `retry_after` exists only on [`Failure::RateLimited`], so a `retry_after` on any other
-//! code cannot be constructed, serialised or deserialised.
+//! code cannot be constructed, serialised or deserialised. `retry_after` is a non-negative
+//! tick count; `0` is a service saying the call may be repeated at once and stays valid.
+//!
+//! A `LIMIT` envelope names what was reached: either a [`LimitName`] (a `[limits]` key of
+//! `world.kvx`, which also names the per-turn call budgets) or the index of the declared
+//! size-rule precondition that failed. An `INVARIANT_VIOLATION` is raised after the
+//! preconditions passed, so it never carries a precondition index. [`Envelope::new`] and the
+//! deserialiser refuse every other combination with a typed [`EnvelopeError`].
 //!
 //! ```
 //! // The eleven codes and a RATE_LIMITED failure with retry_after are constructible.
@@ -164,6 +171,127 @@ impl<'de> Deserialize<'de> for Code {
     }
 }
 
+/// The name of a declared limit a `LIMIT` failure reports: the `[limits]` keys of `world.kvx`
+/// (world-source.md section 3). `primitive_calls` and `adapter_calls` are the per-turn call
+/// budgets. No other name can be constructed or parsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LimitName {
+    /// `cpu_ms`: CPU budget per turn script.
+    CpuMs,
+    /// `wall_ms`: wall budget per turn script.
+    WallMs,
+    /// `memory_mb`: memory budget of the sandbox process.
+    MemoryMb,
+    /// `primitive_calls`: primitive calls per turn.
+    PrimitiveCalls,
+    /// `adapter_calls`: external calls per turn.
+    AdapterCalls,
+}
+
+impl LimitName {
+    /// Every limit name, in the declared order of `[limits]` (equal to `Limits::NAMES`).
+    pub const ALL: [LimitName; 5] = [
+        LimitName::CpuMs,
+        LimitName::WallMs,
+        LimitName::MemoryMb,
+        LimitName::PrimitiveCalls,
+        LimitName::AdapterCalls,
+    ];
+
+    /// The exact wire spelling, e.g. `"memory_mb"`; the only spellings the parser accepts.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            LimitName::CpuMs => "cpu_ms",
+            LimitName::WallMs => "wall_ms",
+            LimitName::MemoryMb => "memory_mb",
+            LimitName::PrimitiveCalls => "primitive_calls",
+            LimitName::AdapterCalls => "adapter_calls",
+        }
+    }
+}
+
+impl FromStr for LimitName {
+    type Err = EnvelopeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        LimitName::ALL
+            .into_iter()
+            .find(|l| l.as_str() == s)
+            .ok_or_else(|| EnvelopeError::UnknownLimit(s.to_string()))
+    }
+}
+
+impl fmt::Display for LimitName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for LimitName {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LimitName {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(D::Error::custom)
+    }
+}
+
+/// Why a combination of code and payloads is not a failure envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnvelopeError {
+    /// `retry_after` on a code other than `RATE_LIMITED`.
+    RetryAfterNotAllowed(Code),
+    /// `RATE_LIMITED` without `retry_after`.
+    RetryAfterRequired,
+    /// `retry_after` that is not a non-negative integer; carries the JSON text.
+    RetryAfterNotTicks(String),
+    /// `limit` on a code other than `LIMIT`.
+    LimitNotAllowed(Code),
+    /// A `limit` name that is not a [`LimitName`].
+    UnknownLimit(String),
+    /// `LIMIT` naming neither a limit nor a failed precondition.
+    LimitUnnamed,
+    /// A precondition index on a code that is never raised by a precondition.
+    PreconditionNotAllowed(Code),
+}
+
+impl fmt::Display for EnvelopeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EnvelopeError::RetryAfterNotAllowed(code) => {
+                write!(f, "retry_after is allowed only on RATE_LIMITED, not on {code}")
+            }
+            EnvelopeError::RetryAfterRequired => {
+                f.write_str("RATE_LIMITED requires retry_after in ticks")
+            }
+            EnvelopeError::RetryAfterNotTicks(value) => write!(
+                f,
+                "retry_after must be a non-negative integer number of ticks, got {value}"
+            ),
+            EnvelopeError::LimitNotAllowed(code) => {
+                write!(f, "limit is allowed only on LIMIT, not on {code}")
+            }
+            EnvelopeError::UnknownLimit(name) => write!(
+                f,
+                "{name:?} is not a declared limit; LIMIT names one of cpu_ms, wall_ms, memory_mb, primitive_calls, adapter_calls"
+            ),
+            EnvelopeError::LimitUnnamed => f.write_str(
+                "LIMIT must name the limit or the failed size-rule precondition; both are null",
+            ),
+            EnvelopeError::PreconditionNotAllowed(code) => write!(
+                f,
+                "{code} is raised after the preconditions passed and carries no precondition index"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EnvelopeError {}
+
 /// World time in kernel-counted ticks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -180,16 +308,18 @@ pub enum Failure {
     Conflict,
     /// `INVALID`; carries no payload.
     Invalid,
-    /// `limit` names the limit when the failure comes from a declared world limit or per-turn budget.
+    /// `limit` names the limit when the failure comes from a declared world limit or per-turn
+    /// budget; a size-rule precondition names itself through the envelope's precondition.
     Limit {
-        /// Name of the limit that was reached, or `None` when no named limit applies.
-        limit: Option<String>,
+        /// The limit that was reached, or `None` when a declared precondition failed instead.
+        limit: Option<LimitName>,
     },
     /// `UNAVAILABLE`; carries no payload.
     Unavailable,
     /// `retry_after` is mandatory and counted in world ticks.
     RateLimited {
-        /// World ticks to wait before calling the same adapter again.
+        /// World ticks to wait before calling the same adapter again; `0` allows an
+        /// immediate repeat.
         retry_after: Ticks,
     },
     /// `TIMEOUT`; carries no payload.
@@ -229,9 +359,9 @@ impl Failure {
     }
 
     /// The limit name of a [`Failure::Limit`] that names one, `None` otherwise.
-    pub fn limit(&self) -> Option<&str> {
+    pub fn limit(&self) -> Option<LimitName> {
         match self {
-            Failure::Limit { limit } => limit.as_deref(),
+            Failure::Limit { limit } => *limit,
             _ => None,
         }
     }
@@ -241,15 +371,13 @@ impl Failure {
     pub fn from_parts(
         code: Code,
         retry_after: Option<Ticks>,
-        limit: Option<String>,
-    ) -> Result<Failure, String> {
+        limit: Option<LimitName>,
+    ) -> Result<Failure, EnvelopeError> {
         if code != Code::RateLimited && retry_after.is_some() {
-            return Err(format!(
-                "retry_after is allowed only on RATE_LIMITED, not on {code}"
-            ));
+            return Err(EnvelopeError::RetryAfterNotAllowed(code));
         }
         if code != Code::Limit && limit.is_some() {
-            return Err(format!("limit is allowed only on LIMIT, not on {code}"));
+            return Err(EnvelopeError::LimitNotAllowed(code));
         }
         Ok(match code {
             Code::NotFound => Failure::NotFound,
@@ -260,7 +388,7 @@ impl Failure {
             Code::Unavailable => Failure::Unavailable,
             Code::RateLimited => match retry_after {
                 Some(retry_after) => Failure::RateLimited { retry_after },
-                None => return Err("RATE_LIMITED requires retry_after in ticks".to_string()),
+                None => return Err(EnvelopeError::RetryAfterRequired),
             },
             Code::Timeout => Failure::Timeout,
             Code::Rejected => Failure::Rejected,
@@ -273,6 +401,8 @@ impl Failure {
 /// The failure envelope value:
 /// `{"code", "primitive", "precondition", ["retry_after",] "limit", "detail"}`.
 /// `retry_after` is present only for RATE_LIMITED; every other key is always present.
+/// Build one with [`Envelope::new`], which refuses the combinations the module documentation
+/// lists; the deserialiser applies the same rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Envelope {
     /// The code together with exactly the payload that code allows.
@@ -286,6 +416,31 @@ pub struct Envelope {
 }
 
 impl Envelope {
+    /// Builds an envelope, refusing a `LIMIT` that names neither a limit nor a precondition
+    /// and a precondition index on `INVARIANT_VIOLATION`.
+    pub fn new(
+        failure: Failure,
+        primitive: Option<String>,
+        precondition: Option<NonZeroU32>,
+        detail: Option<String>,
+    ) -> Result<Envelope, EnvelopeError> {
+        match (&failure, precondition) {
+            (Failure::Limit { limit: None }, None) => return Err(EnvelopeError::LimitUnnamed),
+            (Failure::InvariantViolation, Some(_)) => {
+                return Err(EnvelopeError::PreconditionNotAllowed(
+                    Code::InvariantViolation,
+                ))
+            }
+            _ => {}
+        }
+        Ok(Envelope {
+            failure,
+            primitive,
+            precondition,
+            detail,
+        })
+    }
+
     /// The envelope code of [`Envelope::failure`].
     pub fn code(&self) -> Code {
         self.failure.code()
@@ -328,7 +483,7 @@ struct RawEnvelope {
     #[serde(default, deserialize_with = "present")]
     retry_after: Option<serde_json::Value>,
     #[serde(deserialize_with = "required")]
-    limit: Option<String>,
+    limit: Option<LimitName>,
     #[serde(deserialize_with = "required")]
     detail: Option<String>,
 }
@@ -341,21 +496,16 @@ impl<'de> Deserialize<'de> for Envelope {
             Some(value) => match value.as_u64() {
                 Some(ticks) if value.is_u64() => Some(Ticks(ticks)),
                 _ => {
-                    return Err(D::Error::custom(format!(
-                        "retry_after must be a non-negative integer number of ticks, \
-                         got {value}"
+                    return Err(D::Error::custom(EnvelopeError::RetryAfterNotTicks(
+                        value.to_string(),
                     )))
                 }
             },
         };
         let failure =
             Failure::from_parts(raw.code, retry_after, raw.limit).map_err(D::Error::custom)?;
-        Ok(Envelope {
-            failure,
-            primitive: raw.primitive,
-            precondition: raw.precondition,
-            detail: raw.detail,
-        })
+        Envelope::new(failure, raw.primitive, raw.precondition, raw.detail)
+            .map_err(D::Error::custom)
     }
 }
 
@@ -435,23 +585,74 @@ mod tests {
             r#"{"code":"LOCKED","primitive":"p.q","precondition":1,"limit":null,"detail":null,"extra":1}"#,
             r#"{"code":"LOCKED","primitive":"p.q","precondition":1,"limit":null}"#,
             r#"{"code":"GONE","primitive":"p.q","precondition":1,"limit":null,"detail":null}"#,
+            r#"{"code":"LIMIT","primitive":"p.q","precondition":null,"limit":null,"detail":null}"#,
+            r#"{"code":"LIMIT","primitive":"p.q","precondition":null,"limit":"bogus_limit","detail":null}"#,
+            r#"{"code":"LIMIT","primitive":"p.q","precondition":1,"limit":"CPU_MS","detail":null}"#,
+            r#"{"code":"INVARIANT_VIOLATION","primitive":"p.q","precondition":1,"limit":null,"detail":null}"#,
         ] {
             assert!(serde_json::from_str::<Envelope>(bad).is_err(), "{bad}");
         }
+        // retry_after 0 is a valid immediate-retry signal; LIMIT may name a size-rule
+        // precondition instead of a limit.
+        for good in [
+            r#"{"code":"RATE_LIMITED","primitive":"p.q","precondition":null,"retry_after":0,"limit":null,"detail":null}"#,
+            r#"{"code":"LIMIT","primitive":"kv.set","precondition":2,"limit":null,"detail":null}"#,
+            r#"{"code":"LIMIT","primitive":null,"precondition":null,"limit":"adapter_calls","detail":null}"#,
+            r#"{"code":"INVARIANT_VIOLATION","primitive":"p.q","precondition":null,"limit":null,"detail":null}"#,
+        ] {
+            let env: Envelope = serde_json::from_str(good).unwrap();
+            assert_eq!(serde_json::to_string(&env).unwrap(), good);
+        }
+    }
+
+    #[test]
+    fn envelope_errors_are_typed() {
+        assert_eq!(
+            Failure::from_parts(Code::Timeout, Some(Ticks(1)), None),
+            Err(EnvelopeError::RetryAfterNotAllowed(Code::Timeout))
+        );
+        assert_eq!(
+            Failure::from_parts(Code::Locked, None, Some(LimitName::CpuMs)),
+            Err(EnvelopeError::LimitNotAllowed(Code::Locked))
+        );
+        assert_eq!(
+            Failure::from_parts(Code::RateLimited, None, None),
+            Err(EnvelopeError::RetryAfterRequired)
+        );
+        assert_eq!(
+            Envelope::new(Failure::Limit { limit: None }, None, None, None),
+            Err(EnvelopeError::LimitUnnamed)
+        );
+        assert_eq!(
+            Envelope::new(Failure::InvariantViolation, None, NonZeroU32::new(1), None),
+            Err(EnvelopeError::PreconditionNotAllowed(
+                Code::InvariantViolation
+            ))
+        );
+        assert_eq!(
+            "bogus".parse::<LimitName>(),
+            Err(EnvelopeError::UnknownLimit("bogus".into()))
+        );
+        let names: Vec<&str> = LimitName::ALL.iter().map(|l| l.as_str()).collect();
+        assert_eq!(names, crate::world::Limits::NAMES);
+        assert_eq!(
+            EnvelopeError::RetryAfterNotAllowed(Code::Timeout).to_string(),
+            "retry_after is allowed only on RATE_LIMITED, not on TIMEOUT"
+        );
     }
 
     #[test]
     fn every_code_has_a_constructible_envelope_and_round_trips() {
         for code in Code::ALL {
             let retry = (code == Code::RateLimited).then_some(Ticks(7));
-            let limit = (code == Code::Limit).then(|| "primitive_calls".to_string());
+            let limit = (code == Code::Limit).then_some(LimitName::PrimitiveCalls);
             let failure = Failure::from_parts(code, retry, limit).unwrap();
-            let env = Envelope {
-                failure,
-                primitive: Some("fs.delete".into()),
-                precondition: NonZeroU32::new(2),
-                detail: None,
+            let precondition = if code == Code::InvariantViolation {
+                None
+            } else {
+                NonZeroU32::new(2)
             };
+            let env = Envelope::new(failure, Some("fs.delete".into()), precondition, None).unwrap();
             let text = serde_json::to_string(&env).unwrap();
             assert_eq!(text.contains("retry_after"), code == Code::RateLimited);
             assert_eq!(serde_json::from_str::<Envelope>(&text).unwrap(), env);

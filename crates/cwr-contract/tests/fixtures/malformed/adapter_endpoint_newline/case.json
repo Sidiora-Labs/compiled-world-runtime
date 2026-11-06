@@ -1,0 +1,15 @@
+{
+  "class": "adapter_endpoint_newline",
+  "clause": "3.3",
+  "description": "An endpoint with an embedded newline.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 19,
+      "col": 12,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

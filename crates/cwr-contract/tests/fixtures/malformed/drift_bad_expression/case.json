@@ -1,0 +1,15 @@
+{
+  "class": "drift_bad_expression",
+  "clause": "3.1",
+  "description": "A drift entry whose expression is outside the precondition language.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "drift/drift-1.kvx",
+      "line": 13,
+      "col": 8,
+      "kind": "expression",
+      "code": "CWR-V002"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "class": "adapter_precondition_code_undeclared",
+  "clause": "3.3",
+  "description": "An adapter precondition raises a code outside its declared failures.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 14,
+      "col": 33,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

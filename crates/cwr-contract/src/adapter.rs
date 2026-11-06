@@ -4,10 +4,15 @@
 //! Adapter contracts, `adapters/<module>.kvx` (world-source.md section 7, clause 3.3).
 //!
 //! Shape rules: `side_effect` is `external`; `idempotency` is `none`, `natural` or `key`;
-//! `timeout_ms` is a positive integer; `endpoint` is non-empty; `failures` is a non-empty,
-//! duplicate-free subset of the envelope that contains `UNAVAILABLE` (CWR-F002, unknown
-//! codes CWR-F001); `content_guaranteed` is present and `false` (CWR-F002); `effects` is
-//! forbidden (CWR-C001): an adapter claims no effects over world state. Two optional keys
+//! `timeout_ms` is a positive integer; `endpoint` is an absolute `stub://`, `http://` or
+//! `https://` URI with a host and no whitespace or control characters (see
+//! [`endpoint_problem`]); `failures` is a non-empty, duplicate-free subset of the envelope
+//! that contains every code the gateway produces itself (kernel.md section 7): `UNAVAILABLE`
+//! and `TIMEOUT` always, `DUPLICATE_KEY` for a `key` adapter (CWR-F002, unknown codes
+//! CWR-F001); every precondition's code is one of `failures`, because the interface promises
+//! a valid result or a declared failure (CWR-F002); `content_guaranteed` is present and
+//! `false` (CWR-F002); `effects` is forbidden (CWR-C001): an adapter claims no effects over
+//! world state. This crate is the single owner of these rules. Two optional keys
 //! steer the gateway's normalisation (kernel.md section 7): `undeclared_status`, the code a
 //! service status the adapter does not map falls back to (`UNAVAILABLE`, the default, or
 //! `INVALID`, and it must be in `failures`), and `retry_after_ratio`, the positive integer
@@ -18,8 +23,9 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::Code;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, Errors};
 use crate::kvx::{Document, Json};
+use crate::source::FileClass;
 
 use crate::primitive::{self, Precondition};
 use crate::read::{self, Ctx, Keys};
@@ -123,49 +129,97 @@ pub struct AdapterFile {
     pub adapters: Vec<Adapter>,
 }
 
-/// Checks the adapter-specific rules on an already typed adapter (used for JSON input).
-pub fn adapter_shape_errors(a: &Adapter) -> Vec<String> {
-    let mut out = Vec::new();
-    if a.side_effect != SideEffect::External {
-        out.push(format!("{}: adapter side_effect must be external", a.name));
+impl AdapterFile {
+    /// Parses one `adapters/<module>.kvx` file on its own with exactly the rules
+    /// [`WorldSource::load_tree`](crate::WorldSource::load_tree) applies to it, apart from the
+    /// source-level ones (the module is declared in `world.modules`, names are unique across
+    /// files). `path` is the source-relative path; every error is located in it.
+    pub fn parse(path: &str, text: &str) -> Result<AdapterFile, Errors> {
+        crate::source::parse_file(path, text, FileClass::Adapter, read_adapter_file)
     }
-    if a.failures.is_empty() {
-        out.push(format!(
-            "{}: adapter failures must be non-empty (CWR-F002)",
-            a.name
-        ));
-    } else if !a.failures.contains(&Code::Unavailable) {
-        out.push(format!(
-            "{}: adapter failures must include UNAVAILABLE (CWR-F002)",
-            a.name
+}
+
+/// URI schemes an adapter endpoint may use: `stub` (resolved through the operator's stub
+/// map), `http` and `https`.
+pub const ENDPOINT_SCHEMES: [&str; 3] = ["stub", "http", "https"];
+
+/// Why `endpoint` is not a destination the adapter gateway may contact, or `None` when it is
+/// one: an absolute URI `<scheme>://<host>[:<port>][/<path>]` with a scheme from
+/// [`ENDPOINT_SCHEMES`], a DNS name or IPv4 host outside the link-local range 169.254.0.0/16,
+/// a port from 1 to 65535 when present, no user information and no whitespace or control
+/// characters anywhere.
+pub fn endpoint_problem(endpoint: &str) -> Option<String> {
+    if let Some(c) = endpoint
+        .chars()
+        .find(|c| c.is_whitespace() || c.is_control())
+    {
+        return Some(format!(
+            "endpoint must not contain whitespace or control characters, found U+{:04X}",
+            u32::from(c)
         ));
     }
-    for (i, c) in a.failures.iter().enumerate() {
-        if a.failures[..i].contains(c) {
-            out.push(format!("{}: adapter failures list {c} twice", a.name));
+    let Some((scheme, rest)) = endpoint.split_once("://") else {
+        return Some(format!(
+            "endpoint {endpoint:?} must be an absolute URI <scheme>://<host>[/<path>]"
+        ));
+    };
+    if !ENDPOINT_SCHEMES.contains(&scheme) {
+        return Some(format!(
+            "endpoint scheme {scheme:?} is not allowed; use stub, http or https"
+        ));
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return Some("endpoint must not carry user information".to_string());
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    if host.is_empty()
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Some(format!(
+            "endpoint host {host:?} must be a non-empty DNS name or IPv4 address"
+        ));
+    }
+    if host.starts_with("169.254.") {
+        return Some(format!(
+            "endpoint host {host} is a link-local address, which an adapter may not contact"
+        ));
+    }
+    if let Some(port) = port {
+        let valid = !port.is_empty()
+            && port.chars().all(|c| c.is_ascii_digit())
+            && port.parse::<u16>().is_ok_and(|p| p > 0);
+        if !valid {
+            return Some(format!("endpoint port {port:?} must be from 1 to 65535"));
         }
     }
-    if a.content_guaranteed {
-        out.push(format!(
-            "{}: adapter content_guaranteed must be false (CWR-F002)",
-            a.name
+    None
+}
+
+/// The codes `failures` must contain for an adapter of class `idempotency`, each with the
+/// reason the gateway needs it (kernel.md section 7).
+fn required_failures(idempotency: Option<Idempotency>) -> Vec<(Code, &'static str)> {
+    let mut out = vec![
+        (
+            Code::Unavailable,
+            "UNAVAILABLE is the mapping target for undeclared transport outcomes",
+        ),
+        (
+            Code::Timeout,
+            "TIMEOUT is what an expired timeout_ms becomes",
+        ),
+    ];
+    if idempotency == Some(Idempotency::Key) {
+        out.push((
+            Code::DuplicateKey,
+            "DUPLICATE_KEY is what a key adapter's store answers to a reused key with a \
+             different payload",
         ));
-    }
-    if a.endpoint.is_empty() {
-        out.push(format!("{}: adapter endpoint must be non-empty", a.name));
-    }
-    if let Some(c) = a.undeclared_status {
-        if !matches!(c, Code::Unavailable | Code::Invalid) {
-            out.push(format!(
-                "{}: adapter undeclared_status must be UNAVAILABLE or INVALID, got {c}",
-                a.name
-            ));
-        } else if !a.failures.contains(&c) {
-            out.push(format!(
-                "{}: adapter undeclared_status {c} is not in its declared failures",
-                a.name
-            ));
-        }
     }
     out
 }
@@ -233,9 +287,14 @@ pub(crate) fn read_adapter_file(ctx: &mut Ctx, doc: &Document, stem: &str) -> Op
         let timeout_ms = keys
             .req(ctx, "timeout_ms")
             .and_then(|e| read::positive(ctx, e));
-        let endpoint = keys
-            .req(ctx, "endpoint")
-            .and_then(|e| read::nonempty_string(ctx, e));
+        let endpoint = keys.req(ctx, "endpoint").and_then(|e| {
+            let s = read::nonempty_string(ctx, e)?;
+            if let Some(problem) = endpoint_problem(&s) {
+                ctx.bad(e, &e.value, format!("{name}: {problem}"));
+                return None;
+            }
+            Some(s)
+        });
         let failures = keys.req(ctx, "failures").and_then(|e| {
             let items = read::array(ctx, e)?;
             let mut codes: Vec<Code> = Vec::new();
@@ -254,15 +313,62 @@ pub(crate) fn read_adapter_file(ctx: &mut Ctx, doc: &Document, stem: &str) -> Op
                 return None;
             }
             if codes.is_empty() {
-                ctx.at(e, &e.value, ErrorKind::Adapter, format!("{name}: failures must be a non-empty subset of the envelope"));
+                ctx.at(
+                    e,
+                    &e.value,
+                    ErrorKind::Adapter,
+                    format!("{name}: failures must be a non-empty subset of the envelope"),
+                );
                 return None;
             }
-            if !codes.contains(&Code::Unavailable) {
-                ctx.at(e, &e.value, ErrorKind::Adapter, format!("{name}: failures must include UNAVAILABLE, the mapping target for undeclared transport outcomes"));
+            let missing: Vec<(Code, &str)> = required_failures(idempotency)
+                .into_iter()
+                .filter(|(c, _)| !codes.contains(c))
+                .collect();
+            if !missing.is_empty() {
+                let list: Vec<&str> = missing.iter().map(|(c, _)| c.as_str()).collect();
+                let why: Vec<&str> = missing.iter().map(|(_, w)| *w).collect();
+                ctx.at(
+                    e,
+                    &e.value,
+                    ErrorKind::Adapter,
+                    format!(
+                        "{name}: failures must include {}: {}",
+                        list.join(", "),
+                        why.join("; ")
+                    ),
+                );
                 return None;
             }
             Some(codes)
         });
+        if let (Some(pre), Some(declared), Some(e)) =
+            (&preconditions, &failures, section.get("preconditions"))
+        {
+            if let Json::Array(items) = &e.value.value {
+                for (i, (p, node)) in pre.iter().zip(items).enumerate() {
+                    if declared.contains(&p.code()) {
+                        continue;
+                    }
+                    let at = match &node.value {
+                        Json::Array(pair) => pair.get(1).unwrap_or(node),
+                        _ => node,
+                    };
+                    ctx.at(
+                        e,
+                        at,
+                        ErrorKind::Adapter,
+                        format!(
+                            "{name}: precondition {} raises {}, which is not among the declared \
+                             failures; an adapter returns a valid result or a declared failure",
+                            i + 1,
+                            p.code()
+                        ),
+                    );
+                    ok = false;
+                }
+            }
+        }
         let content_guaranteed = match keys.opt("content_guaranteed") {
             None => {
                 ctx.push(
@@ -415,7 +521,62 @@ pub(crate) fn emit(file: &AdapterFile) -> String {
         ));
         out.push_str(&format!("content_guaranteed = {}\n", a.content_guaranteed));
         out.push_str(&format!("endpoint = {}\n", q(&a.endpoint)));
+        if let Some(code) = a.undeclared_status {
+            out.push_str(&format!("undeclared_status = {}\n", q(code.as_str())));
+        }
+        if let Some(ratio) = a.retry_after_ratio {
+            out.push_str(&format!("retry_after_ratio = {ratio}\n"));
+        }
         out.push_str(&format!("doc = {}\n", q(&a.doc)));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoints_must_be_absolute_uris_the_gateway_may_contact() {
+        for good in [
+            "stub://search/v1/query",
+            "stub://publish",
+            "http://127.0.0.1:8001/v1/query",
+            "https://api.example.org/v2?x=1",
+        ] {
+            assert_eq!(endpoint_problem(good), None, "{good}");
+        }
+        for bad in [
+            " ",
+            "",
+            "file:///etc/passwd",
+            "http://169.254.169.254/latest",
+            "stub://a\nb",
+            "stub://search/v1 query",
+            "stub:///path",
+            "ftp://host/x",
+            "search/v1/query",
+            "http://user@host/x",
+            "http://host:0/x",
+            "http://host:99999/x",
+            "http://host:/x",
+            "http://[::1]/x",
+            "stub://a\u{7f}b",
+        ] {
+            assert!(endpoint_problem(bad).is_some(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn key_adapters_need_duplicate_key_and_every_adapter_needs_timeout() {
+        let codes = |i| -> Vec<Code> { required_failures(i).into_iter().map(|(c, _)| c).collect() };
+        assert_eq!(
+            codes(Some(Idempotency::None)),
+            [Code::Unavailable, Code::Timeout]
+        );
+        assert_eq!(
+            codes(Some(Idempotency::Key)),
+            [Code::Unavailable, Code::Timeout, Code::DuplicateKey]
+        );
+    }
 }

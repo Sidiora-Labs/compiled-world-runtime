@@ -1,0 +1,15 @@
+{
+  "class": "migration_fixture_before_not_object",
+  "clause": "3.6",
+  "description": "A migration fixture whose before state is not an object.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/kv/migration_0_2_0.kvx",
+      "line": 12,
+      "col": 10,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

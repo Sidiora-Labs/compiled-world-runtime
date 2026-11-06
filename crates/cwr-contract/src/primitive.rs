@@ -6,15 +6,18 @@
 //! Shape rules: `side_effect` is `read_only` or `mutating` (`external` is reserved for
 //! adapters); a mutating primitive declares at least one effect and a read_only primitive
 //! declares none; every precondition is an `[expression, code]` pair whose expression is
-//! in the precondition language and whose code is in the envelope; `doc` is non-empty.
+//! in the precondition language and whose code is in the envelope and is not
+//! `INVARIANT_VIOLATION` (the kernel raises that code only after the preconditions passed);
+//! `doc` is non-empty.
 
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::Code;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, Errors};
 use crate::kvx::{Document, Entry, Json};
 use crate::precondition::Expression;
 use crate::read::{self, Ctx, Keys};
+use crate::source::FileClass;
 use crate::types::{Params, SideEffect, TypeExpr};
 
 /// Required `meta.format` value of a `contracts/<module>.kvx` file.
@@ -70,6 +73,16 @@ pub struct ContractFile {
     pub primitives: Vec<Primitive>,
 }
 
+impl ContractFile {
+    /// Parses one `contracts/<module>.kvx` file on its own with exactly the rules
+    /// [`WorldSource::load_tree`](crate::WorldSource::load_tree) applies to it, apart from the
+    /// source-level ones (the module is declared in `world.modules`, names are unique across
+    /// files). `path` is the source-relative path; every error is located in it.
+    pub fn parse(path: &str, text: &str) -> Result<ContractFile, Errors> {
+        crate::source::parse_file(path, text, FileClass::Contract, read_contract)
+    }
+}
+
 pub(crate) fn read_params(ctx: &mut Ctx, entry: &Entry) -> Option<Params> {
     let members = read::object(ctx, entry)?;
     let mut out = Vec::new();
@@ -113,7 +126,7 @@ pub(crate) fn read_type(ctx: &mut Ctx, entry: &Entry) -> Option<TypeExpr> {
     match s.parse() {
         Ok(t) => Some(t),
         Err(m) => {
-            ctx.bad(entry, &entry.value, m);
+            ctx.bad(entry, &entry.value, m.to_string());
             None
         }
     }
@@ -209,6 +222,21 @@ pub(crate) fn read_preconditions(ctx: &mut Ctx, entry: &Entry) -> Option<Vec<Pre
             &format!("precondition {n} expression"),
         );
         let code = read_code(ctx, entry, &pair[1], &format!("precondition {n} failure"));
+        let code = match code {
+            Some(Code::InvariantViolation) => {
+                ctx.at(
+                    entry,
+                    &pair[1],
+                    ErrorKind::Shape,
+                    format!(
+                        "precondition {n} failure: INVARIANT_VIOLATION is raised by the kernel \
+                         after the preconditions passed; a precondition cannot declare it"
+                    ),
+                );
+                None
+            }
+            other => other,
+        };
         match (expr, code) {
             (Some(e), Some(c)) => out.push(Precondition(e, c)),
             _ => ok = false,

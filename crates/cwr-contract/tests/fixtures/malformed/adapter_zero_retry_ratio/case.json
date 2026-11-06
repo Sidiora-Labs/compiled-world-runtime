@@ -1,0 +1,15 @@
+{
+  "class": "adapter_zero_retry_ratio",
+  "clause": "3.3",
+  "description": "A retry_after_ratio that is not a positive integer.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 21,
+      "col": 21,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

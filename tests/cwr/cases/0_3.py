@@ -17,7 +17,10 @@ cargo, then drives `cwr contract ...` as a subprocess over
   located errors (file, line, column, kind, lint code) recorded in its case.json;
 * defects generated here on the fly: each of the eight no-default world keys removed in
   turn, a symbolic link, every code outside the envelope tried in a precondition, and
-  failure envelopes fed to `cwr contract envelope`.
+  failure envelopes fed to `cwr contract envelope`;
+* the Python reference KVX reader (core/cwr_core/kvx.py) on the same corpus: both readers
+  accept and refuse the same files, characters other readers treat as line breaks are
+  refused raw by both, and canonical KVX from `emit` reads back in Python.
 
 Prints one line per clause, `CLAUSE <req.ac> PASS|FAIL <evidence>`, and exits 0 only when
 every clause passes. Honours CARGO_TARGET_DIR; defaults to the workspace target dir.
@@ -36,6 +39,12 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / "core"))
+from cwr_core import kvx as core_kvx  # noqa: E402  importable only after the sys.path insert above
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import protocol  # noqa: E402  tests/cwr/cases/protocol.py, the runner protocol of every driver
+
 CRATE = REPO / "crates/cwr-contract"
 FIXTURES = CRATE / "tests/fixtures"
 VALID = FIXTURES / "valid"
@@ -70,6 +79,7 @@ class Results:
 
 
 R = Results()
+OBS = protocol.Observer("0.3", protocol.ok_bad(R))
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -411,21 +421,42 @@ def check_envelope(cwr: Cwr, scratch: Path, cargo_log: str) -> None:
         codes.returncode == 0 and listed == from_spec == SPEC_ENVELOPE,
         "cwr contract codes lists exactly the 11 codes of req.2 ac_3",
     )
-    # The Rust enum has exactly eleven fieldless or payload variants and no catch-all.
-    src = (CRATE / "src/envelope.rs").read_text()
-    body = re.search(r"pub enum Code \{(.*?)\}", src, re.S).group(1)
-    variants = re.findall(r"^\s*([A-Z][A-Za-z]+),", body, re.M)
+    # Behaviourally, the implementation accepts exactly the eleven codes: every candidate
+    # spelling is fed to the envelope parser and only the spec's codes are accepted.
+    candidates = sorted(
+        set(SPEC_ENVELOPE)
+        | {c.lower() for c in SPEC_ENVELOPE}
+        | {c.title() for c in SPEC_ENVELOPE}
+        | {c.replace("_", "") for c in SPEC_ENVELOPE}
+        | {f" {c}" for c in SPEC_ENVELOPE}
+        | {"OK", "ERROR", "FORBIDDEN", "RETRY", "INTERNAL", "GONE", "THROTTLED", "CANCELLED"}
+    )
+    accepted = []
+    for candidate in candidates:
+        probe = {
+            "code": candidate,
+            "primitive": "p.q",
+            "precondition": None,
+            "limit": "cpu_ms" if candidate == "LIMIT" else None,
+            "detail": None,
+        }
+        if candidate == "RATE_LIMITED":
+            probe["retry_after"] = 1
+        if cwr("envelope", json.dumps(probe)).returncode == 0:
+            accepted.append(candidate)
     R.check(
         "2.3",
-        len(variants) == 11 and "(" not in body,
-        f"enum Code has {len(variants)} fieldless variants",
+        sorted(accepted) == sorted(SPEC_ENVELOPE),
+        f"envelope parser accepts exactly the 11 codes out of {len(candidates)} candidates"
+        if sorted(accepted) == sorted(SPEC_ENVELOPE)
+        else f"accepted {accepted}",
     )
     # Every code builds a canonical envelope; retry_after appears only on RATE_LIMITED.
     for code in SPEC_ENVELOPE:
         env = {
             "code": code,
             "primitive": "fs.delete",
-            "precondition": 1,
+            "precondition": None if code == "INVARIANT_VIOLATION" else 1,
             "limit": "memory_mb" if code == "LIMIT" else None,
             "detail": "content",
         }
@@ -463,6 +494,11 @@ def check_envelope(cwr: Cwr, scratch: Path, cargo_log: str) -> None:
         "RATE_LIMITED retry_after string": dict(base, code="RATE_LIMITED", retry_after="30"),
         "retry_after on TIMEOUT": dict(base, code="TIMEOUT", retry_after=3),
         "limit on LOCKED": dict(base, limit="cpu_ms"),
+        "LIMIT naming neither a limit nor a precondition": dict(
+            base, code="LIMIT", precondition=None
+        ),
+        "LIMIT with an undeclared limit name": dict(base, code="LIMIT", limit="bogus_limit"),
+        "precondition on INVARIANT_VIOLATION": dict(base, code="INVARIANT_VIOLATION"),
         "precondition 0": dict(base, precondition=0),
         "extra key": dict(base, extra=1),
         "missing detail": {k: v for k, v in base.items() if k != "detail"},
@@ -470,6 +506,17 @@ def check_envelope(cwr: Cwr, scratch: Path, cargo_log: str) -> None:
     for label, env in rejects.items():
         p = cwr("envelope", json.dumps(env))
         R.check("2.3", p.returncode == 2, f"envelope rejected: {label}")
+    accepts = {
+        "RATE_LIMITED retry_after 0": dict(base, code="RATE_LIMITED", retry_after=0),
+        "LIMIT naming its size-rule precondition": dict(base, code="LIMIT"),
+        "INVARIANT_VIOLATION without precondition": dict(
+            base, code="INVARIANT_VIOLATION", precondition=None
+        ),
+    }
+    for label, env in accepts.items():
+        p = cwr("envelope", json.dumps(env))
+        ok = p.returncode == 0 and json.loads(p.stdout) == env
+        R.check("2.3", ok, f"envelope accepted: {label}" if ok else f"{label}: {p.stderr}")
     # No code outside the envelope parses inside a World Source either.
     pre = '[["fs.exists(path)", "NOT_FOUND"]]'
     for bad in [
@@ -538,17 +585,168 @@ def check_expressions(cwr: Cwr) -> None:
         R.check("3.2", p.returncode == 2 and "CWR-V002" in p.stderr, f"expression rejected: {bad}")
 
 
+def check_json_model(cwr: Cwr, scratch: Path) -> None:
+    """`dump --from-json` refuses every model the KVX reader would refuse."""
+    dump = json.loads(cwr("dump", str(VALID)).stdout)
+
+    def first(items: list, key: str, value: str) -> dict:
+        return next(i for i in items if i[key] == value)
+
+    def fixture_case(m: dict) -> dict:
+        return first(m["fixtures"], "path", "fixtures/search/query.kvx")["cases"][0]
+
+    def search(m: dict) -> dict:
+        return first(m["adapters"], "path", "adapters/search.kvx")["adapters"][0]
+
+    tampers = {
+        "fixture names an unknown primitive": lambda m: first(
+            m["fixtures"], "path", "fixtures/fs/delete.kvx"
+        ).update(primitive="fs.nonexistent"),
+        "fixture seed is a string": lambda m: fixture_case(m).update(seed="abc"),
+        "fixture sequence is negative": lambda m: fixture_case(m).update(sequence=-4),
+        "fixture sequence is zero": lambda m: fixture_case(m).update(sequence=0),
+        "inventory reclassifies a lib file": lambda m: first(
+            m["files"], "path", "lib/fs.py"
+        ).update({"class": "manual"}),
+        "inventory digest is not hex": lambda m: first(m["files"], "path", "lib/fs.py").update(
+            sha256="not-a-digest"
+        ),
+        "adapter endpoint is a local file": lambda m: search(m).update(
+            endpoint="file:///etc/passwd"
+        ),
+        "adapter undeclared_status LOCKED": lambda m: search(m).update(undeclared_status="LOCKED"),
+        "migration lists no changes": lambda m: m["migrations"][0].update(changes=[]),
+    }
+    for label, tamper in tampers.items():
+        model = json.loads(json.dumps(dump))
+        tamper(model)
+        path = scratch / "tampered.json"
+        path.write_text(json.dumps(model, indent=2) + "\n")
+        p = cwr("dump", "--from-json", str(path))
+        located_error = re.search(r"^[^:\s]+:\d+:\d+: ", p.stderr, re.M) is not None
+        R.check(
+            "3.1",
+            p.returncode == 2 and located_error,
+            f"JSON model refused with a located error: {label}"
+            if p.returncode == 2 and located_error
+            else f"{label}: exit {p.returncode} {p.stderr[:200]}",
+        )
+
+
+GRAMMAR_KINDS = {"syntax", "json", "duplicate_key", "duplicate_section"}
+
+
+def python_reads(path: Path) -> bool:
+    try:
+        core_kvx.loads(path.read_text(encoding="utf-8"), source=str(path))
+    except core_kvx.KVXError:
+        return False
+    return True
+
+
+def check_cross_reader(cwr: Cwr, scratch: Path) -> None:
+    """The Rust reader and the Python reference reader accept the same KVX lines."""
+    # Every KVX file of every malformed class: Python refuses it exactly when the Rust reader
+    # reports a grammar-level error (syntax, JSON, duplicate key or section) in it.
+    disagreements = []
+    files = 0
+    for case_dir in sorted(p for p in MALFORMED.iterdir() if p.is_dir()):
+        root = scratch / "cross" / case_dir.name
+        if not root.exists():
+            root = materialise(case_dir, scratch / "cross")
+        _, out = cwr.check_json(root)
+        grammar = (
+            {e["file"] for e in out if e["kind"] in GRAMMAR_KINDS}
+            if isinstance(out, list)
+            else set()
+        )
+        for path in sorted(root.rglob("*.kvx")):
+            rel = str(path.relative_to(root))
+            files += 1
+            if python_reads(path) == (rel in grammar):
+                disagreements.append(f"{case_dir.name}:{rel}")
+    R.check(
+        "3.1",
+        not disagreements,
+        f"Rust and Python readers agree on {files} KVX files"
+        + (f"; disagree on {disagreements[:5]}" if disagreements else ""),
+    )
+    # Raw line-break characters inside a value: both readers refuse; escaped, both accept and
+    # the canonical rendering reads back in Python with the same value.
+    anchor = 'doc = "Remove the file at path."'
+    for char in ["\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e"]:
+        name = f"U+{ord(char):04X}"
+        for raw in (True, False):
+            root = scratch / "breaks" / f"{ord(char):04x}-{'raw' if raw else 'escaped'}"
+            shutil.copytree(VALID, root)
+            path = root / "contracts/fs.kvx"
+            text = path.read_text(encoding="utf-8")
+            assert text.count(anchor) == 1
+            inner = char if raw else json.dumps(char)[1:-1]
+            path.write_text(
+                text.replace(anchor, f'doc = "Remove the{inner}file at path."'), encoding="utf-8"
+            )
+            code, out = cwr.check_json(root)
+            rust_ok = code == 0
+            py_ok = python_reads(path)
+            if raw:
+                ok = (
+                    not rust_ok
+                    and not py_ok
+                    and isinstance(out, list)
+                    and [(e["file"], e["kind"]) for e in out] == [("contracts/fs.kvx", "syntax")]
+                )
+                R.check(
+                    "3.1",
+                    ok,
+                    f"raw {name} refused by both readers"
+                    if ok
+                    else f"raw {name}: rust {out} python {py_ok}",
+                )
+                continue
+            emitted = scratch / "breaks" / f"{ord(char):04x}-emitted"
+            emit = cwr("emit", str(root), str(emitted))
+            back = emitted / "contracts/fs.kvx"
+            doc = None
+            if emit.returncode == 0 and python_reads(back):
+                doc = core_kvx.load(back)["primitive.fs.delete"]["doc"]
+            ok = rust_ok and py_ok and doc == f"Remove the{char}file at path."
+            R.check(
+                "3.1",
+                ok,
+                f"escaped {name} accepted by both readers and emitted readable by Python"
+                if ok
+                else f"escaped {name}: rust exit {code} python {py_ok} emitted doc {doc!r}",
+            )
+
+
 def main() -> int:
     binary, cargo_log = build()
     cwr = Cwr(binary)
     with tempfile.TemporaryDirectory(prefix="cwr-0_3-") as tmp:
         scratch = Path(tmp)
-        check_valid_sources(cwr, scratch)
-        check_malformed(cwr, scratch)
-        check_world_defaults(cwr, scratch)
-        check_symlink(cwr, scratch)
-        check_envelope(cwr, scratch, cargo_log)
-        check_expressions(cwr)
+        with OBS.observe("CWR-001.a2"):
+            check_valid_sources(cwr, scratch)
+        with OBS.observe("CWR-001.a1"):
+            check_malformed(cwr, scratch)
+        with OBS.observe("CWR-001.a1"):
+            check_world_defaults(cwr, scratch)
+        with OBS.observe("CWR-001.a1"):
+            check_symlink(cwr, scratch)
+        with (
+            OBS.observe("CWR-001.a3", match="compile_fail|contract codes lists"),
+            OBS.observe(
+                "CWR-001.a4",
+                match="envelope (rejected|parser accepts exactly)|precondition code .* rejected",
+            ),
+        ):
+            check_envelope(cwr, scratch, cargo_log)
+        with OBS.observe("CWR-001.a1", match="rejected"):
+            check_expressions(cwr)
+        check_cross_reader(cwr, scratch)
+        with OBS.observe("CWR-001.a1", match="refused"):
+            check_json_model(cwr, scratch)
+    OBS.emit()
     all_pass = True
     for clause in CLAUSES:
         bad, ok = R.bad[clause], R.ok[clause]

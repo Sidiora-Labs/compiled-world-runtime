@@ -4,9 +4,12 @@
 //! Contract-test fixtures `fixtures/<module>/*.kvx` and drift schedules `drift/*.kvx`.
 //!
 //! Fixture files are parsed strictly so that unknown sections and keys are rejected like
-//! every other World Source file; their values (states, parameters, recorded responses)
-//! stay generic JSON because their meaning belongs to the contract-test stage. The
-//! `expect` value is `"ok"` or one of the eleven envelope codes; nothing else parses.
+//! every other World Source file. States, parameters and recorded response bodies stay
+//! generic JSON because their meaning belongs to the contract-test stage; every other value
+//! is typed, so the JSON model refuses what the KVX reader refuses. The `expect` value is
+//! `"ok"` or one of the eleven envelope codes; `seed` is a non-negative integer; `sequence`
+//! is a one-based position or null; `request_hash` is `sha256:` and 64 lowercase hex digits,
+//! or null; `response` is an object or null; `prior` is a list of [`PriorCall`].
 //!
 //! The drift grammar is compiler.md section 10: `[drift.<n>]` with `turn`, `primitive`,
 //! `change`, `expr`, `failure` and `doc`.
@@ -17,11 +20,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::changelog::ChangeKind;
 use crate::envelope::Code;
-use crate::error::ErrorKind;
+use crate::error::{ErrorKind, Errors};
 use crate::kvx::{Document, Json};
 use crate::precondition::Expression;
 use crate::primitive;
 use crate::read::{self, Ctx, Keys};
+use crate::source::FileClass;
 
 /// Required `meta.format` value of a primitive or adapter fixture file.
 pub const FIXTURE_FORMAT: &str = "cwr.fixture";
@@ -67,8 +71,139 @@ impl<'de> Deserialize<'de> for Expect {
     }
 }
 
-fn present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
-    serde_json::Value::deserialize(d).map(Some)
+/// Deserialises a key that is present as `Some`, so `null` reaches `T` (an inner `Option` or a
+/// type that refuses it) instead of meaning "absent".
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+/// A canonical request hash, `sha256:` followed by 64 lowercase hex digits, as the adapter
+/// gateway keys cassettes (kernel.md section 7). No other text can be constructed or parsed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RequestHash(String);
+
+impl RequestHash {
+    /// The hash text, `sha256:<64 lowercase hex>`.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A string that is not a canonical request hash; carries the refused text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestHashError(pub String);
+
+impl std::fmt::Display for RequestHashError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "request_hash {:?} must be sha256: followed by 64 lowercase hex digits",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for RequestHashError {}
+
+impl std::str::FromStr for RequestHash {
+    type Err = RequestHashError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let hex = s.strip_prefix("sha256:").unwrap_or_default();
+        if hex.len() == 64
+            && hex
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+        {
+            Ok(RequestHash(s.to_string()))
+        } else {
+            Err(RequestHashError(s.to_string()))
+        }
+    }
+}
+
+impl Serialize for RequestHash {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for RequestHash {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// One call replayed before a fixture case's asserted call (`prior` list element).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PriorCall {
+    /// Call parameters, an object keyed by parameter name.
+    pub params: serde_json::Map<String, serde_json::Value>,
+    /// World time of the call (default: the case's `world_time`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub world_time: Option<u64>,
+    /// Canonical request hash of the recorded response, or null.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub request_hash: Option<Option<RequestHash>>,
+    /// Recorded adapter response in cassette form, or null.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub response: Option<Option<serde_json::Map<String, serde_json::Value>>>,
+    /// One-based position of the recorded response among equal requests, or null (default 1).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub sequence: Option<Option<NonZeroU32>>,
+}
+
+impl PriorCall {
+    /// The call as a JSON object with its keys in sorted order, as canonical KVX writes it.
+    pub fn to_value(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "params".to_string(),
+            serde_json::Value::Object(self.params.clone()),
+        );
+        if let Some(h) = &self.request_hash {
+            map.insert(
+                "request_hash".to_string(),
+                opt_value(h.as_ref().map(|h| h.as_str().into())),
+            );
+        }
+        if let Some(r) = &self.response {
+            map.insert(
+                "response".to_string(),
+                opt_value(r.clone().map(serde_json::Value::Object)),
+            );
+        }
+        if let Some(n) = self.sequence {
+            map.insert("sequence".to_string(), opt_value(n.map(|n| n.get().into())));
+        }
+        if let Some(t) = self.world_time {
+            map.insert("world_time".to_string(), t.into());
+        }
+        serde_json::Value::Object(map)
+    }
+}
+
+fn opt_value(v: Option<serde_json::Value>) -> serde_json::Value {
+    v.unwrap_or(serde_json::Value::Null)
 }
 
 /// One `[case.<name>]`.
@@ -95,43 +230,41 @@ pub struct FixtureCase {
         deserialize_with = "present"
     )]
     pub returned: Option<serde_json::Value>,
-    /// World RNG seed for the case, a non-negative integer (default 0).
+    /// World RNG seed for the case (default 0).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub seed: Option<serde_json::Value>,
-    /// Calls replayed before the asserted call, as an array of `{params, world_time,
-    /// response, sequence}` objects.
+    pub seed: Option<u64>,
+    /// Calls replayed before the asserted call, in order.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub prior: Option<serde_json::Value>,
-    /// Canonical request hash the recorded adapter response is keyed by; a string or null.
+    pub prior: Option<Vec<PriorCall>>,
+    /// Canonical request hash the recorded adapter response is keyed by, or null.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub request_hash: Option<serde_json::Value>,
-    /// One-based position of the recorded response among equal requests; a non-negative
-    /// integer or null (default 1).
+    pub request_hash: Option<Option<RequestHash>>,
+    /// One-based position of the recorded response among equal requests, or null (default 1).
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub sequence: Option<serde_json::Value>,
-    /// Recorded adapter response in cassette form; an object or null.
+    pub sequence: Option<Option<NonZeroU32>>,
+    /// Recorded adapter response in cassette form, or null.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
-    pub response: Option<serde_json::Value>,
+    pub response: Option<Option<serde_json::Map<String, serde_json::Value>>>,
 }
 
 /// One `[migration.<name>]`.
@@ -197,6 +330,23 @@ pub struct DriftFile {
     pub example: bool,
     /// Drift entries in declared order.
     pub entries: Vec<DriftEntry>,
+}
+
+impl DriftFile {
+    /// Parses one `drift/<name>.kvx` schedule on its own with exactly the rules
+    /// [`WorldSource::load_tree`](crate::WorldSource::load_tree) applies to it. `known`
+    /// answers whether a primitive or adapter name exists in the Build or source the schedule
+    /// targets; every `primitive` it refuses is a located error. `path` is the source-relative
+    /// path; every error is located in it.
+    pub fn parse(
+        path: &str,
+        text: &str,
+        known: &dyn Fn(&str) -> bool,
+    ) -> Result<DriftFile, Errors> {
+        crate::source::parse_file(path, text, FileClass::Drift, |ctx, doc, _| {
+            read_drift(ctx, doc, known)
+        })
+    }
 }
 
 fn section_suffix<'a>(ctx: &mut Ctx, name: &'a str, line: usize, prefix: &str) -> Option<&'a str> {
@@ -329,33 +479,56 @@ pub(crate) fn read_fixture(ctx: &mut Ctx, doc: &Document, module_dir: &str) -> O
             ok = false;
         }
         let returned = keys.opt("returned").map(value_of);
-        let seed = keys
-            .opt("seed")
-            .and_then(|e| read::non_negative(ctx, e).map(|_| value_of(e)));
-        let prior = keys
-            .opt("prior")
-            .and_then(|e| read::array(ctx, e).map(|_| value_of(e)));
+        let seed = keys.opt("seed").and_then(|e| read::non_negative(ctx, e));
+        let prior = keys.opt("prior").and_then(|e| {
+            let items = read::array(ctx, e)?;
+            let mut calls = Vec::new();
+            let mut good = true;
+            for (i, node) in items.iter().enumerate() {
+                match serde_json::from_value::<PriorCall>(node.value.to_value()) {
+                    Ok(call) => calls.push(call),
+                    Err(err) => {
+                        ctx.bad(e, node, format!("prior[{i}] is not a prior call: {err}"));
+                        good = false;
+                    }
+                }
+            }
+            good.then_some(calls)
+        });
         let request_hash = keys.opt("request_hash").and_then(|e| match &e.value.value {
-            Json::Null | Json::Str(_) => Some(value_of(e)),
+            Json::Null => Some(None),
+            Json::Str(s) => match s.parse::<RequestHash>() {
+                Ok(h) => Some(Some(h)),
+                Err(m) => {
+                    ctx.bad(e, &e.value, m.to_string());
+                    None
+                }
+            },
             _ => {
                 ctx.bad(e, &e.value, "request_hash must be a string or null");
                 None
             }
         });
         let sequence = keys.opt("sequence").and_then(|e| match e.value.value {
-            Json::Null => Some(value_of(e)),
-            Json::Int(i) if i >= 0 => Some(value_of(e)),
+            Json::Null => Some(None),
+            Json::Int(i) if i >= 1 && i <= i64::from(u32::MAX) => {
+                Some(u32::try_from(i).ok().and_then(NonZeroU32::new))
+            }
             _ => {
                 ctx.bad(
                     e,
                     &e.value,
-                    "sequence must be a non-negative integer or null",
+                    "sequence must be a one-based position (a positive integer) or null",
                 );
                 None
             }
         });
         let response = keys.opt("response").and_then(|e| match &e.value.value {
-            Json::Null | Json::Object(_) => Some(value_of(e)),
+            Json::Null => Some(None),
+            Json::Object(_) => match e.value.value.to_value() {
+                serde_json::Value::Object(map) => Some(Some(map)),
+                _ => None,
+            },
             _ => {
                 ctx.bad(e, &e.value, "response must be an object or null");
                 None
@@ -551,16 +724,35 @@ pub(crate) fn emit_fixture(f: &FixtureFile) -> String {
             c.precondition
                 .map_or_else(|| "null".to_string(), |n| n.to_string())
         ));
-        for (key, value) in [
-            ("returned", &c.returned),
-            ("seed", &c.seed),
-            ("prior", &c.prior),
-            ("request_hash", &c.request_hash),
-            ("sequence", &c.sequence),
-            ("response", &c.response),
-        ] {
+        let optional = [
+            ("returned", c.returned.clone()),
+            ("seed", c.seed.map(serde_json::Value::from)),
+            (
+                "prior",
+                c.prior.as_ref().map(|calls| {
+                    serde_json::Value::Array(calls.iter().map(PriorCall::to_value).collect())
+                }),
+            ),
+            (
+                "request_hash",
+                c.request_hash
+                    .as_ref()
+                    .map(|h| opt_value(h.as_ref().map(|h| h.as_str().into()))),
+            ),
+            (
+                "sequence",
+                c.sequence.map(|n| opt_value(n.map(|n| n.get().into()))),
+            ),
+            (
+                "response",
+                c.response
+                    .as_ref()
+                    .map(|r| opt_value(r.clone().map(serde_json::Value::Object))),
+            ),
+        ];
+        for (key, value) in optional {
             if let Some(v) = value {
-                out.push_str(&format!("{key} = {}\n", json_inline(v)));
+                out.push_str(&format!("{key} = {}\n", json_inline(&v)));
             }
         }
     }

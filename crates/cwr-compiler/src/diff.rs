@@ -135,6 +135,8 @@ impl ContractSurface {
             o.insert("timeout_ms".into(), json!(self.timeout_ms));
             o.insert("endpoint".into(), json!(self.endpoint));
             o.insert("failures".into(), json!(self.failures));
+            o.insert("undeclared_status".into(), json!(self.undeclared_status));
+            o.insert("retry_after_ratio".into(), json!(self.retry_after_ratio));
         }
         v
     }
@@ -269,9 +271,10 @@ impl Surface {
         );
         settings.insert("rng.seed_visible".into(), json!(w.rng.seed_visible));
         let mut state = BTreeMap::new();
-        for (_, file) in parsed.of_class(FileClass::Lib) {
+        for (path, file) in parsed.of_class(FileClass::Lib) {
             if let Some(m) = &file.module {
-                state.insert(m.clone(), state_shape(&file.text));
+                let shape = state_shape(&file.text).map_err(|e| format!("{path}: {e}"))?;
+                state.insert(m.clone(), shape);
             }
         }
         let prose = source_prose(&crate::manifest::prose(parsed));
@@ -345,10 +348,12 @@ impl Surface {
             })
             .collect();
         let cj = kvx::parse_json_str(&flat)
-            .map_err(|(col, m)| {
+            .map_err(|e| {
                 format!(
-                    "Build {}: contracts.json: {m} (column {col})",
-                    dir.display()
+                    "Build {}: contracts.json: {} (column {})",
+                    dir.display(),
+                    e.message,
+                    e.col
                 )
             })?
             .value;
@@ -408,7 +413,9 @@ impl Surface {
                 if let Some(m) = n.strip_suffix(".py") {
                     let text = fs::read_to_string(e.path())
                         .map_err(|err| format!("Build {}: lib/{n}: {err}", dir.display()))?;
-                    state.insert(m.to_string(), state_shape(&text));
+                    let shape = state_shape(&text)
+                        .map_err(|err| format!("Build {}: lib/{n}: {err}", dir.display()))?;
+                    state.insert(m.to_string(), shape);
                 }
             }
         }
@@ -669,14 +676,9 @@ struct Records {
     classes: BTreeMap<String, Vec<(String, String)>>,
     aliases: BTreeMap<String, String>,
     initial: Option<String>,
-}
-
-fn strip_comment(s: &str) -> &str {
-    // Type annotations carry no string literals, so the first '#' starts the comment.
-    match s.find('#') {
-        Some(i) => &s[..i],
-        None => s,
-    }
+    /// Top-level classes that are neither a TypedDict nor a dataclass, with their line: the
+    /// scanner cannot read their fields, so a state type that names one is refused.
+    unreadable: BTreeMap<String, usize>,
 }
 
 fn is_ident(s: &str) -> bool {
@@ -685,74 +687,266 @@ fn is_ident(s: &str) -> bool {
         && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn scan_records(text: &str) -> Records {
-    let mut r = Records::default();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        let top = !line.starts_with(' ') && !line.starts_with('\t');
-        if top {
-            if let Some(rest) = line.strip_prefix("class ") {
-                if let Some(open) = rest.find('(') {
-                    let name = rest[..open].trim().to_string();
-                    let bases = &rest[open..];
-                    if bases.contains("TypedDict") && is_ident(&name) {
-                        let mut fields = Vec::new();
-                        let mut j = i + 1;
-                        let mut in_doc: Option<&str> = None;
-                        while j < lines.len() {
-                            let l = lines[j];
-                            if !l.trim().is_empty() && !l.starts_with(' ') && !l.starts_with('\t') {
-                                break;
-                            }
-                            let t = l.trim();
-                            if let Some(q) = in_doc {
-                                if t.contains(q) {
-                                    in_doc = None;
-                                }
-                                j += 1;
-                                continue;
-                            }
-                            if t.starts_with("\"\"\"") || t.starts_with("'''") {
-                                let q = &t[..3];
-                                if !(t.len() >= 6 && t[3..].contains(q)) {
-                                    in_doc = Some(q);
-                                }
-                                j += 1;
-                                continue;
-                            }
-                            let t = strip_comment(t).trim();
-                            if let Some((f, ty)) = t.split_once(':') {
-                                let f = f.trim();
-                                if is_ident(f) && !ty.contains('=') {
-                                    fields.push((f.to_string(), normalize_type(ty)));
-                                }
-                            }
-                            j += 1;
-                        }
-                        r.classes.insert(name, fields);
-                        i = j;
-                        continue;
-                    }
+/// One logical line of a `lib/` file: its first physical line, its indentation and its text,
+/// with physical lines joined while a bracket is open or after a trailing `\`, comments
+/// removed and string literals kept (a newline inside a triple-quoted string as a space).
+struct LogicalLine {
+    line: usize,
+    indent: usize,
+    text: String,
+}
+
+fn logical_lines(text: &str) -> Vec<LogicalLine> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let (mut line, mut start, mut indent) = (1usize, 1usize, 0usize);
+    let mut at_start = true;
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    let flush = |cur: &mut String, out: &mut Vec<LogicalLine>, start: usize, indent: usize| {
+        if !cur.trim().is_empty() {
+            out.push(LogicalLine {
+                line: start,
+                indent,
+                text: std::mem::take(cur),
+            });
+        }
+        cur.clear();
+    };
+    while let Some(&c) = chars.get(i) {
+        if at_start {
+            match c {
+                ' ' | '\t' => {
+                    indent += 1;
+                    i += 1;
+                    continue;
                 }
-            } else {
-                let t = strip_comment(line).trim();
-                if let Some((lhs, rhs)) = t.split_once('=') {
-                    let lhs = lhs.trim();
-                    if !rhs.starts_with('=') {
-                        if let Some((var, ann)) = lhs.split_once(':') {
-                            if var.trim() == "INITIAL_STATE" {
-                                r.initial = Some(normalize_type(ann));
-                            }
-                        } else if is_ident(lhs) && lhs.ends_with("State") {
-                            r.aliases.insert(lhs.to_string(), normalize_type(rhs));
-                        }
+                '\n' => {
+                    line += 1;
+                    indent = 0;
+                    i += 1;
+                    continue;
+                }
+                '#' => {
+                    while chars.get(i).is_some_and(|&c| c != '\n') {
+                        i += 1;
                     }
+                    continue;
+                }
+                _ => {
+                    at_start = false;
+                    start = line;
                 }
             }
         }
+        match c {
+            '#' => {
+                while chars.get(i).is_some_and(|&c| c != '\n') {
+                    i += 1;
+                }
+                continue;
+            }
+            '\\' if chars.get(i + 1) == Some(&'\n') => {
+                cur.push(' ');
+                line += 1;
+                i += 2;
+                continue;
+            }
+            '\n' => {
+                line += 1;
+                i += 1;
+                if depth > 0 {
+                    cur.push(' ');
+                } else {
+                    flush(&mut cur, &mut out, start, indent);
+                    at_start = true;
+                    indent = 0;
+                }
+                continue;
+            }
+            '"' | '\'' => {
+                let triple = chars.get(i + 1) == Some(&c) && chars.get(i + 2) == Some(&c);
+                let n = if triple { 3 } else { 1 };
+                cur.extend(std::iter::repeat_n(c, n));
+                i += n;
+                while let Some(&d) = chars.get(i) {
+                    if d == '\\' && i + 1 < chars.len() {
+                        cur.push(d);
+                        if chars.get(i + 1) == Some(&'\n') {
+                            cur.push(' ');
+                            line += 1;
+                        } else if let Some(&e) = chars.get(i + 1) {
+                            cur.push(e);
+                        }
+                        i += 2;
+                        continue;
+                    }
+                    if d == c
+                        && (!triple
+                            || (chars.get(i + 1) == Some(&c) && chars.get(i + 2) == Some(&c)))
+                    {
+                        cur.extend(std::iter::repeat_n(c, n));
+                        i += n;
+                        break;
+                    }
+                    if d == '\n' {
+                        if !triple {
+                            break;
+                        }
+                        cur.push(' ');
+                        line += 1;
+                        i += 1;
+                        continue;
+                    }
+                    cur.push(d);
+                    i += 1;
+                }
+                continue;
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        cur.push(c);
         i += 1;
+    }
+    flush(&mut cur, &mut out, start, indent);
+    out
+}
+
+/// Splits `text` at every top-level (bracket depth 0) occurrence of `sep`, outside strings.
+fn split_top(text: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut quote, mut from) = (0usize, None::<char>, 0usize);
+    let mut prev = '\0';
+    for (k, c) in text.char_indices() {
+        match quote {
+            Some(q) => {
+                if c == q && prev != '\\' {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                _ if c == sep && depth == 0 => {
+                    parts.push(&text[from..k]);
+                    from = k + c.len_utf8();
+                }
+                _ => {}
+            },
+        }
+        prev = c;
+    }
+    parts.push(&text[from..]);
+    parts
+}
+
+/// Whether a statement is a bare string literal (a docstring).
+fn is_docstring(stmt: &str) -> bool {
+    let word: String = stmt
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let rest = &stmt[word.len()..];
+    word.len() <= 2 && (rest.starts_with('"') || rest.starts_with('\''))
+}
+
+/// A record field `name: type` (or `name: type = default` in a dataclass).
+fn field(stmt: &str) -> Option<(String, String)> {
+    let stmt = stmt.trim();
+    if is_docstring(stmt) {
+        return None;
+    }
+    let parts = split_top(stmt, ':');
+    let (f, rest) = match parts.as_slice() {
+        [f, rest @ ..] if !rest.is_empty() => (f.trim(), rest.join(":")),
+        _ => return None,
+    };
+    if !is_ident(f) {
+        return None;
+    }
+    let ty = split_top(&rest, '=').first().map(|t| t.to_string())?;
+    Some((f.to_string(), normalize_type(&ty)))
+}
+
+fn scan_records(text: &str) -> Records {
+    let mut r = Records::default();
+    let lines = logical_lines(text);
+    let mut i = 0;
+    let mut dataclass = false;
+    while let Some(l) = lines.get(i) {
+        i += 1;
+        if l.indent != 0 {
+            continue;
+        }
+        let t = l.text.trim();
+        if let Some(dec) = t.strip_prefix('@') {
+            let name = dec.split('(').next().unwrap_or("").trim();
+            if matches!(name, "dataclass" | "dataclasses.dataclass") {
+                dataclass = true;
+            }
+            continue;
+        }
+        let is_dataclass = std::mem::take(&mut dataclass);
+        if let Some(rest) = t.strip_prefix("class ") {
+            let header = split_top(rest, ':');
+            let head = header.first().copied().unwrap_or("").trim();
+            let inline = header.get(1..).map(|p| p.join(":")).unwrap_or_default();
+            let (name, bases) = match head.split_once('(') {
+                Some((n, b)) => (n.trim(), b),
+                None => (head, ""),
+            };
+            // A generic class `class X[T](...)` keeps only its name.
+            let name = name.split('[').next().unwrap_or(name).trim().to_string();
+            if !is_ident(&name) {
+                continue;
+            }
+            let mut body: Vec<&str> = split_top(&inline, ';');
+            let body_indent = lines.get(i).map(|b| b.indent).filter(|&n| n > 0);
+            while let Some(b) = lines.get(i) {
+                if b.indent == 0 {
+                    break;
+                }
+                if Some(b.indent) == body_indent {
+                    body.extend(split_top(&b.text, ';'));
+                }
+                i += 1;
+            }
+            if bases.contains("TypedDict") || is_dataclass {
+                let fields = body.iter().filter_map(|s| field(s)).collect();
+                r.classes.insert(name, fields);
+            } else {
+                r.unreadable.insert(name, l.line);
+            }
+            continue;
+        }
+        let parts = split_top(t, '=');
+        let (lhs, rhs) = match parts.as_slice() {
+            [lhs, rhs] => (lhs.trim(), rhs.trim()),
+            _ => continue,
+        };
+        // `type X = ...` / `type X[T] = ...` (Python 3.12) and `X: TypeAlias = ...` are
+        // aliases like `X = ...`.
+        let lhs = match lhs.strip_prefix("type ") {
+            Some(t) => t.split('[').next().unwrap_or(t).trim(),
+            None => lhs,
+        };
+        match lhs.split_once(':') {
+            Some((var, ann)) if var.trim() == "INITIAL_STATE" => {
+                r.initial = Some(normalize_type(ann));
+            }
+            Some((var, ann)) if ann.trim().ends_with("TypeAlias") && is_ident(var.trim()) => {
+                r.aliases
+                    .insert(var.trim().to_string(), normalize_type(rhs));
+            }
+            None if is_ident(lhs) => {
+                r.aliases.insert(lhs.to_string(), normalize_type(rhs));
+            }
+            _ => {}
+        }
     }
     r
 }
@@ -803,29 +997,44 @@ fn record_shape(fields: &[(String, String)], r: &Records, depth: usize) -> Strin
     format!("{{{}}}", parts.join(", "))
 }
 
-/// The canonical state shape of one `lib/<module>.py`: the record `INITIAL_STATE` is
-/// annotated with, or every TypedDict class and alias whose name ends in `State`, expanded
-/// through nested records and aliases. Comments, docstrings and record names do not count;
-/// field names and field types do. Empty when the module declares no state record.
-pub fn state_shape(text: &str) -> String {
+/// The canonical state shape of one `lib/<module>.py`: the type `INITIAL_STATE` is annotated
+/// with (a record, an alias or a plain type such as `dict[str, bytes]`), or, when there is no
+/// annotation, every TypedDict or dataclass record and alias whose name ends in `State`,
+/// expanded through nested records and aliases. Comments, docstrings and record names do not
+/// count; field names and field types do. A record or alias may span lines. Empty when the
+/// module declares no state record.
+///
+/// Refuses, with the one-based line, a state type that names a class the scanner cannot read
+/// as a TypedDict or a dataclass (a plain class, a `NamedTuple`, an `Enum`, ...), rather than
+/// comparing a partial shape.
+pub fn state_shape(text: &str) -> Result<String, String> {
     let r = scan_records(text);
-    if let Some(root) = &r.initial {
-        if r.classes.contains_key(root) || r.aliases.contains_key(root) {
-            return expand(root, &r, 0);
+    let roots: Vec<String> = match &r.initial {
+        Some(t) => vec![t.clone()],
+        None => {
+            let mut roots: Vec<String> = r
+                .classes
+                .keys()
+                .chain(r.aliases.keys())
+                .chain(r.unreadable.keys())
+                .filter(|n| n.ends_with("State"))
+                .cloned()
+                .collect();
+            roots.sort();
+            roots.dedup();
+            roots
+        }
+    };
+    let shapes: Vec<String> = roots.iter().map(|n| expand(n, &r, 0)).collect();
+    for shape in &shapes {
+        let words = shape.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'));
+        if let Some((name, line)) = words.filter_map(|w| r.unreadable.get_key_value(w)).next() {
+            return Err(format!(
+                "line {line}: the state type names the class {name}, which is neither a TypedDict nor a dataclass, so its shape cannot be read or compared"
+            ));
         }
     }
-    let mut roots: Vec<String> = Vec::new();
-    for name in r.classes.keys().chain(r.aliases.keys()) {
-        if name.ends_with("State") && !roots.contains(name) {
-            roots.push(name.clone());
-        }
-    }
-    roots.sort();
-    roots
-        .iter()
-        .map(|n| expand(n, &r, 0))
-        .collect::<Vec<_>>()
-        .join(" | ")
+    Ok(shapes.join(" | "))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1374,15 +1583,6 @@ pub fn surface_of_source(
         match crate::run_stage(stage, &mut cx) {
             StageRun::Passed => {}
             StageRun::Failed(d) => return Err(d),
-            StageRun::Pending => {
-                return Err(vec![Diagnostic::new(
-                    Stage::Diff,
-                    None,
-                    "previous",
-                    loc(&root.display().to_string()),
-                    format!("stage {stage} is not implemented in this compiler revision"),
-                )])
-            }
         }
     }
     let parsed = crate::prerequisite(&cx.parsed, Stage::Diff, Stage::Parse)?;
@@ -1465,13 +1665,35 @@ pub fn build_roots(options: &Options) -> Vec<PathBuf> {
     vec![out, x]
 }
 
+/// Whether the Build in `dir` is exactly what packaging this source again would produce: the
+/// same compared surface and manual prose, the same `contracts.json` content (which carries
+/// every adapter setting, the state shapes and the changelog) and copied directories (`lib/`,
+/// `adapters/`, `fixtures/`, `migrations/`) byte-identical to the parse-stage inventory.
+fn rebuild_of(dir: &Path, parsed: &Parsed, cur: &Surface) -> bool {
+    let Ok(s) = Surface::from_build(dir) else {
+        return false;
+    };
+    if s.to_value() != cur.to_value() || s.prose != cur.prose {
+        return false;
+    }
+    let Ok(want) = crate::manifest::contracts_value(parsed) else {
+        return false;
+    };
+    let got: Option<Value> = fs::read_to_string(dir.join("contracts.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    got.as_ref() == Some(&want) && crate::package::verify_unchanged(parsed, dir).is_ok()
+}
+
 /// The default previous Build: the newest Build of the same world name under the output
-/// directory. When that Build has the current version and an identical surface (a rebuild of
-/// the same source), its own recorded `previous` is used instead, so the rebuild reproduces
-/// the same diff and the same hash.
+/// directory. When that Build has the current version and is byte for byte what this source
+/// packages to (a rebuild of the same source, [`rebuild_of`]), its own recorded `previous` is
+/// used instead, so the rebuild reproduces the same diff and the same hash. Any other Build of
+/// the same version is the previous Build, so the gate refuses the equal version.
 fn default_previous(
     options: &Options,
     cur: &Surface,
+    parsed: &Parsed,
 ) -> Result<Option<Reference>, Vec<Diagnostic>> {
     let out = options
         .out
@@ -1522,25 +1744,21 @@ fn default_previous(
     let Some((v, dir)) = best else {
         return Ok(None);
     };
-    if v == cur.version {
-        if let Ok(s) = Surface::from_build(&dir) {
-            if s.to_value() == cur.to_value() && s.prose == cur.prose {
-                return match Surface::manifest_previous(&dir) {
-                    None => Ok(None),
-                    Some(h) => resolve_reference(&h, &build_roots(options))
-                        .map(Some)
-                        .map_err(|m| {
-                            vec![Diagnostic::new(
-                                Stage::Diff,
-                                None,
-                                "previous_build",
-                                loc(&dir.display().to_string()),
-                                m,
-                            )]
-                        }),
-                };
-            }
-        }
+    if v == cur.version && rebuild_of(&dir, parsed, cur) {
+        return match Surface::manifest_previous(&dir) {
+            None => Ok(None),
+            Some(h) => resolve_reference(&h, &build_roots(options))
+                .map(Some)
+                .map_err(|m| {
+                    vec![Diagnostic::new(
+                        Stage::Diff,
+                        None,
+                        "previous_build",
+                        loc(&dir.display().to_string()),
+                        m,
+                    )]
+                }),
+        };
     }
     Ok(Some(Reference::Build(dir)))
 }
@@ -1576,7 +1794,7 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
                 )])
             }
         },
-        None => match default_previous(cx.options, &cur) {
+        None => match default_previous(cx.options, &cur, parsed) {
             Ok(r) => r,
             Err(d) => return StageRun::Failed(d),
         },
@@ -1604,18 +1822,66 @@ mod tests {
 
     #[test]
     fn state_shapes() {
+        let shape = |s: &str| state_shape(s).expect("readable state");
         let kv = "from typing import TypedDict\n\nclass KvState(TypedDict):\n    namespaces: dict[str,  dict[str, bytes]]  # c\n\n\nINITIAL_STATE: KvState = {\"namespaces\": {}}\n";
-        assert_eq!(state_shape(kv), "{namespaces: dict[str, dict[str, bytes]]}");
+        assert_eq!(shape(kv), "{namespaces: dict[str, dict[str, bytes]]}");
         let flat = "KvState = dict[str, bytes]\n\nINITIAL_STATE: KvState = {}\n";
-        assert_eq!(state_shape(flat), "dict[str, bytes]");
+        assert_eq!(shape(flat), "dict[str, bytes]");
         let jobs = "class JobRecord(TypedDict):\n    \"\"\"doc\n    x: int\n    \"\"\"\n    kind: str\n    fail_at: Optional[int]\n\n\nclass JobsState(TypedDict):\n    next_id: int\n    jobs: dict[str, JobRecord]\n";
         assert_eq!(
-            state_shape(jobs),
+            shape(jobs),
             "{next_id: int, jobs: dict[str, {kind: str, fail_at: Optional[int]}]}"
         );
         let world = "class WorldState(TypedDict):\n    pass\n\n\nINITIAL_STATE: WorldState = {}\n";
-        assert_eq!(state_shape(world), "{}");
-        assert_eq!(state_shape("def f(state):\n    return 1\n"), "");
+        assert_eq!(shape(world), "{}");
+        assert_eq!(shape("def f(state):\n    return 1\n"), "");
+    }
+
+    #[test]
+    fn plain_initial_state_annotations_have_a_shape() {
+        // compiler.md section 5: a plain annotation is the state shape, so changing it in
+        // either direction yields a state_shape entry and needs a migration.
+        let a = state_shape("INITIAL_STATE: dict[str, bytes] = {}\n").expect("a");
+        let b = state_shape("INITIAL_STATE: dict[str, dict[str, bytes]] = {}\n").expect("b");
+        assert_eq!(a, "dict[str, bytes]");
+        assert_eq!(b, "dict[str, dict[str, bytes]]");
+        assert_ne!(a, b);
+        // An annotation wins over the *State roots.
+        let both =
+            "class OtherState(TypedDict):\n    n: int\n\nINITIAL_STATE: dict[str, int] = {}\n";
+        assert_eq!(state_shape(both).expect("both"), "dict[str, int]");
+    }
+
+    #[test]
+    fn multi_line_records_and_dataclasses_are_read_whole() {
+        let alias =
+            |t: &str| format!("KvState = dict[\n    str, {t}]\n\nINITIAL_STATE: KvState = {{}}\n");
+        let (a, b) = (state_shape(&alias("bytes")), state_shape(&alias("int")));
+        assert_eq!(a.as_deref(), Ok("dict[str, bytes]"));
+        assert_eq!(b.as_deref(), Ok("dict[str, int]"));
+        let field = "class S(TypedDict):\n    files: dict[\n        str,  # name\n        bytes,\n    ]\n    n: int; m: str\n\nINITIAL_STATE: S = {}\n";
+        assert_eq!(
+            state_shape(field).as_deref(),
+            Ok("{files: dict[str, bytes, ], n: int, m: str}")
+        );
+        let dc = "@dataclass(frozen=True)\nclass CounterState:\n    \"\"\"Doc: x.\"\"\"\n    count: int = 0\n    names: list[str] = field(default_factory=list)\n\n    def bump(self, by: int = 1) -> None:\n        local: int = by\n";
+        assert_eq!(
+            state_shape(dc).as_deref(),
+            Ok("{count: int, names: list[str]}")
+        );
+    }
+
+    #[test]
+    fn unreadable_state_records_are_refused() {
+        let nt = "class PointState(NamedTuple):\n    x: int\n";
+        let e = state_shape(nt).expect_err("refused");
+        assert!(e.starts_with("line 1:") && e.contains("PointState"), "{e}");
+        let nested = "class Kind(Enum):\n    A = 1\n\nclass S(TypedDict):\n    kind: Kind\n\nINITIAL_STATE: S = {}\n";
+        let e = state_shape(nested).expect_err("refused");
+        assert!(e.starts_with("line 1:") && e.contains("Kind"), "{e}");
+        // A class the state type does not name is not part of the shape.
+        let helper = "class Helper:\n    pass\n\nINITIAL_STATE: dict[str, int] = {}\n";
+        assert_eq!(state_shape(helper).as_deref(), Ok("dict[str, int]"));
     }
 
     #[test]
@@ -1681,6 +1947,89 @@ mod tests {
         assert_eq!(
             setting_bump("rng.seed_visible", &json!(true), &json!(false)),
             Bump::Major
+        );
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).expect("create");
+        for e in fs::read_dir(from).expect("read").flatten() {
+            let (p, name) = (e.path(), e.file_name());
+            if name == "README.md" {
+                continue;
+            }
+            if p.is_dir() {
+                copy_tree(&p, &to.join(&name));
+            } else {
+                fs::copy(&p, to.join(&name)).expect("copy");
+            }
+        }
+    }
+
+    fn remove_sealed(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        fn unseal(d: &Path) {
+            let _ = fs::set_permissions(d, fs::Permissions::from_mode(0o755));
+            for e in fs::read_dir(d).into_iter().flatten().flatten() {
+                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    unseal(&e.path());
+                }
+            }
+        }
+        unseal(dir);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// world-source.md section 14: a source at the version of the newest Build is a rebuild
+    /// only when it packages to that very Build. Changing only `lib/` bytes keeps the compared
+    /// surface and `contracts.json` equal, yet the gate must refuse the equal version instead of
+    /// packaging a second, different Build under the same name and version.
+    #[test]
+    fn a_same_version_source_that_changes_lib_only_is_not_a_rebuild() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let refworld = repo.join("examples/refworld");
+        if !refworld.is_dir()
+            || std::process::Command::new(crate::ephemeral::python())
+                .arg("-V")
+                .output()
+                .is_err()
+        {
+            eprintln!("skipped: no refworld or no python3");
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("cwr-diff-rebuild-{}", std::process::id()));
+        remove_sealed(&base);
+        let (src, out) = (base.join("src"), base.join("build"));
+        copy_tree(&refworld, &src);
+        let options = Options {
+            out: Some(out),
+            ..Options::default()
+        };
+        let first = crate::compile(&src, &options);
+        let again = crate::compile(&src, &options);
+        let lib = src.join("lib/fs.py");
+        let text = fs::read_to_string(&lib).expect("lib/fs.py");
+        fs::write(
+            &lib,
+            format!("{text}\n# A comment: lib/ bytes change, the surface does not.\n"),
+        )
+        .expect("write lib");
+        let changed = crate::compile(&src, &options);
+        remove_sealed(&base);
+        assert_eq!(first.exit_code, 0, "{}", first.to_text());
+        assert_eq!(again.exit_code, 0, "{}", again.to_text());
+        assert!(again.build.as_ref().is_some_and(|b| b.already_built));
+        assert_eq!(
+            changed.stopped_at,
+            Some(Stage::ChangelogGate),
+            "{}",
+            changed.to_text()
+        );
+        assert!(
+            changed
+                .diagnostics()
+                .any(|d| d.kind == "version_not_greater"),
+            "{}",
+            changed.to_text()
         );
     }
 }

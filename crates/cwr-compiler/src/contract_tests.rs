@@ -13,7 +13,9 @@
 //! 4. no call may produce a code the contract does not declare, and no Python exception may
 //!    escape `lib/` or `live.py`;
 //! 5. for an adapter, every declared failure must be reached by replaying a fixture response
-//!    through the replay-only gateway.
+//!    through the replay-only gateway (a call that passed parameter validation and every
+//!    precondition); a failure that is also one of the adapter's precondition codes may instead
+//!    be reached by that precondition.
 //!
 //! For every migration fixture file: `migrate(before) == after`, `migrate` is idempotent and
 //! pure, and its result validates against the new typed state records. Every migration named
@@ -61,7 +63,7 @@ pub struct RunReport {
 }
 
 /// Per-case result of the first run.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CaseResult {
     /// Primitive or adapter name.
     pub target: String,
@@ -233,35 +235,52 @@ fn run_case(
     let params = decode_params(eph, &case.params)?;
     let mut priors: Vec<(u64, Map<String, Value>)> = Vec::new();
     let mut cassette = Vec::new();
-    if let Some(Value::Array(prior)) = &case.prior {
-        for p in prior {
-            let pp = decode_params(eph, p.get("params").unwrap_or(&Value::Null))?;
-            let wt = p
-                .get("world_time")
-                .and_then(Value::as_u64)
-                .unwrap_or(case.world_time);
-            if let Some(resp) = p.get("response").filter(|r| !r.is_null()) {
-                cassette.push(json!({"adapter": target.name(), "params": Value::Object(pp.clone()), "sequence": p.get("sequence").cloned().unwrap_or(json!(1)), "response": resp}));
-            }
-            priors.push((wt, pp));
+    for p in case.prior.iter().flatten() {
+        let pp = decode_params(eph, &Value::Object(p.params.clone()))?;
+        let wt = p.world_time.unwrap_or(case.world_time);
+        if let Some(resp) = p.response.as_ref().and_then(Option::as_ref) {
+            let sequence = match p.sequence {
+                None => json!(1),
+                Some(n) => json!(n.map(|n| n.get())),
+            };
+            cassette.push(json!({"adapter": target.name(), "params": Value::Object(pp.clone()), "sequence": sequence, "response": resp}));
         }
+        priors.push((wt, pp));
     }
-    if let Some(resp) = case.response.as_ref().filter(|r| !r.is_null()) {
-        cassette.push(json!({"adapter": target.name(), "params": Value::Object(params.clone()), "sequence": case.sequence.clone().filter(|s| !s.is_null()).unwrap_or(json!(1)), "response": resp}));
+    if let Some(resp) = case.response.as_ref().and_then(Option::as_ref) {
+        let sequence = case.sequence.flatten().map_or(1, |n| n.get());
+        cassette.push(json!({"adapter": target.name(), "params": Value::Object(params.clone()), "sequence": sequence, "response": resp}));
     }
-    let seed = case.seed.as_ref().and_then(Value::as_u64).unwrap_or(0);
+    let seed = case.seed.unwrap_or(0);
     eph.reset(&case.state, case.world_time, seed, &cassette)?;
-    for (wt, pp) in &priors {
+    let mut prior_defects = Vec::new();
+    for (k, (wt, pp)) in priors.iter().enumerate() {
         eph.world_time = *wt;
-        let _ = eph.call(target.name(), pp);
+        let prior = eph.call(target.name(), pp);
+        // A prior call sets up the case; a defect in it (an exception, an undeclared code, a
+        // replay miss reported as a defect, a broken effect) would leave the asserted call
+        // running from an unintended state, so it fails the case.
+        prior_defects.extend(
+            prior
+                .defects
+                .iter()
+                .map(|d| format!("prior call {} of {}: {d}", k + 1, target.name())),
+        );
     }
     eph.world_time = case.world_time;
     let mut out = eph.call(target.name(), &params);
+    if !prior_defects.is_empty() {
+        prior_defects.append(&mut out.defects);
+        out.defects = prior_defects;
+        out.code = Some(Code::InvariantViolation);
+    }
     if out.code.is_none() {
         if let Some(raw) = &case.returned {
             let want = eph
                 .decode(&[(raw.clone(), target.returns().to_string())])?
-                .remove(0);
+                .into_iter()
+                .next()
+                .ok_or_else(|| "decode: empty response".to_string())?;
             if out.returned.as_ref() != Some(&want) {
                 out.defects.push(format!(
                     "{} returned {}, the fixture requires {}",
@@ -292,6 +311,27 @@ fn short(v: &Value) -> String {
     }
 }
 
+/// The declared adapter failures no case reached as compiler.md section 4 requires: through
+/// the gateway (`gateway`: codes of calls that passed parameter validation and every
+/// precondition), or, for a failure that is also one of the adapter's precondition codes, by
+/// that precondition (`reached` with an index).
+fn unreached_failures(
+    failures: &[Code],
+    precondition_codes: &BTreeSet<Code>,
+    reached: &BTreeSet<(Code, Option<usize>)>,
+    gateway: &BTreeSet<Code>,
+) -> BTreeSet<Code> {
+    failures
+        .iter()
+        .copied()
+        .filter(|code| {
+            let by_precondition = precondition_codes.contains(code)
+                && reached.iter().any(|(c, idx)| c == code && idx.is_some());
+            !gateway.contains(code) && !by_precondition
+        })
+        .collect()
+}
+
 /// One suite run: its report, per-case results, migration case count and failures found.
 type SuiteRun = (RunReport, Vec<CaseResult>, usize, Vec<Diagnostic>);
 
@@ -301,6 +341,7 @@ fn run_suite(
     parsed: &Parsed,
     symbols: &SymbolTable,
     root: &std::path::Path,
+    scratch: &std::path::Path,
 ) -> Result<SuiteRun, Vec<Diagnostic>> {
     let start = Instant::now();
     let cx = Ctx { parsed, symbols };
@@ -336,10 +377,12 @@ fn run_suite(
     let settings = world_settings(model);
     let mut worker = Worker::spawn(
         root,
+        scratch,
         &lib,
         &live,
         &records,
         &model.world.world.version.to_string(),
+        &settings,
     )
     .map_err(|m| {
         vec![Diagnostic::new(
@@ -426,6 +469,9 @@ fn run_suite(
 
     for (name, target) in &targets {
         let mut reached: BTreeSet<(Code, Option<usize>)> = BTreeSet::new();
+        // Codes an adapter call produced at the gateway (step 3), not at parameter validation
+        // or a precondition: what replaying a fixture response through the gateway reached.
+        let mut gateway: BTreeSet<Code> = BTreeSet::new();
         let mut has_ok = false;
         for file in by_target.get(name.as_str()).cloned().unwrap_or_default() {
             for case in &file.cases {
@@ -473,6 +519,9 @@ fn run_suite(
                     None if out.defects.is_empty() => has_ok = true,
                     Some(c) if out.defects.is_empty() => {
                         reached.insert((c, out.precondition));
+                        if out.executed && out.precondition.is_none() {
+                            gateway.insert(c);
+                        }
                     }
                     _ => {}
                 }
@@ -514,8 +563,13 @@ fn run_suite(
             }
         }
         if let Target::Adapter(a) = target {
+            let precondition_codes: BTreeSet<Code> =
+                target.preconditions().into_iter().map(|(_, c)| c).collect();
+            let unreached =
+                unreached_failures(&a.failures, &precondition_codes, &reached, &gateway);
             for (i, code) in a.failures.iter().enumerate() {
-                if !reached.iter().any(|(c, _)| c == code) {
+                let reached_here = !unreached.contains(code);
+                if !reached_here {
                     diags.push(
                         cx.diag(
                             "unreachable_failure",
@@ -609,7 +663,97 @@ fn run_suite(
     ))
 }
 
+/// A private scratch directory for the contract-test workers, removed when dropped.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new() -> Result<Scratch, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("cwr-contract-tests-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&dir).map_err(|e| {
+            format!(
+                "cannot create the contract-test scratch directory {}: {e}",
+                dir.display()
+            )
+        })?;
+        Ok(Scratch(dir))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The first difference between the two suite runs.
+struct Divergence<'r> {
+    /// The differing stream item (or the item of the differing case) of each run.
+    items: (Option<&'r StreamItem>, Option<&'r StreamItem>),
+    /// What differs beyond the stream item, for the message.
+    detail: String,
+    /// A failure found by one run only, when the streams and cases agree.
+    failure: Option<&'r Diagnostic>,
+}
+
+/// Compares the outcome streams, the per-case results and the failures found of two suite
+/// runs; `None` when they agree on all three.
+fn first_divergence<'r>(run1: &'r SuiteRun, run2: &'r SuiteRun) -> Option<Divergence<'r>> {
+    let (s1, s2) = (&run1.0.stream, &run2.0.stream);
+    let n = s1.len().max(s2.len());
+    if let Some(i) = (0..n).find(|&i| s1.get(i) != s2.get(i)) {
+        return Some(Divergence {
+            items: (s1.get(i), s2.get(i)),
+            detail: String::new(),
+            failure: None,
+        });
+    }
+    let (c1, c2) = (&run1.1, &run2.1);
+    let n = c1.len().max(c2.len());
+    if let Some(i) = (0..n).find(|&i| c1.get(i) != c2.get(i)) {
+        let fmt = |c: Option<&CaseResult>| {
+            c.map(|c| {
+                format!(
+                    "got {} at precondition {:?}, passed {}",
+                    c.got, c.got_precondition, c.passed
+                )
+            })
+            .unwrap_or_else(|| "(absent)".into())
+        };
+        let item = |c: Option<&CaseResult>| {
+            c.and_then(|c| {
+                s1.iter()
+                    .find(|s| s.case == format!("{}#{}", c.file, c.case))
+            })
+        };
+        return Some(Divergence {
+            items: (item(c1.get(i)), item(c2.get(i))),
+            detail: format!(
+                "; case results: first run {}, second run {}",
+                fmt(c1.get(i)),
+                fmt(c2.get(i))
+            ),
+            failure: None,
+        });
+    }
+    let (d1, d2) = (&run1.3, &run2.3);
+    let only = |a: &'r [Diagnostic], b: &[Diagnostic]| a.iter().find(|d| !b.contains(d));
+    only(d2, d1).or_else(|| only(d1, d2)).map(|d| Divergence {
+        items: (None, None),
+        detail: format!("; a failure found by one run only: {}", d.message),
+        failure: Some(d),
+    })
+}
+
 /// Runs the suite twice and returns the report and every failure.
+///
+/// The two runs share one scratch directory (the only place world code may write), so host
+/// state carried from the first run into the second shows up as a difference. Failures found
+/// only by the second run are reported with those of the first.
 pub fn run(
     parsed: &Parsed,
     symbols: &SymbolTable,
@@ -619,25 +763,44 @@ pub fn run(
         Ok(m) => m,
         Err(d) => return (None, d),
     };
-    let first = match run_suite(parsed, symbols, root) {
+    let scratch = match Scratch::new() {
+        Ok(s) => s,
+        Err(m) => {
+            let loc = Location {
+                file: "world.kvx".into(),
+                line: 1,
+                col: 1,
+                section: None,
+                key: None,
+            };
+            return (
+                None,
+                vec![Diagnostic::new(
+                    Stage::ContractTests,
+                    None,
+                    "worker",
+                    loc,
+                    m,
+                )],
+            );
+        }
+    };
+    let first = match run_suite(parsed, symbols, root, &scratch.0) {
         Ok(r) => r,
         Err(d) => return (None, d),
     };
-    let second = match run_suite(parsed, symbols, root) {
+    let second = match run_suite(parsed, symbols, root, &scratch.0) {
         Ok(r) => r,
         Err(d) => return (None, d),
     };
-    let (run1, cases, migration_cases, mut diags) = first;
-    let (run2, _, _, _) = second;
-    let deterministic = run1.stream == run2.stream;
-    if diags.is_empty() && !deterministic {
+    drop(scratch);
+    let divergence = first_divergence(&first, &second);
+    let deterministic = divergence.is_none();
+    let mut diags = first.3.clone();
+    if let (true, Some(dv)) = (diags.is_empty(), &divergence) {
         let cx = Ctx { parsed, symbols };
-        let n = run1.stream.len().max(run2.stream.len());
-        let i = (0..n)
-            .find(|&i| run1.stream.get(i) != run2.stream.get(i))
-            .unwrap_or(0);
-        let a = run1.stream.get(i);
-        let b = run2.stream.get(i);
+        let (a, b) = dv.items;
+        let detail = &dv.detail;
         let (file, case) = a
             .or(b)
             .map(|s| {
@@ -668,13 +831,28 @@ pub fn run(
             })
             .unwrap_or_else(|| "(absent)".into())
         };
-        diags.push(cx.diag(
-            "nondeterministic",
-            cx.case_loc(&file, &case, prefix),
-            &target,
-            format!("{target} case {case}: contract tests passed once and differ on the second run with the same seed: first run {}, second run {}", fmt(a), fmt(b)),
-        ));
+        diags.push(match dv.failure {
+            Some(f) => {
+                let mut d = f.clone();
+                d.kind = "nondeterministic".into();
+                d.message = format!("contract tests differ on the second run with the same seed{detail}");
+                d
+            }
+            None => cx.diag(
+                "nondeterministic",
+                cx.case_loc(&file, &case, prefix),
+                &target,
+                format!("{target} case {case}: contract tests passed once and differ on the second run with the same seed: first run {}, second run {}{detail}", fmt(a), fmt(b)),
+            ),
+        });
     }
+    for d in &second.3 {
+        if !diags.contains(d) {
+            diags.push(d.clone());
+        }
+    }
+    let (run1, cases, migration_cases, _) = first;
+    let run2 = second.0;
     let primitives = model.contracts.iter().map(|c| c.primitives.len()).sum();
     let adapters = model.adapters.iter().map(|a| a.adapters.len()).sum();
     let passed = diags.is_empty();
@@ -714,6 +892,36 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// compiler.md section 4: a declared adapter failure counts as reached only through the
+    /// gateway, or by its own precondition; a code produced at parameter validation (no
+    /// precondition, never executed) or by an unrelated precondition does not count.
+    #[test]
+    fn adapter_failures_must_come_out_of_the_gateway() {
+        let failures = [Code::Invalid, Code::Limit, Code::Timeout, Code::Unavailable];
+        let pre: BTreeSet<Code> = [Code::Limit].into_iter().collect();
+        // INVALID only from parameter validation, TIMEOUT only from a precondition index of
+        // another code, LIMIT by its precondition, UNAVAILABLE through the gateway.
+        let reached: BTreeSet<(Code, Option<usize>)> = [
+            (Code::Invalid, None),
+            (Code::Limit, Some(1)),
+            (Code::Unavailable, None),
+        ]
+        .into_iter()
+        .collect();
+        let gateway: BTreeSet<Code> = [Code::Unavailable].into_iter().collect();
+        let got = unreached_failures(&failures, &pre, &reached, &gateway);
+        assert_eq!(
+            got,
+            [Code::Invalid, Code::Timeout]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+        let gateway: BTreeSet<Code> = [Code::Invalid, Code::Timeout, Code::Unavailable]
+            .into_iter()
+            .collect();
+        assert!(unreached_failures(&failures, &pre, &reached, &gateway).is_empty());
+    }
 
     fn copy_tree(from: &Path, to: &Path) {
         std::fs::create_dir_all(to).unwrap();
@@ -789,9 +997,10 @@ mod tests {
     }
 
     /// The second-run comparison (compiler.md section 4, compile-time half of clause 1.6) on a
-    /// lib/ whose outcome depends on host state shared by the two runs: a counter file. Lint
-    /// refuses `open` in lib/ (CWR-L001), so the stage is reached here directly after parse and
-    /// resolve. Prints the diagnostic the task driver reports as evidence.
+    /// lib/ whose outcome depends on host state shared by the two runs: a counter file in the
+    /// workers' scratch directory (their working directory, the only place world code may
+    /// write). Lint refuses `open` in lib/ (CWR-L001), so the stage is reached here directly
+    /// after parse and resolve. Prints the diagnostic the task driver reports as evidence.
     #[test]
     fn nondeterministic_lib_is_caught_by_the_second_run() {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -808,14 +1017,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cwr-1_2-nondet-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         copy_tree(&src, &dir);
-        let counter = dir.join("counter.txt");
         let lib = dir.join("lib/fs.py");
         let head = "def write(state: Any, path: str, content: bytes) -> None:\n";
         let text = std::fs::read_to_string(&lib).unwrap();
         assert!(text.contains(head), "lib/fs.py has no write()");
         let probe = format!(
-            "{head}    with open({:?}, \"a+\") as handle:\n        handle.seek(0)\n        seen = len(handle.read())\n        handle.write(\"x\")\n    if seen >= 3:\n        raise KeyError(\"host-dependent outcome\")\n",
-            counter.display().to_string()
+            "{head}    with open(\"counter.txt\", \"a+\") as handle:\n        handle.seek(0)\n        seen = len(handle.read())\n        handle.write(\"x\")\n    if seen >= 3:\n        raise KeyError(\"host-dependent outcome\")\n"
         );
         std::fs::write(&lib, text.replacen(head, &probe, 1)).unwrap();
         let options = crate::Options {

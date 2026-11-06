@@ -184,7 +184,7 @@ pub(crate) fn read_world(ctx: &mut Ctx, doc: &Document) -> Option<WorldFile> {
                 match s.parse::<Version>() {
                     Ok(v) => Some(v),
                     Err(m) => {
-                        ctx.bad(e, &e.value, m);
+                        ctx.bad(e, &e.value, m.to_string());
                         None
                     }
                 }

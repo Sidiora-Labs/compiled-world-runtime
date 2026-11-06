@@ -1,0 +1,15 @@
+{
+  "class": "drift_missing_doc",
+  "clause": "3.1",
+  "description": "A drift entry without its author's note.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "drift/drift-1.kvx",
+      "line": 9,
+      "col": 1,
+      "kind": "missing_key",
+      "code": null
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "class": "migration_fixture_case_section",
+  "clause": "3.6",
+  "description": "A migration fixture that declares a call case section.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "fixtures/kv/migration_0_2_0.kvx",
+      "line": 11,
+      "col": 1,
+      "kind": "unknown_section",
+      "code": "CWR-C001"
+    }
+  ]
+}

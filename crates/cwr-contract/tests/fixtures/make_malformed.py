@@ -37,6 +37,7 @@ def with_header(path: str, text: str) -> str:
     header = "".join(f"{prefix}{line}{suffix}\n" for line in HEADER_LINES)
     return header + ("\n" if suffix else "") + text
 
+
 LINT = {
     "unknown_file": "CWR-C001",
     "unknown_section": "CWR-C001",
@@ -77,7 +78,7 @@ returns = "bool"
 preconditions = []
 idempotency = "natural"
 timeout_ms = 1000
-failures = ["UNAVAILABLE"]
+failures = ["UNAVAILABLE", "TIMEOUT"]
 content_guaranteed = false
 endpoint = "stub://fs/v1/exists"
 doc = "A second declaration of fs.exists."
@@ -726,6 +727,243 @@ CASES = [
         {},
         [],
         [("CHANGELOG.kvx", "changelog", '"ghost"', '"ghost"')],
+    ),
+    # 3.3: adapter keys the gateway relies on
+    (
+        "adapter_undeclared_status_locked",
+        "3.3",
+        "An undeclared_status other than UNAVAILABLE or INVALID.",
+        [("adapters/search.kvx", 'undeclared_status = "INVALID"', 'undeclared_status = "LOCKED"')],
+        {},
+        [],
+        [("adapters/search.kvx", "adapter", 'undeclared_status = "LOCKED"', '"LOCKED"')],
+    ),
+    (
+        "adapter_undeclared_status_not_declared",
+        "3.3",
+        "An undeclared_status that is not one of the adapter's declared failures.",
+        [
+            ("adapters/search.kvx", 'failures = ["INVALID", "LIMIT", ', 'failures = ["LIMIT", '),
+            ("adapters/search.kvx", '["len(q) > 0", "INVALID"]', '["len(q) > 0", "LIMIT"]'),
+        ],
+        {},
+        [],
+        [("adapters/search.kvx", "adapter", 'undeclared_status = "INVALID"', '"INVALID"')],
+    ),
+    (
+        "adapter_zero_retry_ratio",
+        "3.3",
+        "A retry_after_ratio that is not a positive integer.",
+        [("adapters/search.kvx", "retry_after_ratio = 7", "retry_after_ratio = 0")],
+        {},
+        [],
+        [("adapters/search.kvx", "bad_value", "retry_after_ratio = 0", "0")],
+    ),
+    (
+        "adapter_failures_without_timeout",
+        "3.3",
+        "An adapter failure set without TIMEOUT, which the gateway produces itself.",
+        [("adapters/search.kvx", '"UNAVAILABLE", "TIMEOUT"]', '"UNAVAILABLE"]')],
+        {},
+        [],
+        [("adapters/search.kvx", "adapter", "failures = [", "[")],
+    ),
+    (
+        "key_adapter_without_duplicate_key",
+        "3.3",
+        "A key adapter whose failure set lacks DUPLICATE_KEY.",
+        [("adapters/search.kvx", 'idempotency = "none"', 'idempotency = "key"')],
+        {},
+        [],
+        [("adapters/search.kvx", "adapter", "failures = [", "[")],
+    ),
+    (
+        "adapter_precondition_code_undeclared",
+        "3.3",
+        "An adapter precondition raises a code outside its declared failures.",
+        [("adapters/search.kvx", '["len(q) > 0", "INVALID"]', '["len(q) > 0", "LOCKED"]')],
+        {},
+        [],
+        [("adapters/search.kvx", "adapter", "preconditions = ", '"LOCKED"')],
+    ),
+    (
+        "adapter_file_endpoint",
+        "3.3",
+        "An endpoint with a local-file scheme.",
+        [
+            (
+                "adapters/search.kvx",
+                'endpoint = "stub://search/v1/query"',
+                'endpoint = "file:///etc/passwd"',
+            )
+        ],
+        {},
+        [],
+        [("adapters/search.kvx", "bad_value", "endpoint = ", '"file')],
+    ),
+    (
+        "adapter_endpoint_newline",
+        "3.3",
+        "An endpoint with an embedded newline.",
+        [
+            (
+                "adapters/search.kvx",
+                'endpoint = "stub://search/v1/query"',
+                'endpoint = "stub://search/v1\\nquery"',
+            )
+        ],
+        {},
+        [],
+        [("adapters/search.kvx", "bad_value", "endpoint = ", '"stub')],
+    ),
+    # 3.2: precondition codes
+    (
+        "precondition_invariant_violation",
+        "3.2",
+        "A precondition declares INVARIANT_VIOLATION, which only the kernel raises.",
+        [
+            (
+                "contracts/fs.kvx",
+                '[["fs.exists(path)", "NOT_FOUND"]]\neffects = []',
+                '[["fs.exists(path)", "INVARIANT_VIOLATION"]]\neffects = []',
+            )
+        ],
+        {},
+        [],
+        [("contracts/fs.kvx", "shape", "INVARIANT_VIOLATION", '"INVARIANT_VIOLATION"')],
+    ),
+    # 3.1: line breaks other readers split on
+    (
+        "kvx_line_separator",
+        "3.1",
+        "A raw U+2028 inside a value, which other KVX readers treat as a line break.",
+        [("world.kvx", 'name = "fixtureworld"', 'name = "fixture world"')],
+        {},
+        [],
+        [("world.kvx", "syntax", "fixture world", " ")],
+    ),
+    # 3.1: fixture value types
+    (
+        "fixture_sequence_zero",
+        "3.1",
+        "A fixture sequence of 0; sequences are one-based.",
+        [("fixtures/search/query.kvx", "sequence = 1\n", "sequence = 0\n")],
+        {},
+        [],
+        [("fixtures/search/query.kvx", "bad_value", "sequence = 0", "0")],
+    ),
+    (
+        "fixture_bad_request_hash",
+        "3.1",
+        "A fixture request_hash that is not sha256 and 64 lowercase hex digits.",
+        [
+            (
+                "fixtures/search/query.kvx",
+                'request_hash = "sha256:5531fa99d785a2f830769698330af36fde736a1b7166828e05d8d384819800e9"',
+                'request_hash = "sha256:0000"',
+            )
+        ],
+        {},
+        [],
+        [("fixtures/search/query.kvx", "bad_value", "request_hash = ", '"sha256')],
+    ),
+    (
+        "fixture_bad_prior",
+        "3.1",
+        "A prior call with a key the prior-call shape does not define.",
+        [
+            (
+                "fixtures/search/query.kvx",
+                '"sequence": 1, "world_time": 0}]',
+                '"sequence": 1, "world_time": 0, "note": "x"}]',
+            )
+        ],
+        {},
+        [],
+        [("fixtures/search/query.kvx", "bad_value", "prior = [", "{")],
+    ),
+    # 3.6: migration fixtures
+    (
+        "migration_fixture_missing_after",
+        "3.6",
+        "A migration fixture case without the state migrate must return.",
+        [
+            (
+                "fixtures/kv/migration_0_2_0.kvx",
+                'after = {"kv": {"namespaces": {"default": {"a": "1"}}}}\n',
+                "",
+            )
+        ],
+        {},
+        [],
+        [("fixtures/kv/migration_0_2_0.kvx", "missing_key", "[migration.flat]", None)],
+    ),
+    (
+        "migration_fixture_before_not_object",
+        "3.6",
+        "A migration fixture whose before state is not an object.",
+        [("fixtures/kv/migration_0_2_0.kvx", 'before = {"kv": {"a": "1"}}', "before = [1]")],
+        {},
+        [],
+        [("fixtures/kv/migration_0_2_0.kvx", "bad_value", "before = [1]", "[")],
+    ),
+    (
+        "migration_fixture_case_section",
+        "3.6",
+        "A migration fixture that declares a call case section.",
+        [("fixtures/kv/migration_0_2_0.kvx", "[migration.flat]", "[case.flat]")],
+        {},
+        [],
+        [("fixtures/kv/migration_0_2_0.kvx", "unknown_section", "[case.flat]", None)],
+    ),
+    # 3.1: drift schedules (compiler.md section 10)
+    (
+        "drift_unknown_primitive",
+        "3.1",
+        "A drift entry names a primitive the source does not declare.",
+        [("drift/drift-1.kvx", 'primitive = "fs.delete"', 'primitive = "fs.erase"')],
+        {},
+        [],
+        [("drift/drift-1.kvx", "bad_value", 'primitive = "fs.erase"', '"fs.erase"')],
+    ),
+    (
+        "drift_state_shape_change",
+        "3.1",
+        "A drift entry with a change kind that cannot apply to a running table.",
+        [("drift/drift-1.kvx", 'change = "precondition_added"', 'change = "state_shape"')],
+        {},
+        [],
+        [("drift/drift-1.kvx", "bad_value", 'change = "state_shape"', '"state_shape"')],
+    ),
+    (
+        "drift_bad_expression",
+        "3.1",
+        "A drift entry whose expression is outside the precondition language.",
+        [
+            (
+                "drift/drift-1.kvx",
+                'expr = "not fs.locked(path) and fs.size(path) < 4096"',
+                'expr = "path.parent"',
+            )
+        ],
+        {},
+        [],
+        [("drift/drift-1.kvx", "expression", 'expr = "path.parent"', '"path')],
+    ),
+    (
+        "drift_missing_doc",
+        "3.1",
+        "A drift entry without its author's note.",
+        [
+            (
+                "drift/drift-1.kvx",
+                'doc = "From turn 8, fs.delete refuses files of 4 KiB or more."\n',
+                "",
+            )
+        ],
+        {},
+        [],
+        [("drift/drift-1.kvx", "missing_key", "[drift.1]", None)],
     ),
 ]
 

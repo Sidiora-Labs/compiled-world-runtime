@@ -1,0 +1,15 @@
+{
+  "class": "kvx_line_separator",
+  "clause": "3.1",
+  "description": "A raw U+2028 inside a value, which other KVX readers treat as a line break.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "world.kvx",
+      "line": 11,
+      "col": 16,
+      "kind": "syntax",
+      "code": null
+    }
+  ]
+}

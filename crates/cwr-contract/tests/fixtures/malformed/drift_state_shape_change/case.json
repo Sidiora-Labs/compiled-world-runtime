@@ -1,0 +1,15 @@
+{
+  "class": "drift_state_shape_change",
+  "clause": "3.1",
+  "description": "A drift entry with a change kind that cannot apply to a running table.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "drift/drift-1.kvx",
+      "line": 12,
+      "col": 10,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "class": "precondition_invariant_violation",
+  "clause": "3.2",
+  "description": "A precondition declares INVARIANT_VIOLATION, which only the kernel raises.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "contracts/fs.kvx",
+      "line": 30,
+      "col": 38,
+      "kind": "shape",
+      "code": "CWR-C001"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "class": "drift_unknown_primitive",
+  "clause": "3.1",
+  "description": "A drift entry names a primitive the source does not declare.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "drift/drift-1.kvx",
+      "line": 11,
+      "col": 13,
+      "kind": "bad_value",
+      "code": null
+    }
+  ]
+}

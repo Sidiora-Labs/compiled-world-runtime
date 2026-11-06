@@ -24,11 +24,24 @@
 //! parameter and whether a call targets a read_only primitive of the same Build are
 //! symbol-table questions answered by the compiler's resolve and lint stages using
 //! [`Expr::calls`] and [`Expr::names`].
+//!
+//! Size is bounded so that no input can exhaust the stack of the parser, of the tree's
+//! destructor or of a tree walk: an expression holds at most [`MAX_TOKENS`] tokens and nests
+//! groups, `not` and `len(` at most [`MAX_DEPTH`] levels deep. Larger input is a located
+//! [`ExprError`], never a crash.
 
 use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// Deepest nesting of parenthesised groups, `not` and `len(` an expression may use; the same
+/// bound as the KVX reader's JSON nesting limit.
+pub const MAX_DEPTH: usize = 64;
+
+/// Most tokens one expression may hold. It bounds the size, and so the depth, of every
+/// parse tree, including the left-leaning chains `or`, `and` and `+` build.
+pub const MAX_TOKENS: usize = 1024;
 
 /// Comparison operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,8 +219,11 @@ fn tokenize(source: &str) -> Result<Vec<(Tok, usize)>, ExprError> {
                         crate::kvx::Json::Str(s) => out.push((Tok::Str(s), start)),
                         _ => return err(start, "invalid string literal"),
                     },
-                    Err((col, message)) => {
-                        return err(start + col, format!("invalid string literal: {message}"))
+                    Err(e) => {
+                        return err(
+                            start + e.col,
+                            format!("invalid string literal: {}", e.message),
+                        )
                     }
                 }
                 i = j;
@@ -284,6 +300,13 @@ fn tokenize(source: &str) -> Result<Vec<(Tok, usize)>, ExprError> {
         }
         i += 1;
     }
+    if out.len() > MAX_TOKENS {
+        let offset = out.last().map_or(0, |(_, o)| *o);
+        return err(
+            offset,
+            format!("expression has more than {MAX_TOKENS} tokens"),
+        );
+    }
     out.push((Tok::End, chars.len()));
     Ok(out)
 }
@@ -291,9 +314,27 @@ fn tokenize(source: &str) -> Result<Vec<(Tok, usize)>, ExprError> {
 struct Parser {
     toks: Vec<(Tok, usize)>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
+    /// Enters one nesting level opened at `offset`; refuses input nested deeper than
+    /// [`MAX_DEPTH`].
+    fn enter(&mut self, offset: usize) -> Result<(), ExprError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return err(
+                offset,
+                format!("expression nests deeper than {MAX_DEPTH} levels"),
+            );
+        }
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
     fn peek(&self) -> &Tok {
         &self.toks[self.pos].0
     }
@@ -341,8 +382,11 @@ impl Parser {
 
     fn not_expr(&mut self) -> Result<Expr, ExprError> {
         if *self.peek() == Tok::Not {
+            self.enter(self.offset())?;
             self.bump();
-            return Ok(Expr::Not(Box::new(self.not_expr()?)));
+            let inner = self.not_expr()?;
+            self.leave();
+            return Ok(Expr::Not(Box::new(inner)));
         }
         self.compare()
     }
@@ -394,15 +438,19 @@ impl Parser {
             Tok::Int(i) => Ok(Term::Int(i)),
             Tok::Str(s) => Ok(Term::Str(s)),
             Tok::LParen => {
+                self.enter(offset)?;
                 let inner = self.expr()?;
                 self.expect(Tok::RParen, "')'")?;
+                self.leave();
                 Ok(Term::Group(Box::new(inner)))
             }
             Tok::Name(name) => match self.peek() {
                 Tok::LParen if name == "len" => {
+                    self.enter(offset)?;
                     self.bump();
                     let inner = self.sum()?;
                     self.expect(Tok::RParen, "')' closing len(")?;
+                    self.leave();
                     Ok(Term::Len(Box::new(inner)))
                 }
                 Tok::LParen => err(offset, format!("call to {name}() is not allowed; only len() and module.primitive() calls are")),
@@ -474,6 +522,7 @@ pub fn parse(source: &str) -> Result<Expr, ExprError> {
     let mut parser = Parser {
         toks: tokenize(source)?,
         pos: 0,
+        depth: 0,
     };
     let expr = parser.expr()?;
     if *parser.peek() != Tok::End {
@@ -657,6 +706,33 @@ mod tests {
             let error = parse(source).expect_err(source);
             assert_eq!(error.offset, offset, "{source}: {error}");
         }
+    }
+
+    #[test]
+    fn deep_or_long_input_is_an_error_not_a_crash() {
+        let n = 10_000;
+        let parens = format!("{}a{}", "(".repeat(n), ")".repeat(n));
+        let nots = "not ".repeat(n) + "a";
+        let lens = format!("{}a{}", "len(".repeat(n), ")".repeat(n));
+        let chain = vec!["a"; n].join(" or ");
+        let sum = vec!["1"; n].join(" + ") + " > 0";
+        for source in [&parens, &nots, &lens, &chain, &sum] {
+            let error = parse(source).expect_err("bounded");
+            assert!(
+                error.message.contains("deeper than 64") || error.message.contains("1024 tokens"),
+                "{error}"
+            );
+        }
+        let ok_depth = format!("{}a{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
+        parse(&ok_depth).unwrap();
+        let too_deep = format!(
+            "{}a{}",
+            "(".repeat(MAX_DEPTH + 1),
+            ")".repeat(MAX_DEPTH + 1)
+        );
+        assert_eq!(parse(&too_deep).unwrap_err().offset, MAX_DEPTH);
+        let json = serde_json::to_string(&parens).unwrap();
+        assert!(serde_json::from_str::<Expression>(&json).is_err());
     }
 
     #[test]

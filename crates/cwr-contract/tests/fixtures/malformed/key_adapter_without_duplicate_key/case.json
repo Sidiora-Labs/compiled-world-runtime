@@ -1,0 +1,15 @@
+{
+  "class": "key_adapter_without_duplicate_key",
+  "clause": "3.3",
+  "description": "A key adapter whose failure set lacks DUPLICATE_KEY.",
+  "remove": [],
+  "errors": [
+    {
+      "file": "adapters/search.kvx",
+      "line": 17,
+      "col": 12,
+      "kind": "adapter",
+      "code": "CWR-F002"
+    }
+  ]
+}

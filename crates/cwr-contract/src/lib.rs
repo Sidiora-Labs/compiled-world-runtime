@@ -31,12 +31,12 @@ pub mod world;
 
 pub use adapter::{Adapter, AdapterFile, Idempotency};
 pub use changelog::{Bump, Change, ChangeKind, Changelog, Release};
-pub use envelope::{Code, Envelope, Failure, Ticks};
+pub use envelope::{Code, Envelope, EnvelopeError, Failure, LimitName, Ticks};
 pub use error::{Error, ErrorKind, Errors};
 pub use fixture::{DriftEntry, DriftFile, Expect, FixtureCase, FixtureFile, MigrationCase};
 pub use precondition::{Expr, Expression};
 pub use primitive::{ContractFile, Precondition, Primitive};
 pub use read::{is_ident, is_member};
 pub use source::{FileClass, MigrationFile, SourceFile, SourceTree, WorldSource};
-pub use types::{Params, SideEffect, TypeExpr, Version};
+pub use types::{Params, SideEffect, TypeError, TypeExpr, Version, VersionError};
 pub use world::{Clock, Limits, Rng, World, WorldFile};

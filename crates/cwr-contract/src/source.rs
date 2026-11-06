@@ -31,13 +31,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::adapter::{self, AdapterFile};
-use crate::changelog::{self, Changelog};
+use crate::changelog::{self, Changelog, MigrationRefError};
 use crate::error::{Error, ErrorKind, Errors};
 use crate::fixture::{self, DriftFile, FixtureFile};
 use crate::kvx;
 use crate::primitive::{self, ContractFile};
 use crate::read::{self, Ctx};
-use crate::types::SideEffect;
 use crate::world::{self, WorldFile};
 
 /// What a source file is.
@@ -67,6 +66,22 @@ pub enum FileClass {
 }
 
 impl FileClass {
+    /// The path pattern of the class, as world-source.md section 2 writes it.
+    pub fn label(self) -> &'static str {
+        match self {
+            FileClass::World => "world.kvx",
+            FileClass::Changelog => "CHANGELOG.kvx",
+            FileClass::Lib => "lib/<module>.py",
+            FileClass::Contract => "contracts/<module>.kvx",
+            FileClass::Adapter => "adapters/<module>.kvx",
+            FileClass::AdapterLive => "adapters/<module>/live.py",
+            FileClass::Migration => "migrations/<name>.py",
+            FileClass::Fixture => "fixtures/<module>/<name>.kvx",
+            FileClass::Manual => "manual/<section>.md",
+            FileClass::Drift => "drift/<name>.kvx",
+        }
+    }
+
     /// True for the classes whose files are parsed as KVX into the typed model.
     pub fn is_kvx(self) -> bool {
         matches!(
@@ -180,7 +195,19 @@ fn walk(dir: &Path, prefix: &str, tree: &mut SourceTree, errors: &mut Vec<Error>
             return;
         }
     };
-    let mut names: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    let mut names = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => names.push(entry),
+            Err(e) => errors.push(Error::new(
+                prefix.trim_end_matches('/'),
+                1,
+                1,
+                ErrorKind::Io,
+                format!("cannot read directory entry: {e}"),
+            )),
+        }
+    }
     names.sort_by_key(|e| e.file_name());
     for entry in names {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -472,17 +499,17 @@ impl WorldSource {
         }
 
         // CHANGELOG.kvx
-        let migration_ok = |m: &str| -> Result<(), String> {
+        let migration_ok = |m: &str| -> Result<(), MigrationRefError> {
             let Some(name) = m.strip_prefix("migrations/") else {
-                return Err(format!("migration {m:?} must be a path under migrations/"));
+                return Err(MigrationRefError::NotUnderMigrations(m.to_string()));
             };
             if name.contains('/') || classify(m).map(|c| c.0) != Some(FileClass::Migration) {
-                return Err(format!("migration {m:?} must be migrations/<name>.py"));
+                return Err(MigrationRefError::NotAMigrationPath(m.to_string()));
             }
             match texts.get(m) {
-                None => Err(format!("migration file {m} does not exist")),
+                None => Err(MigrationRefError::Missing(m.to_string())),
                 Some((_, _, text)) if !defines_migrate(text) => {
-                    Err(format!("migration file {m} does not define migrate(state)"))
+                    Err(MigrationRefError::NoMigrate(m.to_string()))
                 }
                 Some(_) => Ok(()),
             }
@@ -554,8 +581,8 @@ impl WorldSource {
                             }
                         }
                         if let Some(mig) = &f.migration {
-                            if let Err(message) = migration_ok(mig) {
-                                meta_error(&mut ctx, meta, "migration", message);
+                            if let Err(problem) = migration_ok(mig) {
+                                meta_error(&mut ctx, meta, "migration", problem.to_string());
                                 continue;
                             }
                         }
@@ -628,117 +655,206 @@ impl WorldSource {
         self.world.example
     }
 
-    /// Re-checks every rule that the typed model alone cannot carry, for a model that did
-    /// not come from KVX (for example one deserialised from JSON). Returns messages.
-    pub fn check(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        let modules = &self.world.world.modules;
-        if !read::is_ident(&self.world.world.name) {
-            out.push(format!(
-                "world.name {:?} must be a lowercase identifier",
-                self.world.world.name
-            ));
-        }
-        if modules.is_empty() {
-            out.push("world.modules must list at least one module".to_string());
-        }
-        for (i, m) in modules.iter().enumerate() {
-            if !read::is_ident(m) || modules[..i].contains(m) {
-                out.push(format!("world.modules entry {m:?} is invalid or repeated"));
-            }
-        }
-        let mut names: Vec<&str> = Vec::new();
-        for c in &self.contracts {
-            if !modules.contains(&c.module) {
-                out.push(format!(
-                    "CWR-C003: {} declares module {} absent from world.modules",
-                    c.path, c.module
-                ));
-            }
-            if c.path != format!("contracts/{}.kvx", c.module) {
-                out.push(format!("{} must be contracts/{}.kvx", c.path, c.module));
-            }
-            for p in &c.primitives {
-                if names.contains(&p.name.as_str()) {
-                    out.push(format!("CWR-C002: {} is declared more than once", p.name));
-                }
-                names.push(&p.name);
-                if !p.name.starts_with(&format!("{}.", c.module)) {
-                    out.push(format!("{} must belong to module {}", p.name, c.module));
-                }
-                match p.side_effect {
-                    SideEffect::External => out.push(format!(
-                        "CWR-C001: {} side_effect external is reserved for adapters",
-                        p.name
-                    )),
-                    SideEffect::ReadOnly if !p.effects.is_empty() => {
-                        out.push(format!("CWR-C001: read_only {} declares effects", p.name))
-                    }
-                    SideEffect::Mutating if p.effects.is_empty() => {
-                        out.push(format!("CWR-C001: mutating {} declares no effects", p.name))
-                    }
-                    _ => {}
-                }
-                if p.doc.trim().is_empty() {
-                    out.push(format!("CWR-D001: {} has an empty doc", p.name));
-                }
-            }
-        }
-        for f in &self.adapters {
-            if !modules.contains(&f.module) {
-                out.push(format!(
-                    "CWR-C003: {} declares module {} absent from world.modules",
-                    f.path, f.module
-                ));
-            }
-            if f.path != format!("adapters/{}.kvx", f.module) {
-                out.push(format!("{} must be adapters/{}.kvx", f.path, f.module));
-            }
-            for a in &f.adapters {
-                if names.contains(&a.name.as_str()) {
-                    out.push(format!("CWR-C002: {} is declared more than once", a.name));
-                }
-                names.push(&a.name);
-                if !a.name.starts_with(&format!("{}.", f.module)) {
-                    out.push(format!("{} must belong to module {}", a.name, f.module));
-                }
-                out.extend(adapter::adapter_shape_errors(a));
-                if a.doc.trim().is_empty() {
-                    out.push(format!("CWR-D001: {} has an empty doc", a.name));
-                }
-            }
-        }
-        let migration_paths: Vec<&str> = self.migrations.iter().map(|m| m.path.as_str()).collect();
-        out.extend(
-            self.changelog
-                .consistency_errors(&|m| migration_paths.contains(&m)),
+    /// Checks a model that did not come from KVX (for example one deserialised from JSON)
+    /// against every rule the KVX reader applies, by running that reader: each typed file is
+    /// rendered in canonical KVX at its own path, the inventory supplies the remaining paths,
+    /// and [`WorldSource::load_tree`] reads the result. The model is valid exactly when that
+    /// reading succeeds and equals the model. Errors are the reader's own, typed and located
+    /// in the canonical rendering of the file they concern, plus located errors for an
+    /// inventory or a value the reader would not reproduce.
+    ///
+    /// Python and Markdown bytes are not part of the model; their inventory entries must carry
+    /// a 64-digit lowercase hex SHA-256, and each migration is read as a file that defines
+    /// `migrate(state)`.
+    pub fn check(&self) -> Result<(), Errors> {
+        let mut errors = Vec::new();
+        let kvx_files = self.to_kvx_files();
+        let mut typed: Vec<(&str, FileClass)> = vec![
+            ("world.kvx", FileClass::World),
+            ("CHANGELOG.kvx", FileClass::Changelog),
+        ];
+        typed.extend(
+            self.contracts
+                .iter()
+                .map(|c| (c.path.as_str(), FileClass::Contract)),
         );
-        match self.changelog.newest() {
-            None => out.push("CHANGELOG.kvx declares no release".to_string()),
-            Some(r) if r.version != self.world.world.version => out.push(format!(
-                "world.version {} must equal the newest release {}",
-                self.world.world.version, r.version
-            )),
-            _ => {}
+        typed.extend(
+            self.adapters
+                .iter()
+                .map(|a| (a.path.as_str(), FileClass::Adapter)),
+        );
+        typed.extend(
+            self.fixtures
+                .iter()
+                .map(|f| (f.path.as_str(), FileClass::Fixture)),
+        );
+        typed.extend(
+            self.drift
+                .iter()
+                .map(|d| (d.path.as_str(), FileClass::Drift)),
+        );
+        for (i, (path, class)) in typed.iter().enumerate() {
+            if classify(path).map(|c| c.0) != Some(*class) {
+                errors.push(Error::new(
+                    *path,
+                    1,
+                    1,
+                    ErrorKind::UnknownFile,
+                    format!(
+                        "the model holds a {} file at {path:?}, which is not a {} path",
+                        class.label(),
+                        class.label()
+                    ),
+                ));
+            }
+            if typed[..i].iter().any(|(p, _)| p == path) {
+                errors.push(Error::new(
+                    *path,
+                    1,
+                    1,
+                    ErrorKind::UnknownFile,
+                    "the model holds two typed files at this path",
+                ));
+            }
         }
-        for d in &self.drift {
-            for e in &d.entries {
-                if !names.contains(&e.primitive.as_str()) {
-                    out.push(format!(
-                        "{}: drift names unknown primitive {}",
-                        d.path, e.primitive
-                    ));
+        let mut tree = SourceTree::default();
+        for f in &self.files {
+            let digest_ok = match &f.sha256 {
+                None => f.class.is_kvx(),
+                Some(h) => !f.class.is_kvx() && is_sha256_hex(h),
+            };
+            if !digest_ok {
+                errors.push(Error::new(
+                    f.path.clone(),
+                    1,
+                    1,
+                    ErrorKind::BadValue,
+                    if f.class.is_kvx() {
+                        "a KVX file carries no sha256; its typed model represents it"
+                    } else {
+                        "sha256 must be the 64 lowercase hex digits of the file's SHA-256"
+                    },
+                ));
+            }
+            let bytes = if f.class.is_kvx() {
+                match kvx_files.get(&f.path) {
+                    Some(text) => text.clone().into_bytes(),
+                    None => {
+                        errors.push(Error::new(
+                            f.path.clone(),
+                            1,
+                            1,
+                            ErrorKind::UnknownFile,
+                            format!(
+                                "the inventory lists a {} file the model does not hold",
+                                f.class.label()
+                            ),
+                        ));
+                        continue;
+                    }
                 }
-                if !e.change.drift_applicable() {
-                    out.push(format!(
-                        "{}: drift change {} cannot be applied to a running table",
-                        d.path,
-                        e.change.as_str()
-                    ));
+            } else if f.class == FileClass::Migration {
+                MIGRATION_STAND_IN.as_bytes().to_vec()
+            } else {
+                Vec::new()
+            };
+            if tree.files.insert(f.path.clone(), Some(bytes)).is_some() {
+                errors.push(Error::new(
+                    f.path.clone(),
+                    1,
+                    1,
+                    ErrorKind::UnknownFile,
+                    "the inventory lists this path twice",
+                ));
+            }
+        }
+        for path in kvx_files.keys() {
+            if !self.files.iter().any(|f| f.path == *path) {
+                errors.push(Error::new(
+                    path.clone(),
+                    1,
+                    1,
+                    ErrorKind::UnknownFile,
+                    "the model holds a typed file the inventory does not list",
+                ));
+            }
+        }
+        if errors.is_empty() {
+            match WorldSource::load_tree(&tree) {
+                Err(reader) => errors.extend(reader.0),
+                Ok(read) => self.differences(&read, &mut errors),
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(Errors::sorted(errors))
+        }
+    }
+
+    /// Records one located error per top-level item of `self` that differs from `read`, the
+    /// reader's view of the same model. File digests are compared by [`WorldSource::check`]
+    /// itself, because the stand-in bytes it reads have digests of their own.
+    fn differences(&self, read: &WorldSource, errors: &mut Vec<Error>) {
+        let (Ok(mut ours), Ok(mut theirs)) =
+            (serde_json::to_value(self), serde_json::to_value(read))
+        else {
+            errors.push(Error::new(
+                "world.kvx",
+                1,
+                1,
+                ErrorKind::Io,
+                "the model cannot be serialised for comparison",
+            ));
+            return;
+        };
+        for value in [&mut ours, &mut theirs] {
+            if let Some(serde_json::Value::Array(files)) = value.get_mut("files") {
+                for f in files {
+                    if let Some(obj) = f.as_object_mut() {
+                        obj.remove("sha256");
+                    }
                 }
             }
         }
-        out
+        let (serde_json::Value::Object(ours), serde_json::Value::Object(theirs)) = (ours, theirs)
+        else {
+            return;
+        };
+        for (key, mine) in &ours {
+            let other = theirs.get(key).unwrap_or(&serde_json::Value::Null);
+            match (mine, other) {
+                (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
+                    for i in 0..a.len().max(b.len()) {
+                        let (x, y) = (a.get(i), b.get(i));
+                        if x == y {
+                            continue;
+                        }
+                        let file = x
+                            .or(y)
+                            .and_then(|v| v.get("path"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or(model_file(key));
+                        let pointer = format!("/{key}/{i}");
+                        errors.push(Error::new(
+                            file,
+                            1,
+                            1,
+                            difference_kind(key),
+                            describe_difference(&pointer, x, y),
+                        ));
+                    }
+                }
+                _ if mine != other => errors.push(Error::new(
+                    model_file(key),
+                    1,
+                    1,
+                    difference_kind(key),
+                    describe_difference(&format!("/{key}"), Some(mine), Some(other)),
+                )),
+                _ => {}
+            }
+        }
     }
 
     /// Renders every KVX file of the model in canonical form (comments are not part of the
@@ -774,14 +890,148 @@ impl WorldSource {
         Ok(s)
     }
 
-    /// Parses a model from its JSON form and re-checks the rules the types cannot carry.
-    pub fn from_json(text: &str) -> Result<WorldSource, String> {
-        let model: WorldSource = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        let problems = model.check();
-        if problems.is_empty() {
-            Ok(model)
+    /// Parses a model from its JSON form and accepts it exactly when the KVX reader would
+    /// accept its canonical rendering and read back the same model ([`WorldSource::check`]).
+    /// A JSON syntax or type error is located at its line and column in `text`, under the
+    /// file name `<json>`.
+    pub fn from_json(text: &str) -> Result<WorldSource, Errors> {
+        let model: WorldSource = serde_json::from_str(text).map_err(|e| {
+            Errors(vec![Error::new(
+                "<json>",
+                e.line().max(1),
+                e.column().max(1),
+                ErrorKind::Json,
+                e.to_string(),
+            )])
+        })?;
+        model.check()?;
+        Ok(model)
+    }
+}
+
+/// The text [`WorldSource::check`] reads for a migration file, whose bytes the model does not
+/// carry: the smallest file that defines `migrate(state)`.
+const MIGRATION_STAND_IN: &str = "def migrate(state):\n    return state\n";
+
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64
+        && s.chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
+/// The file a top-level model key that is not a list of files is rendered to.
+fn model_file(key: &str) -> &'static str {
+    match key {
+        "changelog" | "migrations" => "CHANGELOG.kvx",
+        _ => "world.kvx",
+    }
+}
+
+fn difference_kind(key: &str) -> ErrorKind {
+    match key {
+        "changelog" | "migrations" => ErrorKind::Changelog,
+        "files" => ErrorKind::UnknownFile,
+        _ => ErrorKind::BadValue,
+    }
+}
+
+/// Describes where two JSON values first differ, with both sides shortened to 120 characters.
+fn describe_difference(
+    pointer: &str,
+    ours: Option<&serde_json::Value>,
+    theirs: Option<&serde_json::Value>,
+) -> String {
+    let (at, a, b) = first_difference(pointer.to_string(), ours, theirs);
+    let show = |v: Option<&serde_json::Value>| -> String {
+        let text = v.map_or_else(|| "nothing".to_string(), serde_json::Value::to_string);
+        if text.chars().count() > 120 {
+            format!("{}...", text.chars().take(120).collect::<String>())
         } else {
-            Err(problems.join("\n"))
+            text
         }
+    };
+    format!(
+        "the KVX reader does not reproduce the model at {at}: the model has {}, the reader reads {}",
+        show(a),
+        show(b)
+    )
+}
+
+/// The JSON pointer of the first difference between two values and the values there. The
+/// walk is iterative, so no input depth can exhaust the stack.
+fn first_difference<'a>(
+    mut at: String,
+    mut ours: Option<&'a serde_json::Value>,
+    mut theirs: Option<&'a serde_json::Value>,
+) -> (
+    String,
+    Option<&'a serde_json::Value>,
+    Option<&'a serde_json::Value>,
+) {
+    use serde_json::Value;
+    loop {
+        let next = match (ours, theirs) {
+            (Some(Value::Object(a)), Some(Value::Object(b))) => a
+                .iter()
+                .map(|(k, v)| (k.clone(), Some(v), b.get(k)))
+                .chain(
+                    b.iter()
+                        .filter(|(k, _)| !a.contains_key(*k))
+                        .map(|(k, v)| (k.clone(), None, Some(v))),
+                )
+                .find(|(_, x, y)| x != y),
+            (Some(Value::Array(a)), Some(Value::Array(b))) if a.len() == b.len() => a
+                .iter()
+                .zip(b)
+                .enumerate()
+                .find(|(_, (x, y))| x != y)
+                .map(|(i, (x, y))| (i.to_string(), Some(x), Some(y))),
+            _ => None,
+        };
+        match next {
+            Some((step, x, y)) => {
+                at = format!("{at}/{step}");
+                ours = x;
+                theirs = y;
+            }
+            None => return (at, ours, theirs),
+        }
+    }
+}
+
+/// Parses one KVX file of class `class` on its own: the path must classify as that class,
+/// the text must be strict KVX, and `read` (the class's reader, given the module or file
+/// stem) must accept it without recording an error.
+pub(crate) fn parse_file<T>(
+    path: &str,
+    text: &str,
+    class: FileClass,
+    read: impl FnOnce(&mut Ctx, &kvx::Document, &str) -> Option<T>,
+) -> Result<T, Errors> {
+    let stem = match classify(path) {
+        Some((c, module)) if c == class => module.unwrap_or_default(),
+        _ => {
+            return Err(Errors(vec![Error::new(
+                path,
+                1,
+                1,
+                ErrorKind::UnknownFile,
+                format!("{path:?} is not a {} path", class.label()),
+            )]))
+        }
+    };
+    let doc = kvx::parse(path, text).map_err(Errors::sorted)?;
+    let mut errors = Vec::new();
+    let value = read(&mut Ctx::new(path, &mut errors), &doc, &stem);
+    match value {
+        Some(v) if errors.is_empty() => Ok(v),
+        _ if errors.is_empty() => Err(Errors(vec![Error::new(
+            path,
+            1,
+            1,
+            ErrorKind::Io,
+            "the reader produced no model and no error",
+        )])),
+        _ => Err(Errors::sorted(errors)),
     }
 }

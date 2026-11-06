@@ -898,6 +898,165 @@ mod tests {
         assert_eq!(m.len(), 1);
     }
 
+    /// A replay gateway for one `key` adapter with no adapter code, over a cassette that holds
+    /// exactly one recorded `publish.post` request.
+    fn replay_gateway(dir: &Path, recorded: &Value) -> (AdapterGateway, Contract) {
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join("cassette.jsonl");
+        let mut k = Cassette::open_for_record(&path, Some("replay-miss")).unwrap();
+        k.append(Entry {
+            adapter: "publish.post".into(),
+            params: recorded.clone(),
+            request_hash: request_hash("publish.post", recorded),
+            seq: 0,
+            world_time: Some(1),
+            response: RawResponse::Http {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: r#"{"result": {"post_id": "p1"}}"#.into(),
+            },
+        })
+        .unwrap();
+        let contract = Contract {
+            name: "publish.post".into(),
+            module: "publish".into(),
+            is_adapter: true,
+            side_effect: "external".into(),
+            params: Vec::new(),
+            returns: cwr_contract::TypeExpr::Dict(Box::new(cwr_contract::TypeExpr::Str)),
+            returns_text: "dict[str, str]".into(),
+            preconditions: Vec::new(),
+            effects: Vec::new(),
+            failures: [Code::Unavailable, Code::Invalid, Code::DuplicateKey]
+                .into_iter()
+                .collect(),
+            content_guaranteed: false,
+            raw: json!({"idempotency": "key", "idempotency_key": "key", "timeout_ms": 1000}),
+        };
+        let gateway = AdapterGateway {
+            mode: Mode::Replay,
+            stubs: BTreeMap::new(),
+            cassette: Some(Cassette::load(&path).unwrap()),
+            store: KeyStore::open(&dir.join(GATEWAY_DIR)).unwrap(),
+            instance: "i-replay-miss".into(),
+            adapters_dir: dir.join("adapters"),
+            live_modules: BTreeSet::new(),
+            adapter_names: vec!["publish.post".into()],
+            records: Records(BTreeMap::new()),
+            code: None,
+            code_error: None,
+            ordinals: HashMap::new(),
+            evidence: None,
+            notes: Vec::new(),
+            turn_deadline: None,
+            replay_miss: false,
+        };
+        (gateway, contract)
+    }
+
+    fn params(v: Value) -> Map<String, Value> {
+        v.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn replay_miss_releases_the_key_and_a_served_call_fills_it() {
+        let dir = std::env::temp_dir().join(format!("cwr-replay-miss-{}", std::process::id()));
+        let recorded = json!({"key": "k1", "title": "T", "body": "a"});
+        let other = json!({"key": "k1", "title": "T", "body": "b"});
+        let (mut gw, c) = replay_gateway(&dir, &recorded);
+        let ph_other = idempotency::payload_hash(&params(other.clone()), "key");
+        let ph_recorded = idempotency::payload_hash(&params(recorded.clone()), "key");
+        let key = idempotency::key_of(&params(other.clone()), "key").unwrap();
+
+        // A request the cassette does not hold never reached the service: UNAVAILABLE, nothing
+        // stored under the key, and the gateway notes that nothing was sent.
+        let miss = gw.call(&c, &params(other.clone()), 1);
+        assert!(
+            matches!(
+                &miss,
+                GatewayOutcome::Fail {
+                    code: Code::Unavailable,
+                    ..
+                }
+            ),
+            "{miss:?}"
+        );
+        assert_eq!(
+            gw.store.lookup("publish.post", &key, &ph_other),
+            Lookup::Miss
+        );
+        assert!(gw.store.pending().is_empty());
+        assert!(!gw.notes.last().unwrap().sent);
+
+        // The corrected call under the same key is served from the cassette and stored.
+        let served = gw.call(&c, &params(recorded.clone()), 2);
+        assert!(
+            matches!(&served, GatewayOutcome::Ok(v) if v["post_id"] == "p1"),
+            "{served:?}"
+        );
+        assert!(matches!(
+            gw.store.lookup("publish.post", &key, &ph_recorded),
+            Lookup::Replay(Stored::Ok(_))
+        ));
+
+        // Now the key is consumed: the first payload is a duplicate, answered from the store.
+        let duplicate = gw.call(&c, &params(other), 3);
+        assert!(
+            matches!(
+                &duplicate,
+                GatewayOutcome::Fail {
+                    code: Code::DuplicateKey,
+                    ..
+                }
+            ),
+            "{duplicate:?}"
+        );
+        assert_eq!(gw.notes.last().unwrap().via, "store");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_served_failure_still_fills_the_key_in_replay() {
+        let dir = std::env::temp_dir().join(format!("cwr-replay-fail-{}", std::process::id()));
+        let recorded = json!({"key": "k2", "title": "T", "body": "a"});
+        let (mut gw, c) = replay_gateway(&dir, &recorded);
+        let path = dir.join("cassette.jsonl");
+        // Re-record the single entry as a declared failure the service answered.
+        std::fs::remove_file(&path).unwrap();
+        let mut k = Cassette::open_for_record(&path, Some("replay-fail")).unwrap();
+        k.append(Entry {
+            adapter: "publish.post".into(),
+            params: recorded.clone(),
+            request_hash: request_hash("publish.post", &recorded),
+            seq: 0,
+            world_time: Some(1),
+            response: RawResponse::Timeout,
+        })
+        .unwrap();
+        gw.cassette = Some(Cassette::load(&path).unwrap());
+        let mut c = c;
+        c.failures.insert(Code::Timeout);
+        let key = idempotency::key_of(&params(recorded.clone()), "key").unwrap();
+        let ph = idempotency::payload_hash(&params(recorded.clone()), "key");
+        let first = gw.call(&c, &params(recorded.clone()), 1);
+        assert!(
+            matches!(
+                &first,
+                GatewayOutcome::Fail {
+                    code: Code::Timeout,
+                    ..
+                }
+            ),
+            "{first:?}"
+        );
+        assert!(matches!(
+            gw.store.lookup("publish.post", &key, &ph),
+            Lookup::Replay(Stored::Fail { .. })
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn modes_and_stub_bindings() {
         assert_eq!("replay".parse::<Mode>().unwrap(), Mode::Replay);

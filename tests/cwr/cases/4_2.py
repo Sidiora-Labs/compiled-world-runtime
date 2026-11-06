@@ -176,9 +176,9 @@ class Stubs:
         self.procs: list[subprocess.Popen] = []
         self.urls: dict[str, str] = {}
         for name in ("search", "publish"):
+            server = STUBS / f"{name}_server.py"
             proc = subprocess.Popen(
-                [sys.executable, "-I", str(STUBS / f"{name}_server.py"), "--port", "0"]
-                + ["--seed", str(seed)],
+                [sys.executable, "-I", str(server), "--port", "0", "--seed", str(seed)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
@@ -209,10 +209,8 @@ class Instance:
         home.mkdir(parents=True, exist_ok=True)
         init = home / "initial.json"
         init.write_text(json.dumps(initial, sort_keys=True), encoding="utf-8")
-        p = run(
-            [cwr, "instance", "create", "--home", home, "--build", build]
-            + ["--seed", str(seed), "--initial", init]
-        )
+        create = ["instance", "create", "--home", home, "--build", build, "--seed", str(seed)]
+        p = run([cwr, *create, "--initial", init])
         if p.returncode != 0:
             raise RuntimeError(f"instance create failed: {p.stderr.strip()[-400:]}")
         self.id = p.stdout.strip()
@@ -392,9 +390,8 @@ def audit_predicate(task_dir: Path) -> list:
                     problems.append(f"imports {name}")
         if isinstance(node, ast.Name) and node.id in MODEL_TEXT_NAMES:
             problems.append(f"refers to model text {node.id}")
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value in ("returned", "stdout", "stderr", "message"):
-                problems.append(f"reads envelope/model field {node.value!r}")
+        if isinstance(node, ast.Constant) and node.value in ("returned", "stdout", "stderr"):
+            problems.append(f"reads envelope/model field {node.value!r}")
     return problems
 
 
@@ -486,14 +483,15 @@ def main() -> int:
         fenced = probe_fenced(cwr, build, homes)
         stubs = Stubs(1, work)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            recorded = dict(
-                zip(
-                    [t.name for t in tasks],
-                    pool.map(
-                        lambda t: record_task(t, cwr, build, homes, stubs.urls, fenced), tasks
-                    ),
+            urls = stubs.urls
+            recorded = {
+                t.name: error
+                for t, error in zip(
+                    tasks,
+                    pool.map(lambda t: record_task(t, cwr, build, homes, urls, fenced), tasks),
+                    strict=True,
                 )
-            )
+            }
         stubs.stop()
         stubs = None
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:

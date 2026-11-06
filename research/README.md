@@ -10,7 +10,7 @@ and every deviation from the pre-registration. Every number in a report equals a
 recomputation from the campaign ledgers by `benchmark/analyse.py`.
 
 | Report | Claim under test | Arms compared |
-|---|---|---|
+| --- | --- | --- |
 | `h1-stability.md` | H1 Stability: rules fixed for the life of a Build give higher task success and fewer repeated failures than rules that drift without notice | `frozen` against `drift-1` and `drift-3` |
 | `h2-direct-action.md` | H2 Direct action: one script per turn completes tasks in fewer turns than one primitive per turn, without a higher partial-failure cost | `script` against `one-primitive` |
 | `h3-long-context.md` | H3 Long context: the H1 and H2 advantages grow with task length, and a stable world lets the model reuse a rule without re-probing | ledger tails `k5`, `k20` and `kfull`, plus the H1 and H2 deltas per bin |

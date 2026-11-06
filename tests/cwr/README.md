@@ -16,7 +16,7 @@ never trusts the driver's own verdict. The contract is
 ## Contents
 
 | Path | Role |
-|---|---|
+| --- | --- |
 | `registry.kvx` | The 20 qualification cases: tier, clauses covered, the assertion inventory, the drivers that contribute to each case, and each case's status and evidence |
 | `qualify.py` | The runner. It runs drivers, stages their output, has the checker verify the record, writes it once and appends it to the attempt index. |
 | `check_evidence.py` | The independent checker. It starts no process, opens no network connection and reads only records, the files they name, the index, the registry and the schema. |
@@ -28,7 +28,7 @@ never trusts the driver's own verdict. The contract is
 ## Cases
 
 | Tier | Cases |
-|---|---|
+| --- | --- |
 | component | CWR-001 contract grammar and failure envelope, CWR-002 compiler closure and visibility lints, CWR-003 contract tests and rule determinism, CWR-004 ContractDiff and changelog gate, CWR-005 immutable Build artifacts and generated manual, CWR-006 ledger, snapshot, world clock and RNG, CWR-007 sandbox closure and resource limits, CWR-019 evidence registry and false-success traps |
 | integration | CWR-008 atomic primitives and ordered preconditions, CWR-009 adapter gateway, CWR-010 crash recovery and ledger replay, CWR-011 controlled upgrade, CWR-012 context composition and turn protocol, CWR-013 experimental Builds and kernel gate, CWR-014 reference world, stubs and cassettes, CWR-015 task suite, CWR-016 upgrade pairs, CWR-017 harness isolation and ledger-only metrics |
 | campaign | CWR-018 hypothesis campaigns H1 to H4 |
@@ -48,7 +48,7 @@ python3 tests/cwr/closure.py                             # read-only release clo
 runs the closure report.
 
 | `qualify.py` exit | Meaning |
-|---|---|
+| --- | --- |
 | 0 | PASS |
 | 1 | FAIL |
 | 2 | Refused: invalid registry, unknown case or task, missing driver or no registered inventory |

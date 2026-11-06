@@ -43,7 +43,7 @@ Line 1 is the header:
 ```
 
 | Key | Rule |
-|---|---|
+| --- | --- |
 | `format` | `"cwr.cassette"` |
 | `schema_version` | `1` |
 | `request_hash` | `"sha256-cwr-canonical-json-v1"`, the scheme in section 3 |
@@ -56,7 +56,7 @@ Every following line is one entry:
 ```
 
 | Key | Rule |
-|---|---|
+| --- | --- |
 | `adapter` | The qualified adapter name, `module.name` |
 | `params` | The parameters object exactly as sent |
 | `request_hash` | `sha256:<64 hex>` over the adapter and parameters (section 3). It matches `params`. |
@@ -65,7 +65,7 @@ Every following line is one entry:
 | `response` | One of the three forms below |
 
 | `response.kind` | Other keys | Result on replay |
-|---|---|---|
+| --- | --- | --- |
 | `http` | `status` (integer), `headers` (only `content-type` and `x-cwr-retry-after-ticks`, when present), `body` (the exact body text) | Normalised by the table in kernel.md section 7 |
 | `timeout` | None | `TIMEOUT`, returned at once. The recorded stall is not reproduced, and no duration is stored. |
 | `transport_error` | `error`, the exception class name, for example `ConnectionResetError` | `UNAVAILABLE` |
@@ -115,7 +115,7 @@ invalidates every result recorded under the old one. A recording always uses a s
 ## 6. Tool
 
 | Command | Effect | Exit |
-|---|---|---|
+| --- | --- | --- |
 | `cassette_tool.py hash ADAPTER PARAMS_JSON` | Prints the canonical request hash | 0 |
 | `cassette_tool.py record --stub search=URL --stub publish=URL --instance ID --requests R.jsonl --out C.jsonl [--label L] [--timeout-ms ADAPTER=MS]` | Sends each request (`{"adapter","params","world_time"}` per line) to the stubs once, with no retries, and writes the cassette | 0, or 2 on a usage or I/O error |
 | `cassette_tool.py replay --cassette C.jsonl --requests R.jsonl` | Serves each request from the cassette with the network disabled, printing one canonical JSON line per request: `adapter`, `request_hash`, `seq`, `hit` and `outcome` | 0, or 1 if any request missed |

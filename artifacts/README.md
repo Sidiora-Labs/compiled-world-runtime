@@ -7,7 +7,7 @@
 is byte-reproducible: the same tree always produces the same archive.
 
 | File | Content |
-|---|---|
+| --- | --- |
 | `cwr-<version>.tar.gz` | The tree under `cwr-<version>/`, the release `cwr` binary as `bin/cwr` when it has been built, and `MANIFEST.sha256` with one sha256 per bundled file |
 | `cwr-<version>.tar.gz.sha256` | The sha256 of the archive itself |
 

@@ -15,7 +15,7 @@ references or runs any other agent or harness. Its contract is
 ## Files
 
 | File | Role |
-|---|---|
+| --- | --- |
 | `metrics.py` | The normative metric definitions plus registered conventions C1 to C7. Pure functions with no I/O. Its sha256 is pre-registered. |
 | `arms.kvx`, `arms.py` | The eleven arms of H1 to H4, and a validator that refuses any arm that is not a CWR Build with exactly its flag's pillar ablated. The sha256 of `arms.kvx` is pre-registered. |
 | `prereg.py` | Loads `benchmark/preregistration.kvx`, checks the `metrics.py` and `arms.kvx` digests and lists campaign inputs that are still unset. |
@@ -60,7 +60,7 @@ The specification leaves some definitions open or states them inconsistently. Th
 registered in `preregistration.kvx`.
 
 | Topic | Registered choice |
-|---|---|
+| --- | --- |
 | Primitive calls (C1) | Ledger records of kind `primitive` or `adapter`. Failure-rate and probing-ratio definitions only make sense with adapter calls included. |
 | Turn limits | The per-bin limits of 15, 40 and 120 turns and the per-Instance limit of 200 are both registered, with 200 as the cap. |
 | H3 task set | The full suite, a superset of both task sets the specification names. |

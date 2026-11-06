@@ -8,7 +8,7 @@ library only and safe under `python3 -I`. A tool locates the repository from its
 from any directory.
 
 | Tool | Run by | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `header.py` | `make headers`, `make headers-apply` | Checks or inserts the two-line Sidiora source header in the comment syntax of each file. The exempt file types and directories are listed explicitly in the tool, and the check reports how many files it skipped. |
 | `codemap.py` | by hand after a structural change | Generates [CODEMAP.md](../CODEMAP.md) from the tree: a language table, a purpose for every directory taken from the first heading of its README, the crates and the make targets. The output is deterministic. `--check` fails when the map is stale. |
 | `release.py` | `make release` | Checks the release preconditions and writes a byte-reproducible bundle into [artifacts/](../artifacts/README.md). It refuses, listing every reason, when the toolchain is incomplete, the versions of the CLI crate, the SDK package and `benchmark/release.kvx` disagree, the release is not pinned or a file selected for the bundle looks like a credential. |

@@ -28,7 +28,7 @@ To create an Instance and run a turn, continue with the [crates README](../crate
 ## Layout of refworld/
 
 | Path | Content |
-|---|---|
+| --- | --- |
 | `world.kvx` | Identity (`refworld` 0.2.0, Python 3.12), the modules `fs`, `kv`, `jobs`, `search`, `publish` and `world`, and every limit, clock and random-number key, all explicit |
 | `CHANGELOG.kvx` | Releases 0.1.0 and 0.2.0. Release 0.2.0 adds the `fs.write` size precondition, `kv` namespaces with their migration, `kv.used` and the `kv` quota. |
 | `contracts/{fs,kv,jobs,world}.kvx` | The 29 internal primitives, with preconditions in catalogue order |

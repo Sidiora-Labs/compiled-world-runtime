@@ -12,7 +12,7 @@ Both modules use the standard library only and are safe under `python3 -I`.
 ## Modules
 
 | Module | Provides | Agrees with |
-|---|---|---|
+| --- | --- | --- |
 | `cwr_core.kvx` | `loads`, `load`, `dump`, `dumps_value` and `KVXError`, which carries a `file:line:col` location | `parse_kvx` in [validate_spec.py](../spec/cwr/tools/validate_spec.py) |
 | `cwr_core.envelope` | `CODES` (the eleven failure codes with their guidance), `BY_NAME`, `RETRY_AFTER_CODES`, `validate` and `loads` | [world-source.md](../spec/cwr/world-source.md) section 6 and the contract crate's envelope type |
 

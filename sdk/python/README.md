@@ -37,7 +37,7 @@ recorded. [SANDBOX.md](../../crates/cwr-kernel/SANDBOX.md) lists every facility 
 ## Files
 
 | File | Role | Where it runs |
-|---|---|---|
+| --- | --- | --- |
 | `cwr/_codec.py` | The value codec and the result envelopes | Copied byte for byte into every Build's `sdk/cwr/`, so it is part of the Build hash |
 | `cwr/_rpc.py` | The RPC client: one request and one response per primitive call over one Unix socket | Copied byte for byte into every Build's `sdk/cwr/` |
 | `cwr/templates/*.tmpl` | Templates for the world modules, `cwr/__init__.py` and `cwr/errors.py`, rendered from `contracts.json` | Rendered by the World Compiler into every Build |
@@ -47,7 +47,7 @@ recorded. [SANDBOX.md](../../crates/cwr-kernel/SANDBOX.md) lists every facility 
 ## Value codec
 
 | Python value | On the wire |
-|---|---|
+| --- | --- |
 | `None`, `bool`, `int`, `str` | JSON literals |
 | Finite `float` | A JSON number. No contract type is a float, so the kernel refuses it as `INVALID`. |
 | `bytes`, `bytearray` | `{"$bytes": "<standard base64>"}` |

@@ -9,7 +9,7 @@ a sandbox, enforces every contract atomically, mediates every adapter call and r
 a hash-chained ledger. The `cwr` binary exposes both.
 
 | Crate | Role | What it guarantees |
-|---|---|---|
+| --- | --- | --- |
 | `cwr-contract` | Strict KVX reader, typed World Source model, failure envelope, precondition grammar | Only the eleven envelope codes can be constructed. Every parse error carries a `file:line:col` location. |
 | `cwr-compiler` | The World Compiler: parse, resolve, lint, contract tests, diff, changelog gate, generate, package | Stages run in a fixed order and the first failing stage stops the run with nothing written. Diagnostics and Build bytes are deterministic. A changed rule passes only with a version bump and a changelog entry. |
 | `cwr-kernel` | The World Kernel: Instances, sandboxed turns, atomic primitives, adapter gateway, ledger, snapshots, recovery, replay and upgrade | A script reaches only the generated SDK. A Build whose bytes do not match its hash is refused. Replay from a ledger reproduces the same state, and a tampered ledger is refused. |
@@ -67,7 +67,7 @@ Instances live under `--home` (default `$CWR_HOME`, else `.cwr`). A Build hash r
 ## Commands
 
 | Command | Purpose |
-|---|---|
+| --- | --- |
 | `cwr lint <source> [--json]` | Parse, resolve and lint a World Source |
 | `cwr build <source> [--out <dir>] [--previous <hash>] [--json]` | Compile a World Source into a Build. Without `--previous`, the Build is diffed against the newest Build of the same world under `--out`. |
 | `cwr build <source> --x-drift <file> \| --x-silent-change \| --x-version-only \| --x-one-primitive` | Compile an experimental Build with one pillar ablated, written under `xbuild/` |
@@ -90,7 +90,7 @@ Instances live under `--home` (default `$CWR_HOME`, else `.cwr`). A Build hash r
 ## Exit codes
 
 | Command | Codes |
-|---|---|
+| --- | --- |
 | `cwr build` | 0 success, 2 parse or resolve, 3 lint, 4 contract tests, 5 diff, 6 changelog gate, 7 package, 1 usage or other error |
 | `cwr instance turn` | 0 for a turn that ended `ok`, `error` or `partial`, 1 usage or kernel error, 2 Build hash mismatch, 3 experimental Build, 4 message refused by the turn protocol |
 | `cwr instance upgrade` | 0 success, 5 Build refused with nothing changed, 6 migration or commit failure after rollback |

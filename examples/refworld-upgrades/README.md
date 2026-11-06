@@ -19,7 +19,7 @@ notice, misuse signature and model-visible effect. The pairs implement
 ## Pairs
 
 | Pair | Change class | A to B | Changelog kinds in B's newest release | Pre-upgrade script fails with |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | U1 | Precondition tightened | 0.2.0 to 0.3.0 | `precondition_added` fs.delete, `doc_only` fs.lock | fs.delete `LOCKED`, precondition 2 |
 | U2 | Primitive removed | 0.2.0 to 0.3.0 | `primitive_removed` fs.move, `doc_only` fs.lock | fs.move `INVALID` (closure refusal) |
 | U3 | Failure code changed | 0.2.0 to 0.3.0 | `precondition_changed` jobs.result | jobs.result `CONFLICT`, precondition 2 |
@@ -87,7 +87,7 @@ Source grammar. `pairs.py` never copies a README into a side.
 ## Interpretations of the specification
 
 | Topic | Interpretation |
-|---|---|
+| --- | --- |
 | U4 change kind | The specification calls U4 a "limit changed" pair. The 1024-byte value limit is a kv.set precondition, not a `limits` key, so the changelog kind is `precondition_changed`. `limit_changed` covers only the `limits` and `clock` sections of `world.kvx`. |
 | U5 failure code | The specification lists `NOT_FOUND` for kv.get without a namespace. A call with a missing parameter is `INVALID` before any precondition runs, so the literal pre-upgrade script fails with `INVALID`, and that is the frozen code. The `NOT_FOUND` path is kept as `pre_upgrade_adapted`, a script that guesses a namespace instead of the migrated `default`. |
 | U3 predicate | The old rule fails only while the job is running, so a pre-upgrade script would succeed one turn later. The task therefore requires every turn to end `ok`, and the predicate checks this from the ledger. |

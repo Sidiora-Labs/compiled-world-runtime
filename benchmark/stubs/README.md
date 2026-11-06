@@ -15,7 +15,7 @@ use only the standard library.
 ## Files
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `search_server.py` | Serves `search.query` |
 | `publish_server.py` | Serves `publish.post`, `publish.status` and `publish.delete` |
 | `stubcore.py` | Code shared by both servers: wire protocol, fault schedule, sliding-window rate limiter, request log and HTTP handling |
@@ -59,7 +59,7 @@ Instance id, so re-recording a run under a new Instance gives the same cassette 
 configured server. Adapter endpoints accept only `POST`.
 
 | Request part | Rule |
-|---|---|
+| --- | --- |
 | Body | The adapter parameters as one JSON object, for example `{"q":"tennis","limit":5}`. Extra keys, missing keys or wrong types get `INVALID`. |
 | `X-CWR-Instance` | The Instance id, matching `[A-Za-z0-9._:-]{1,128}`. All stub state (rate windows, idempotency store, posts, request indices) is kept per Instance. |
 | `X-CWR-World-Time` | The world time in ticks, a non-negative integer. Rate limits and tick-range faults read this header and never host time. |
@@ -70,7 +70,7 @@ the adapter declares `INVALID`, and `503 UNAVAILABLE` otherwise. The stub theref
 the adapter does not declare. Only a defective gateway sends such a request.
 
 | Response | Meaning |
-|---|---|
+| --- | --- |
 | `200 {"result": <value>}` | Success. `<value>` has the declared return shape. |
 | `400 {"code":"INVALID","detail":...}` | Invalid parameters |
 | `404 {"code":"NOT_FOUND","detail":...}` | No published post has this id, or the path is unknown |
@@ -86,7 +86,7 @@ the host clock.
 ### Endpoints
 
 | Adapter | Path | Parameters | Success `result` | Codes the stub can produce | Contract timeout |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | `search.query` | `/v1/query` (search server) | `q: str`, `limit: int` | `list[SearchHit]` with at most `limit` items; 3 to 12 hits exist per query | INVALID (`q` empty, `limit` below 0, bad parameters), LIMIT (`limit` above 50), RATE_LIMITED, UNAVAILABLE, TIMEOUT | 3000 ms |
 | `publish.post` | `/v1/post` (publish server) | `key: str`, `title: str`, `body: str` | `PostReceipt` | INVALID (title over 200 characters, bad parameters), DUPLICATE_KEY, RATE_LIMITED, UNAVAILABLE, TIMEOUT | 5000 ms |
 | `publish.status` | `/v1/status` | `post_id: str` | `PostStatus` | NOT_FOUND, UNAVAILABLE, TIMEOUT | 2000 ms |
@@ -96,7 +96,7 @@ The wire shapes below are checked by `cassette_tool.SHAPES`. The reference world
 the wire field `post_id` to the `id` field of its `PostReceipt` and `PostStatus` records.
 
 | Wire shape | Fields |
-|---|---|
+| --- | --- |
 | `SearchHit` | `rank: int`, `title: str`, `url: str` (under `search.stub.invalid`), `snippet: str` |
 | `PostReceipt` | `post_id: str`, `key: str`, `accepted_at: int` (world tick of acceptance) |
 | `PostStatus` | `post_id: str`, `key: str`, `state: str` (`"published"`), `accepted_at: int` |
@@ -104,7 +104,7 @@ the wire field `post_id` to the `id` field of its `PostReceipt` and `PostStatus`
 ### Rules held by the stubs
 
 | Rule | Behaviour |
-|---|---|
+| --- | --- |
 | Search rate limit | Ten accepted queries per Instance in any sliding window `(t-50, t]` of world ticks. The next query gets `RATE_LIMITED` with `retry_after` equal to the ticks until the window reopens. Invalid and faulted requests do not count. |
 | Publish rate limit | Three accepted posts in any sliding window `(t-100, t]`, then `RATE_LIMITED` with `retry_after` equal to the ticks until the oldest counted post leaves the window. Posts accepted at ticks 0, 2 and 3 give `retry_after = 96` at tick 4, and a post at tick 100 is accepted. |
 | Duplicate keys | Each Instance has an idempotency store mapping a key to the sha256 of `{"title","body"}` and the receipt. An identical replay returns the original receipt, creates no post and is never rate limited. A different payload gets `DUPLICATE_KEY` with the original receipt. Deleting a post does not free its key. |
@@ -143,7 +143,7 @@ fault = "UNAVAILABLE"
 ```
 
 | Key | Rule |
-|---|---|
+| --- | --- |
 | `adapter` | A qualified adapter name, or `search.*` or `publish.*`. An unknown adapter is refused. |
 | `instance` | Optional. Without it the fault applies to every Instance. |
 | `index` | A non-negative integer or a list of them, matched against the request ordinal per (Instance, adapter), counted from 0. Every request counts, faulted ones included. |
@@ -155,7 +155,7 @@ fault = "UNAVAILABLE"
 | `allow_undeclared` | Top-level, default `false`. See below. |
 
 | Fault | Wire behaviour | Side effect | Code the gateway reports |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `UNAVAILABLE` | `503` | None | UNAVAILABLE |
 | `TIMEOUT` | The request is processed, then the response is held for `delay_ms` | Completed. The caller must reconcile, for example by replaying the same key or calling `publish.status`. | TIMEOUT |
 | `RATE_LIMITED` | `429` with `retry_after` | None | RATE_LIMITED |
@@ -175,7 +175,7 @@ schedule that sets it is never used to record a cassette.
 Admin routes are not adapter traffic. They are not logged and do not advance request indices.
 
 | Route | Effect |
-|---|---|
+| --- | --- |
 | `GET /_stub/health` | Server name, seed, schedule digest, and the endpoints with their declared failures and timeouts |
 | `GET /_stub/log` | Every adapter request received, in order: `n`, `path`, `adapter`, `instance`, `index`, `world_time`, `request_sha256` (sha256 of the body bytes), `status` (`null` for a reset) and `fault`. It shows that the stub saw exactly the requests in the ledger and no retries. |
 | `POST /_stub/reset` | Clears all Instance state, request indices and the log, and keeps the schedule |

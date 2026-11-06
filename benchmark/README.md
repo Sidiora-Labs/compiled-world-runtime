@@ -17,7 +17,7 @@ The contract is [experiments.md](../spec/cwr/experiments.md). The task suite fol
 ## Layout
 
 | Path | Holds |
-|---|---|
+| --- | --- |
 | [tasks/](tasks/README.md) | The 60 tasks, each with its instruction, initial state and success predicate |
 | `solutions/` | One reference turn-script solution per task, kept outside the task directories |
 | `predicates/common.py` | The predicate helpers, the final-state view and the predicate purity audit |
@@ -35,7 +35,7 @@ The contract is [experiments.md](../spec/cwr/experiments.md). The task suite fol
 ## Arms
 
 | Hypothesis | Arm | Role | What differs from the control Build |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | H1 | `frozen` | control | Nothing: rules are fixed for the life of the Build |
 | H1 | `drift-1` | ablation | One rule from the task's rules changes mid-task without notice (`--x-drift`) |
 | H1 | `drift-3` | ablation | Three rules change at the quartile turns without notice (`--x-drift`) |

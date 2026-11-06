@@ -42,7 +42,7 @@ recorded. [SANDBOX.md](../../crates/cwr-kernel/SANDBOX.md) lists every facility 
 | `cwr/_rpc.py` | The RPC client: one request and one response per primitive call over one Unix socket | Copied byte for byte into every Build's `sdk/cwr/` |
 | `cwr/templates/*.tmpl` | Templates for the world modules, `cwr/__init__.py` and `cwr/errors.py`, rendered from `contracts.json` | Rendered by the World Compiler into every Build |
 | `cwr/_runner.py` | Runs exactly one turn script inside the sandbox and enforces the in-interpreter closure layer | Embedded in the World Kernel. It is not part of a Build and no script imports it. |
-| `cwr/_world.py` | World coordinates: `version()`, `time()` and `propose(text)` as single calls, and `coordinates(envelope)` to read a result envelope's world version, Build hash, time and turn | Used by tooling that reads result envelopes |
+| `cwr/_world.py` | `coordinates(envelope)` reads a result envelope's world version, Build hash, time and turn, after checking the envelope against the codec. Turn scripts use the generated `world` module instead | Used by tooling that reads result envelopes; not shipped in a Build |
 
 ## Value codec
 

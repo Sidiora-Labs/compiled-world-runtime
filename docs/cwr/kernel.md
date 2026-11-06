@@ -93,8 +93,8 @@ cwr instance state "$ID"
 ## Run a turn
 
 `cwr instance turn` reads a script from `--script <file>` or from standard input. A top-level
-`return` becomes the turn's `returned` value. Standard input whose first non-blank line opens a
-code fence is treated as a model message and goes through the turn protocol described in
+`return` becomes the turn's `returned` value. Standard input that holds a code fence line, before
+or after prose, is treated as a model message and goes through the turn protocol described in
 [Model messages](#model-messages).
 
 ```sh
@@ -320,8 +320,9 @@ not in an Instance directory.
 
 It exits 0 when the ledgers are identical and 7 on the first divergence, which it prints. Replay
 reproduces script turns, message turns and probe turns from the inputs the kernel records with
-each turn. A message turn is replayed from the raw message, so a protocol refusal is reproduced
-too. Replay refuses, before it creates anything, a ledger that holds a lifecycle record such as
+each turn. An accepted message is replayed from its script. A refused message is replayed from a
+marker that names the rule it broke and its fence lines, so the refusal is reproduced too. The
+message text itself is never recorded. Replay refuses, before it creates anything, a ledger that holds a lifecycle record such as
 an upgrade or a recovery, and names the record.
 
 `cwr instance compare <ledger-a> <ledger-b>` compares two ledgers field by field with the same

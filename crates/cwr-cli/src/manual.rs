@@ -18,12 +18,19 @@
 //!
 //! Exit codes: 0 manual printed; 5 Build missing, failing verification or writable; 1 usage error.
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use cwr_compiler::diff::build_roots;
 use cwr_compiler::package::{resolve, sealed, verify};
 use cwr_compiler::Options;
+
+use crate::cli::{self, Spec};
+
+const SPEC: Spec = Spec {
+    values: &["--out"],
+    repeatable: &[],
+    flags: &[],
+};
 
 /// One-line help text for `cwr manual`, shown by `cwr help`.
 pub const SUMMARY: &str =
@@ -39,31 +46,16 @@ fn usage_error(message: &str) -> i32 {
 /// verifies; returns 0 on success, 5 when the Build is missing or fails verification and 1 on a
 /// usage or write error.
 pub fn run(args: &[String]) -> i32 {
-    let mut reference: Option<String> = None;
-    let mut out: Option<PathBuf> = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--out" => {
-                i += 1;
-                match args.get(i) {
-                    Some(v) => out = Some(PathBuf::from(v)),
-                    None => return usage_error("--out needs a value"),
-                }
-            }
-            a if a.starts_with('-') => return usage_error(&format!("unknown option {a}")),
-            a => {
-                if reference.is_some() {
-                    return usage_error(&format!("unexpected argument {a:?}"));
-                }
-                reference = Some(a.to_string());
-            }
-        }
-        i += 1;
-    }
-    let Some(reference) = reference else {
-        return usage_error("missing <hash|dir>");
+    let p = match cli::parse(args, &SPEC) {
+        Ok(p) => p,
+        Err(m) => return usage_error(&m),
     };
+    let reference = match p.positional.as_slice() {
+        [r] => r.clone(),
+        [] => return usage_error("missing <hash|dir>"),
+        [_, extra, ..] => return usage_error(&format!("unexpected argument {extra:?}")),
+    };
+    let out = p.value("--out").map(PathBuf::from);
     let options = Options {
         out,
         ..Options::default()
@@ -88,20 +80,29 @@ pub fn run(args: &[String]) -> i32 {
         return 5;
     }
     match std::fs::read(dir.join("manual.md")) {
-        Ok(bytes) => {
-            let mut stdout = std::io::stdout().lock();
-            if stdout
-                .write_all(&bytes)
-                .and_then(|_| stdout.flush())
-                .is_err()
-            {
-                return 1;
-            }
-            0
-        }
+        Ok(bytes) => cli::emit_bytes(&bytes),
         Err(e) => {
             eprintln!("cwr manual: {}: {e}", dir.join("manual.md").display());
             5
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn usage_errors_exit_one_and_a_missing_build_exits_five() {
+        assert_eq!(run(&args(&[])), 1);
+        assert_eq!(run(&args(&["a", "b"])), 1);
+        assert_eq!(run(&args(&["a", "--out", "x", "--out", "y"])), 1);
+        assert_eq!(run(&args(&["a", "--out"])), 1);
+        assert_eq!(run(&args(&["a", "--nope"])), 1);
+        assert_eq!(run(&args(&["/nonexistent/build"])), 5);
     }
 }

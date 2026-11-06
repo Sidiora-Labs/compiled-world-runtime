@@ -22,6 +22,10 @@
 //! Build root (default `build/` relative to the working directory); nothing is written
 //! unless every stage up to package passes.
 //!
+//! `--debug-effects` is accepted as compiler.md section 9 lists it and leaves the Build unchanged:
+//! contract tests always assert every declared effect, and the per-call assertion during a turn
+//! is the turn option `cwr instance turn --debug-effects`.
+//!
 //! One `--x-*` flag builds an experimental Build (compiler.md section 10, task 3.2) under
 //! `xbuild/` beside the Build root, with `experimental = true` and the flag name in
 //! `manifest.kvx` ([`cwr_compiler::experimental`]); two `--x-*` flags are refused at argument
@@ -32,9 +36,11 @@ use std::path::PathBuf;
 use cwr_compiler::experimental::{self, Flag};
 use cwr_compiler::{compile, Options, Report, Stage};
 
+use crate::cli::{self, Spec};
+
 /// One-line help text for `cwr build`, shown by `cwr help`.
 pub const SUMMARY: &str =
-    "compile a World Source: cwr build <source> [--out <dir>] [--previous <hash>] [--allow-example] [--x-drift <file> | --x-silent-change | --x-version-only | --x-one-primitive] [--json]";
+    "compile a World Source: cwr build <source> [--out <dir>] [--previous <hash>] [--debug-effects] [--allow-example] [--x-drift <file> | --x-silent-change | --x-version-only | --x-one-primitive] [--json]";
 /// One-line help text for `cwr lint`, shown by `cwr help`.
 pub const LINT_SUMMARY: &str =
     "parse, resolve and lint a World Source: cwr lint <source> [--allow-example] [--json]";
@@ -68,87 +74,72 @@ fn usage_error(cmd: &str, message: &str) -> i32 {
     1
 }
 
-fn parse_args(cmd: &str, args: &[String]) -> Result<Args, i32> {
-    let mut source = None;
-    let mut json = false;
-    let mut allow_example = false;
-    let mut previous = None;
-    let mut out = None;
-    let mut experimental: Vec<String> = Vec::new();
-    let mut flag = None;
-    let mut i = 0;
-    while i < args.len() {
-        let a = args[i].as_str();
-        match a {
-            "--json" => json = true,
-            "--allow-example" => allow_example = true,
-            "--out" | "--previous" if cmd == "build" => {
-                if i + 1 >= args.len() {
-                    return Err(usage_error(cmd, &format!("{a} needs a value")));
-                }
-                // The previous Build feeds the diff stage; the output directory is the Build root
-                // (where the default previous Build is looked up, and where package writes).
-                i += 1;
-                if a == "--previous" {
-                    previous = Some(args[i].clone());
-                } else {
-                    out = Some(PathBuf::from(&args[i]));
-                }
-            }
-            "--debug-effects" if cmd == "build" => {}
-            "--x-drift" if cmd == "build" => {
-                if i + 1 >= args.len() {
-                    return Err(usage_error(cmd, "--x-drift needs a drift file"));
-                }
-                experimental.push(a.to_string());
-                i += 1;
-                flag = Flag::from_arg(a, Some(&args[i]));
-            }
-            _ if cmd == "build" && X_FLAGS.contains(&a) => {
-                experimental.push(a.to_string());
-                flag = Flag::from_arg(a, None);
-            }
-            _ if a.starts_with('-') => {
-                return Err(usage_error(cmd, &format!("unknown option {a}")))
-            }
-            _ => {
-                if source.is_some() {
-                    return Err(usage_error(cmd, &format!("unexpected argument {a:?}")));
-                }
-                source = Some(PathBuf::from(a));
-            }
-        }
-        i += 1;
-    }
-    if experimental.len() > 1 {
-        return Err(usage_error(
-            cmd,
-            &format!(
-                "one pillar per experimental Build: {} cannot be combined",
-                experimental.join(" and ")
-            ),
+const BUILD_SPEC: Spec = Spec {
+    values: &["--out", "--previous", "--x-drift"],
+    repeatable: &[],
+    flags: &[
+        "--json",
+        "--allow-example",
+        "--debug-effects",
+        "--x-silent-change",
+        "--x-version-only",
+        "--x-one-primitive",
+    ],
+};
+const LINT_SPEC: Spec = Spec {
+    values: &[],
+    repeatable: &[],
+    flags: &["--json", "--allow-example"],
+};
+
+/// Parses the arguments of `cwr build` or `cwr lint` (`cmd`); the error is the usage message.
+fn parse_args(cmd: &str, args: &[String]) -> Result<Args, String> {
+    let p = cli::parse(
+        args,
+        if cmd == "build" {
+            &BUILD_SPEC
+        } else {
+            &LINT_SPEC
+        },
+    )?;
+    let given: Vec<&str> = X_FLAGS.iter().copied().filter(|f| p.given(f)).collect();
+    if given.len() > 1 {
+        return Err(format!(
+            "one pillar per experimental Build: {} cannot be combined",
+            given.join(" and ")
         ));
     }
-    let Some(source) = source else {
-        return Err(usage_error(cmd, "missing <source> directory"));
+    let experimental = given
+        .first()
+        .and_then(|f| Flag::from_arg(f, p.value("--x-drift")));
+    let source = match p.positional.as_slice() {
+        [s] => PathBuf::from(s),
+        [] => return Err("missing <source> directory".into()),
+        [_, extra, ..] => return Err(format!("unexpected argument {extra:?}")),
     };
     Ok(Args {
         source,
-        json,
-        allow_example,
-        previous,
-        out,
-        experimental: flag,
+        json: p.flag("--json"),
+        allow_example: p.flag("--allow-example"),
+        // The previous Build feeds the diff stage; the output directory is the Build root (where
+        // the default previous Build is looked up, and where package writes).
+        previous: p.value("--previous").map(str::to_string),
+        out: p.value("--out").map(PathBuf::from),
+        experimental,
     })
 }
 
 fn emit(report: &Report, json: bool) -> i32 {
-    if json {
-        print!("{}", report.to_json());
+    let written = if json {
+        cli::emit(&report.to_json())
     } else if report.exit_code == 0 {
-        print!("{}", report.to_text());
+        cli::emit(&report.to_text())
     } else {
         eprint!("{}", report.to_text());
+        0
+    };
+    if written != 0 {
+        return written;
     }
     report.exit_code
 }
@@ -156,7 +147,7 @@ fn emit(report: &Report, json: bool) -> i32 {
 fn run_through(cmd: &str, args: &[String], through: Stage) -> i32 {
     let parsed = match parse_args(cmd, args) {
         Ok(a) => a,
-        Err(code) => return code,
+        Err(m) => return usage_error(cmd, &m),
     };
     let options = Options {
         allow_example: parsed.allow_example,
@@ -181,4 +172,61 @@ pub fn run(args: &[String]) -> i32 {
 /// (parse or resolve) or 3 (lint); 1 on a usage error.
 pub fn run_lint(args: &[String]) -> i32 {
     run_through("lint", args, Stage::Lint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn build_takes_one_source_and_its_options() {
+        let a = parse_args(
+            "build",
+            &args(&["src", "--out", "o", "--previous", "sha256:ab", "--json"]),
+        )
+        .unwrap();
+        assert_eq!(a.source, PathBuf::from("src"));
+        assert_eq!(a.out, Some(PathBuf::from("o")));
+        assert_eq!(a.previous.as_deref(), Some("sha256:ab"));
+        assert!(a.json && !a.allow_example && a.experimental.is_none());
+    }
+
+    #[test]
+    fn repeats_missing_values_and_extra_sources_are_usage_errors() {
+        for bad in [
+            &["src", "--out", "a", "--out", "b"][..],
+            &["src", "--previous", "a", "--previous", "b"],
+            &["src", "--json", "--json"],
+            &["src", "--out"],
+            &["src", "other"],
+            &[],
+            &["src", "--nope"],
+        ] {
+            assert!(parse_args("build", &args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn two_experimental_flags_are_refused() {
+        let e = parse_args(
+            "build",
+            &args(&["src", "--x-silent-change", "--x-version-only"]),
+        )
+        .err()
+        .unwrap();
+        assert!(e.contains("one pillar"), "{e}");
+        let a = parse_args("build", &args(&["src", "--x-drift", "d.kvx"])).unwrap();
+        assert!(matches!(a.experimental, Some(Flag::Drift(_))));
+    }
+
+    #[test]
+    fn lint_refuses_build_only_options() {
+        assert!(parse_args("lint", &args(&["src", "--out", "o"])).is_err());
+        assert!(parse_args("lint", &args(&["src", "--x-version-only"])).is_err());
+        assert!(parse_args("lint", &args(&["src", "--allow-example"])).is_ok());
+    }
 }

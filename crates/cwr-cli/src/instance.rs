@@ -7,6 +7,7 @@
 //! ```text
 //! cwr instance create (--build <dir> | <build-hash|dir>) [--seed N] [--tail K|full] [--arm L]
 //!                     [--model M] [--from-snapshot S] [--initial <state.json>] [--allow-experimental]
+//!                     [--cassette-digest sha256:<hex>]
 //!                                             prints the new Instance id; 0, 2 hash mismatch,
 //!                                             3 experimental Build without the flag
 //! cwr instance snapshot <id>                  prints the snapshot hash sha256:<hex>
@@ -14,36 +15,54 @@
 //! cwr instance destroy <id>                   seals and retains the ledger, releases state
 //! cwr instance show <id>                      instance metadata as JSON
 //! cwr instance state <id>                     world state as canonical JSON
+//! cwr instance keys <id>                      the gateway's key idempotency store (Instance state
+//!                                             outside the Build): one `done` entry per stored key
 //! cwr instance ledger <id>                    strict ledger check (seq, chain, truncation)
 //! cwr instance tail <id>                      the model-facing ledger tail, K lines
 //! cwr instance probe <id> <call>...           one kernel-direct turn over world.now, world.version,
 //!                                             world.seed, world.limits, world.random and
 //!                                             world.history; a call is `name` or `name:<json params>`;
 //!                                             prints one JSON line per call once its ledger record
-//!                                             is durable, then the turn result
+//!                                             is durable, then the turn's result envelope. A probe
+//!                                             is a real turn: it advances the turn counter and
+//!                                             world time, draws from the random stream and appears
+//!                                             in the model's ledger tail
+//! cwr instance turn|replay|recover|compare    see turn.rs and replay.rs
+//! cwr instance context                        see context.rs
+//! cwr instance upgrade|notice|outbox          see upgrade.rs
 //! ```
 //!
 //! Global options: `--home <dir>` (default `$CWR_HOME`, else `.cwr`) holds `instances/`;
 //! `--builds <dir>` (repeatable; default `build` and `xbuild`) is where a Build hash resolves.
 //! Exit 1 on usage and any other error.
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use cwr_kernel::{Build, CreateOptions, Instance, KernelError, Ledger, ProbeCall, TailSize};
 use serde_json::{json, Value};
 
+use crate::cli::{self, Spec};
+
 /// One-line help text for `cwr instance`, shown by `cwr help`.
-pub const SUMMARY: &str = "create, snapshot, restore, destroy, inspect and probe Instances";
+pub const SUMMARY: &str =
+    "create Instances, run turns, replay, snapshot, restore, recover, upgrade, inspect and destroy them";
 
 const USAGE: &str = "usage:
   cwr instance create (--build <dir> | <build-hash|dir>) [--seed N] [--tail K|full] [--arm L] [--model M]
                       [--from-snapshot S] [--initial <state.json>] [--allow-experimental]
+                      [--cassette-digest sha256:<hex>]
   cwr instance snapshot <id>
   cwr instance restore <id> <snapshot>
   cwr instance destroy <id>
-  cwr instance show|state|ledger|tail <id>
+  cwr instance show|state|keys|ledger|tail <id>
   cwr instance probe <id> <call>...
+  cwr instance turn <id> [--script <file> | --message <file> | < input] [--debug-effects]
+                    [--gateway live|record|replay] [--cassette <file>] [--cassette-label <label>]
+                    [--stub NAME=URL]... [--diagnostic-no-language-guard]
+  cwr instance replay (<id> | <ledger.jsonl>) [--into <new-id>] [--build <dir>] [--cassette <file>]
+                      [--scripts <dir>] [--initial <state.json>] [--into-home <dir>] [--debug-effects]
+  cwr instance recover <id>
+  cwr instance compare <ledger-a> <ledger-b>
   cwr instance context <id> [--tail K|full] [--json]
   cwr instance upgrade <id> (<build-hash|dir> | --build <dir>) [--allow-experimental]
   cwr instance notice|outbox <id>
@@ -64,83 +83,62 @@ struct Args {
     home: PathBuf,
     builds: Vec<PathBuf>,
     positional: Vec<String>,
-    options: Vec<(String, Option<String>)>,
+    parsed: cli::Parsed,
 }
 
-const VALUE_OPTIONS: [&str; 7] = [
-    "--build",
-    "--seed",
-    "--tail",
-    "--arm",
-    "--model",
-    "--from-snapshot",
-    "--initial",
-];
-const FLAG_OPTIONS: [&str; 1] = ["--allow-experimental"];
+const SPEC: Spec = Spec {
+    values: &[
+        "--home",
+        "--build",
+        "--seed",
+        "--tail",
+        "--arm",
+        "--model",
+        "--from-snapshot",
+        "--initial",
+        "--cassette-digest",
+    ],
+    repeatable: &["--builds"],
+    flags: &["--allow-experimental"],
+};
 
+/// Parses the arguments of an Instance command; the error is the usage message.
 fn parse(args: &[String]) -> Result<Args, String> {
-    let mut home = std::env::var_os("CWR_HOME")
+    let p = cli::parse(args, &SPEC)?;
+    let mut builds: Vec<PathBuf> = p
+        .values("--builds")
+        .into_iter()
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(".cwr"));
-    let mut builds = Vec::new();
-    let mut positional = Vec::new();
-    let mut options = Vec::new();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--home" => home = PathBuf::from(it.next().ok_or("--home needs a directory")?),
-            "--builds" => builds.push(PathBuf::from(
-                it.next().ok_or("--builds needs a directory")?,
-            )),
-            o if VALUE_OPTIONS.contains(&o) => {
-                let v = it.next().ok_or_else(|| format!("{o} needs a value"))?;
-                if options.iter().any(|(k, _)| k == o) {
-                    return Err(format!("{o} given twice"));
-                }
-                options.push((o.to_string(), Some(v.clone())));
-            }
-            o if FLAG_OPTIONS.contains(&o) => options.push((o.to_string(), None)),
-            o if o.starts_with("--") => return Err(format!("unknown option {o}")),
-            _ => positional.push(a.clone()),
-        }
-    }
+        .collect();
     if builds.is_empty() {
         builds = vec![PathBuf::from("build"), PathBuf::from("xbuild")];
     }
     Ok(Args {
-        home,
+        home: p.home(),
         builds,
-        positional,
-        options,
+        positional: p.positional.clone(),
+        parsed: p,
     })
 }
 
 impl Args {
     fn opt(&self, k: &str) -> Option<&str> {
-        self.options
-            .iter()
-            .find(|(n, _)| n == k)
-            .and_then(|(_, v)| v.as_deref())
+        self.parsed.value(k)
     }
     fn flag(&self, k: &str) -> bool {
-        self.options.iter().any(|(n, _)| n == k)
+        self.parsed.flag(k)
     }
+    /// The first option outside `allowed` (`--home` and `--builds` always apply).
     fn only(&self, allowed: &[&str]) -> Result<(), String> {
-        match self
-            .options
-            .iter()
-            .find(|(n, _)| !allowed.contains(&n.as_str()))
-        {
-            Some((n, _)) => Err(format!("option {n} does not apply here")),
-            None => Ok(()),
-        }
+        let mut all = vec!["--home", "--builds"];
+        all.extend_from_slice(allowed);
+        self.parsed.only(&all)
     }
 }
 
-fn print_json(v: &Value) {
-    let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{v}");
-    let _ = out.flush();
+/// One JSON line on stdout; 0, or the exit code of an unwritable stdout.
+fn print_json(v: &Value) -> i32 {
+    cli::emit_line(&v.to_string())
 }
 
 fn create(a: &Args) -> i32 {
@@ -153,6 +151,7 @@ fn create(a: &Args) -> i32 {
         "--from-snapshot",
         "--initial",
         "--allow-experimental",
+        "--cassette-digest",
     ]) {
         return usage_error(&m);
     }
@@ -197,12 +196,10 @@ fn create(a: &Args) -> i32 {
         from_snapshot: a.opt("--from-snapshot").map(str::to_string),
         initial,
         allow_experimental: a.flag("--allow-experimental"),
+        cassette_digest: a.opt("--cassette-digest").map(str::to_string),
     };
     match Instance::create(&a.home, &build_dir, opts) {
-        Ok(inst) => {
-            println!("{}", inst.meta.id);
-            0
-        }
+        Ok(inst) => cli::emit_line(&inst.meta.id),
         Err(e) => fail(e),
     }
 }
@@ -258,35 +255,36 @@ pub fn run(args: &[String]) -> i32 {
     let one = |n: usize| rest.len() == n;
     match cmd {
         "show" if one(0) => match Instance::read_meta(&a.home, &id) {
-            Ok(m) => {
-                println!("{:#}", m.to_json());
-                0
-            }
+            Ok(m) => cli::emit_line(&format!("{:#}", m.to_json())),
             Err(e) => fail(e),
         },
         "state" if one(0) => match Instance::open(&a.home, &id) {
-            Ok(i) => {
-                println!("{}", cwr_kernel::canonical_json(&i.state.to_json()));
-                0
-            }
+            Ok(i) => cli::emit_line(&cwr_kernel::canonical_json(&i.state.to_json())),
+            Err(e) => fail(e),
+        },
+        "keys" if one(0) => match Instance::open(&a.home, &id).and_then(|i| {
+            cwr_kernel::gateway::idempotency::KeyStore::read(
+                &i.dir.join(cwr_kernel::gateway::GATEWAY_DIR),
+            )
+            .map_err(KernelError::Refused)
+        }) {
+            Ok(store) => cli::emit_line(&cwr_kernel::canonical_json(&Value::Array(
+                store.done_events(),
+            ))),
             Err(e) => fail(e),
         },
         "ledger" if one(0) => {
-            match Ledger::scan(&Instance::dir_of(&a.home, &id).join("ledger.jsonl")) {
-                Ok(s) => {
-                    print_json(
-                        &json!({"ok": true, "records": s.records.len(), "last_seq": s.last_seq(), "last_chain": s.last_chain()}),
-                    );
-                    0
-                }
+            match Instance::checked_dir(&a.home, &id)
+                .and_then(|dir| Ledger::scan(&dir.join("ledger.jsonl")))
+            {
+                Ok(s) => print_json(
+                    &json!({"ok": true, "records": s.records.len(), "last_seq": s.last_seq(), "last_chain": s.last_chain()}),
+                ),
                 Err(e) => fail(e),
             }
         }
         "tail" if one(0) => match Instance::open(&a.home, &id) {
-            Ok(i) => {
-                print!("{}", i.tail());
-                0
-            }
+            Ok(i) => cli::emit(&i.tail()),
             Err(e) => fail(e),
         },
         "probe" if !rest.is_empty() => {
@@ -300,38 +298,111 @@ pub fn run(args: &[String]) -> i32 {
                 Ok(i) => i,
                 Err(e) => return fail(e),
             };
-            match inst.probe(&calls, print_json) {
-                Ok(result) => {
-                    print_json(&result);
-                    0
+            if let Err(e) = cwr_kernel::replay::record_probe(&inst, &calls) {
+                return fail(e);
+            }
+            // A probe line that cannot be written does not stop the turn (its records are already
+            // durable), but the command then reports the lost output instead of success.
+            let mut lost = 0;
+            let outcome = inst.probe(&calls, |v| {
+                if lost == 0 {
+                    lost = print_json(v);
                 }
+            });
+            match outcome {
+                Ok(result) if lost == 0 => print_json(&result),
+                Ok(_) => lost,
                 Err(e) => fail(e),
             }
         }
         "snapshot" if one(0) => match Instance::open(&a.home, &id).and_then(|mut i| i.snapshot()) {
-            Ok(h) => {
-                println!("{h}");
-                0
-            }
+            Ok(h) => cli::emit_line(&h),
             Err(e) => fail(e),
         },
         "restore" if one(1) => match Instance::restore(&a.home, &id, &rest[0]) {
-            Ok((_, rec)) => {
-                print_json(&rec);
-                0
-            }
+            Ok((_, rec)) => print_json(&rec),
             Err(e) => fail(e),
         },
-        "destroy" if one(0) => match Instance::destroy(&a.home, &id) {
-            Ok(m) => {
-                println!("destroyed {} (ledger sealed and retained)", m.id);
-                0
-            }
+        "destroy" if one(0) => match cwr_kernel::recovery::needs_recovery(&a.home, &id)
+            .and_then(|need| {
+                if need {
+                    cwr_kernel::recovery::recover(&a.home, &id).map(|_| ())
+                } else {
+                    Ok(())
+                }
+            })
+            .and_then(|()| Instance::destroy(&a.home, &id))
+        {
+            Ok(m) => cli::emit_line(&format!("destroyed {} (ledger sealed and retained)", m.id)),
             Err(e) => fail(e),
         },
-        "show" | "state" | "ledger" | "tail" | "probe" | "snapshot" | "restore" | "destroy" => {
-            usage_error(&format!("wrong arguments for {cmd}"))
-        }
+        "show" | "state" | "keys" | "ledger" | "tail" | "probe" | "snapshot" | "restore"
+        | "destroy" => usage_error(&format!("wrong arguments for {cmd}")),
         other => usage_error(&format!("unknown instance command {other:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn create_options_parse_and_roots_repeat() {
+        let a = parse(&args(&[
+            "--build",
+            "b",
+            "--seed",
+            "7",
+            "--builds",
+            "r1",
+            "--builds",
+            "r2",
+            "--allow-experimental",
+        ]))
+        .unwrap();
+        assert_eq!(a.opt("--build"), Some("b"));
+        assert_eq!(a.opt("--seed"), Some("7"));
+        assert!(a.flag("--allow-experimental"));
+        assert_eq!(a.builds, vec![PathBuf::from("r1"), PathBuf::from("r2")]);
+        assert!(a
+            .only(&["--build", "--seed", "--allow-experimental"])
+            .is_ok());
+        assert!(a.only(&["--build"]).is_err());
+    }
+
+    #[test]
+    fn repeated_options_are_usage_errors() {
+        for bad in [
+            &["--home", "a", "--home", "b"][..],
+            &["--seed", "1", "--seed", "2"],
+            &["--allow-experimental", "--allow-experimental"],
+            &["--tail"],
+            &["--nope"],
+        ] {
+            assert!(parse(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn wrong_commands_and_arity_exit_one() {
+        assert_eq!(run(&args(&[])), 1);
+        assert_eq!(run(&args(&["nope", "id"])), 1);
+        assert_eq!(run(&args(&["show"])), 1);
+        assert_eq!(run(&args(&["show", "a", "b"])), 1);
+        assert_eq!(run(&args(&["restore", "a"])), 1);
+        assert_eq!(run(&args(&["show", "a", "--seed", "1"])), 1);
+        assert_eq!(run(&args(&["probe", "a", "world.now:{not json"])), 1);
+    }
+
+    #[test]
+    fn probe_calls_parse_names_and_json_params() {
+        let c = parse_call("world.random:{\"n\": 2}").unwrap();
+        assert_eq!(c.primitive, "world.random");
+        assert_eq!(c.params, json!({"n": 2}));
+        assert_eq!(parse_call("world.now").unwrap().params, json!({}));
     }
 }

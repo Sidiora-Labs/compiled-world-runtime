@@ -52,6 +52,9 @@ pub enum Request {
     Limit {
         /// Name of the limit, e.g. `memory_mb`.
         limit: String,
+        /// The start frame's `token` as echoed by the runner's memory monitor; a report without
+        /// the right token was written by the script, not the runner.
+        token: Option<String>,
     },
     /// The script finished.
     End {
@@ -126,6 +129,7 @@ impl Request {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                token: v.get("token").and_then(Value::as_str).map(str::to_string),
             },
             Some("end") => Request::End {
                 outcome: v
@@ -290,5 +294,22 @@ mod tests {
             ),
             Request::Refuse { .. }
         ));
+    }
+
+    #[test]
+    fn a_limit_report_carries_the_runner_token_or_none() {
+        match Request::parse(&json!({"v": 1, "op": "limit", "limit": "memory_mb", "token": "ab"})) {
+            Request::Limit { limit, token } => {
+                assert_eq!(
+                    (limit.as_str(), token.as_deref()),
+                    ("memory_mb", Some("ab"))
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        match Request::parse(&json!({"v": 1, "op": "limit", "limit": "memory_mb"})) {
+            Request::Limit { token, .. } => assert_eq!(token, None),
+            other => panic!("{other:?}"),
+        }
     }
 }

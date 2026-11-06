@@ -29,25 +29,25 @@ diagnostic = "CWR-R016"
 [pin.compiler]
 crate = "cwr-compiler"
 path = "crates/cwr-compiler"
-revision = "sha256:ac8bde9c995e6a62bf4312c40d800e0f53d3a0436cbb040158d54b4b3c59677d"
+revision = "sha256:d03c6a4a336d3e86e6755bd305c57a4d20b9667bb9d31e725447924f71079388"
 diagnostic = "CWR-R001"
 
 [pin.kernel]
 crate = "cwr-kernel"
 path = "crates/cwr-kernel"
-revision = "sha256:d5b2423b8192d7634dd2fe05866f661e948b18a5e568c270fd23d916696746f1"
+revision = "sha256:5212aa75c27189261d241d28b94b7c065775a8d21af6336140d1ea63fc6364c6"
 diagnostic = "CWR-R002"
 
 [pin.sdk]
 package = "cwr-sdk"
 path = "sdk/python"
-revision = "sha256:ffd5886dfb4eeffcc2ec59571b33209cddd6e1f7bd71d97abdb15ed7c9aa2bdc"
+revision = "sha256:61c77856244576e52377e337b968670761100fd833b7dbb2d77d2f37bd7a72c6"
 diagnostic = "CWR-R003"
 
 [pin.cli]
 crate = "cwr-cli"
 path = "crates/cwr-cli"
-revision = "sha256:061262d0b4327763fef97e4587be376f4f814ec6c19da98bce449fec4717c3e6"
+revision = "sha256:6e8ccc0e625a12fbd333b1bba153fe947d43966770db0c68b0b79569f8a089f3"
 diagnostic = "CWR-R004"
 
 # Every crate dependency is pinned by Cargo.lock; packaging builds with cargo --locked.
@@ -122,24 +122,24 @@ diagnostic = "CWR-R011"
 path = "benchmark/tasks"
 frozen_in = "benchmark/suite.kvx"
 tasks = 60
-digest = "sha256:390026249d91d96f6ffa4ee833a153c5c3e43a88daa8a3a2f8f16c89a1547e20"
+digest = "sha256:7c4f31a3d56a7218148b2212d97b9cdca450cf33c09653993b9053367ab244eb"
 diagnostic = "CWR-R012"
 
 # Packaged artifacts (RELEASE.md, "Package"): path relative to the repository root and checksum.
 [artifact.cli]
 path = "artifacts/cwr-0.1.0-x86_64-linux-gnu"
-sha256 = "sha256:5dcad7132d6fad7435c0e2395f9ba1f406d4f925f375316da0163a4479e3d172"
+sha256 = "sha256:5c8bba733e8d325b2920c4e4315df57d6a8d2c13b383c64571c99f06d2e6f799"
 diagnostic = "CWR-R013"
 
 [artifact.sdk]
 path = "artifacts/cwr_sdk-0.1.0-py3-none-any.whl"
-sha256 = "sha256:fa1f4b977ea32a38852e283b05103c2a51195d6091bb71757da06d95d4cc29ae"
+sha256 = "sha256:e636074c43fd9b619a6dcb4836018f8a235d643dc3ef4dff15b5d725383044e2"
 diagnostic = "CWR-R014"
 
 # Campaign results: tree digest of each hypothesis result directory.
 [results]
 paths = {"h1": "benchmark/results/h1", "h2": "benchmark/results/h2", "h3": "benchmark/results/h3", "h4": "benchmark/results/h4"}
-digests = {"h1": "sha256:862faccaa7cd37c193008cfadb66ca5a1754222b8d1f2eb432cfb91e8e44909c", "h2": "sha256:a6b8c113bce98c5e6f7c193a38cb6796de9be788d4f56a5f1365686d7ce4aa48", "h3": "sha256:d33a0c95b48e8ec3f9c338132e13d20e836b6fe95e366be12d7301ae1e1afe1f", "h4": "sha256:94ac01bb9657fda9dd66d92732874961372fe38fd9479c5cf97f83d5853f83eb"}
+digests = {"h1": "sha256:3b3ce8ef2f299c1846ff17637f3ab6c7b771486e114138c2b438f3c54059d68f", "h2": "sha256:352281ba4850f091d5c17c1a9b10b74a799c69cd4f2288ef2bbf7b5e9c0292fd", "h3": "sha256:25c2fe44eeae42c9db2525cd1ba74fb1c4bfa1c40e7aa016c7f4b19c5abde42c", "h4": "sha256:64048808e774f24d9669bce453bdaecdde67daa345eacfd5c1e80db845bd6580"}
 diagnostic = "CWR-R018"
 
 # Evidence the release claim depends on. Closure and owner acceptance are produced by task 6.2 and
@@ -147,7 +147,7 @@ diagnostic = "CWR-R018"
 [evidence]
 registry = "tests/cwr/registry.kvx"
 preregistration = "benchmark/preregistration.kvx"
-preregistration_sha256 = "sha256:b4e4b71f26866110fb340fbf6b22df2de36dc3d8bcade514c12f97e4ba8d5552"
+preregistration_sha256 = "sha256:2925767cbb2cc4d07ab14310db3311ab3cb126e4e0dd98c59ce37af32ec62f08"
 reports = ["research/h1-stability.md", "research/h2-direct-action.md", "research/h3-long-context.md", "research/h4-controlled-change.md"]
 closure = null
 owner_acceptance = null

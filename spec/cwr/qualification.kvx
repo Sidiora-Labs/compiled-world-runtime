@@ -68,11 +68,462 @@ assumption = "The bindings are stale, not wrong: no pin was edited by hand. Reso
 product_evidence = false
 
 [progress.acceptance_journey]
-revision = "compiler sha256:2e172fe765a55f99b7caaa0e1d3ad77aac4f1a17c09993abae2e6dbf929f5e8c; kernel sha256:7ee124a087ee4139543a16d89768d76727795db183007a57ca907a49dc366da5; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
+revision = "compiler sha256:e714b2b863ba365cfd1f565016af664df65498e4e0e019541952c96af3541875; kernel sha256:cdbcffe2a5452bc4aeed4e244ac351472c1636d36d7747528162e065831b176f; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
 command = "python3 tests/cwr/closure.py --journey"
 exit_code = 1
 log = "spec/cwr/qualification.kvx"
-observed = "acceptance journey incomplete: build refworld: exit 0; create Instance: exit 0; run long task t041-poll-then-reuse: exit 0; build U1 side A: exit 0; build U1 side B: exit 0; upgrade across U1: exit 0; replay the pre-upgrade ledger: exit 2"
+observed = "acceptance journey incomplete: build refworld: exit 0; create Instance: exit 0; run long task t041-poll-then-reuse: exit 0; build U1 side A: exit 0; build U1 side B: exit 0; upgrade across U1: exit 0; replay the pre-upgrade ledger: exit 7"
 assumption = "The journey is recorded for the owner to accept; it is not owner acceptance and not a checker-accepted record."
 product_evidence = false
 builds = ["sha256:06e00c9b48d91f9cecfd232bcb79143dee1f01ddbcf042a6dc5fccaeb59cc08b", "sha256:9bcc02e11dc3602ff880b1b3f6d9f7db3c756778abd8d5ff062627283b18a743", "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e"]
+
+[progress.attempt_0003_0_3]
+revision = "index seq 3; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:aab5015edcc2f2f543b144802f55cfb7d27d2653c748238b2439a3806d334861; kernel sha256:89d3c3a3005f25de34818941051f4e23034a023eee5210e5bdd49da04c8a0910; sdk sha256:b1fbd3cf29b3c4a9c8c26687d431ffa1ca1ae60646a9962140ee615bdfa47d01"
+command = "python3 tests/cwr/qualify.py --case CWR-001 --timeout 3600.0 (driver: python3 tests/cwr/cases/0_3.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-001/20261106T135828Z-1/0.3/driver.stdout.log"
+observed = "task 0.3 driver for CWR-001 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-001.a1', 'CWR-001.a2', 'CWR-001.a3', 'CWR-001.a4']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0004_1_1]
+revision = "index seq 4; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:aab5015edcc2f2f543b144802f55cfb7d27d2653c748238b2439a3806d334861; kernel sha256:89d3c3a3005f25de34818941051f4e23034a023eee5210e5bdd49da04c8a0910; sdk sha256:b1fbd3cf29b3c4a9c8c26687d431ffa1ca1ae60646a9962140ee615bdfa47d01"
+command = "python3 tests/cwr/qualify.py --case CWR-002 --timeout 3600.0 (driver: python3 tests/cwr/cases/1_1.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-002/20261106T135903Z-1/1.1/driver.stdout.log"
+observed = "task 1.1 driver for CWR-002 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 6 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-002.a1', 'CWR-002.a2', 'CWR-002.a3', 'CWR-002.a4', 'CWR-002.a5', 'CWR-002.a6']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0005_1_2]
+revision = "index seq 5; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:51732a55d68aab1c5aa56c01769ee670d615da04d6e301ed76641deab377545e; kernel sha256:89d3c3a3005f25de34818941051f4e23034a023eee5210e5bdd49da04c8a0910; sdk sha256:b1fbd3cf29b3c4a9c8c26687d431ffa1ca1ae60646a9962140ee615bdfa47d01"
+command = "python3 tests/cwr/qualify.py --case CWR-003 --timeout 3600.0 (driver: python3 tests/cwr/cases/1_2.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-003/20261106T135924Z-1/1.2/driver.stdout.log"
+observed = "task 1.2 driver for CWR-003 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 5 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-003.a1', 'CWR-003.a2', 'CWR-003.a3', 'CWR-003.a4', 'CWR-003.a5']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0006_1_2]
+revision = "index seq 6; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:51732a55d68aab1c5aa56c01769ee670d615da04d6e301ed76641deab377545e; kernel sha256:89d3c3a3005f25de34818941051f4e23034a023eee5210e5bdd49da04c8a0910; sdk sha256:b1fbd3cf29b3c4a9c8c26687d431ffa1ca1ae60646a9962140ee615bdfa47d01"
+command = "python3 tests/cwr/qualify.py --case CWR-004 --timeout 3600.0 (driver: python3 tests/cwr/cases/1_2.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-004/20261106T140052Z-1/1.2/driver.stdout.log"
+observed = "task 1.2 driver for CWR-004 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 6 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-004.a1', 'CWR-004.a2', 'CWR-004.a3', 'CWR-004.a4', 'CWR-004.a5', 'CWR-004.a6']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0007_1_3]
+revision = "index seq 7; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:e2e00557254ca1f09a0a1543a2966ac17841413dfadde4884721a8d47146716f; kernel sha256:89d3c3a3005f25de34818941051f4e23034a023eee5210e5bdd49da04c8a0910; sdk sha256:b1fbd3cf29b3c4a9c8c26687d431ffa1ca1ae60646a9962140ee615bdfa47d01"
+command = "python3 tests/cwr/qualify.py --case CWR-005 --timeout 3600.0 (driver: python3 tests/cwr/cases/1_3.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-005/20261106T140231Z-1/1.3/driver.stdout.log"
+observed = "task 1.3 driver for CWR-005 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-005.a1', 'CWR-005.a2', 'CWR-005.a3', 'CWR-005.a4']; task 1.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0008_2_1]
+revision = "index seq 8; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cb7abad19c912da773638f3bccffb9878766ddf451b410c4990630944e4cba0b; kernel sha256:e1015223f167cdf43843310b7aebeca96852ffa2f5818be955cb775d04ff91f4; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-006 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_1.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-006/20261106T140407Z-1/2.1/driver.stdout.log"
+observed = "task 2.1 driver for CWR-006 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 5 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-006.a1', 'CWR-006.a2', 'CWR-006.a3', 'CWR-006.a4', 'CWR-006.a5']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0009_2_2]
+revision = "index seq 9; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cb7abad19c912da773638f3bccffb9878766ddf451b410c4990630944e4cba0b; kernel sha256:46bae4fab48613cb10cc40180e50232ac16fa8a2996f1312b9ee1fe923234c95; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-007 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_2.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-007/20261106T140755Z-1/2.2/driver.stdout.log"
+observed = "task 2.2 driver for CWR-007 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-007.a1', 'CWR-007.a2', 'CWR-007.a3', 'CWR-007.a4', 'CWR-007.a5', 'CWR-007.a6', 'CWR-007.a7']; task 2.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0010_2_2]
+revision = "index seq 10; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:296e8bc3d6b8d2dc1e98deb25f630bf74b5e397fcec600d5cab3aec986f6d418; kernel sha256:4f2dc588275febb9972fb1aa7b6b22c5a2f03a114cfc0cf801b1f32ba46ab032; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-008 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_2.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-008/20261106T140850Z-1/2.2/driver.stdout.log"
+observed = "task 2.2 driver for CWR-008 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 5 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-008.a1', 'CWR-008.a2', 'CWR-008.a3', 'CWR-008.a4', 'CWR-008.a5']; task 2.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0011_2_3]
+revision = "index seq 11; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cffba30e577df5e472a9a8fda9f2fe02ca632dc26a4c799a281f8e64ce2c5b3f; kernel sha256:4f2dc588275febb9972fb1aa7b6b22c5a2f03a114cfc0cf801b1f32ba46ab032; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-009 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_3.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T141403Z-1/2.3/driver.stdout.log"
+observed = "task 2.3 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0011_4_1]
+revision = "index seq 11; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cffba30e577df5e472a9a8fda9f2fe02ca632dc26a4c799a281f8e64ce2c5b3f; kernel sha256:4f2dc588275febb9972fb1aa7b6b22c5a2f03a114cfc0cf801b1f32ba46ab032; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-009 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T141403Z-1/4.1/driver.stdout.log"
+observed = "task 4.1 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0012_2_4]
+revision = "index seq 12; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f69503f048e00d27dc146c829fa22d88ffbdd4884e69877a5183bb45a35eca3b; kernel sha256:b2ebb814015550b8ee8e51de79b589d290df27e6891a8c7b99b34a38bea8b436; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-010 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_4.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-010/20261106T141555Z-1/2.4/driver.stdout.log"
+observed = "task 2.4 driver for CWR-010 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-010.a1', 'CWR-010.a2', 'CWR-010.a3', 'CWR-010.a4']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0013_2_5]
+revision = "index seq 13; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:a7c7f6fcddf81d448be0512350421ad5b3b1d70c250902630b17760bab57c694; kernel sha256:55ff445257158d63ace7e8e9cb5445b0b6ee3fc207bc5ff897cf4e9d54a87cef; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-011 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_5.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-011/20261106T142250Z-1/2.5/driver.stdout.log"
+observed = "task 2.5 driver for CWR-011 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-011.a1', 'CWR-011.a2', 'CWR-011.a3', 'CWR-011.a4', 'CWR-011.a5', 'CWR-011.a6', 'CWR-011.a7']; task 4.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0013_4_3]
+revision = "index seq 13; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:a7c7f6fcddf81d448be0512350421ad5b3b1d70c250902630b17760bab57c694; kernel sha256:55ff445257158d63ace7e8e9cb5445b0b6ee3fc207bc5ff897cf4e9d54a87cef; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-011 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_3.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-011/20261106T142250Z-1/4.3/driver.stdout.log"
+observed = "task 4.3 driver for CWR-011 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-011.a1', 'CWR-011.a2', 'CWR-011.a3', 'CWR-011.a4', 'CWR-011.a5', 'CWR-011.a6', 'CWR-011.a7']; task 4.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0014_3_1]
+revision = "index seq 14; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:a7c7f6fcddf81d448be0512350421ad5b3b1d70c250902630b17760bab57c694; kernel sha256:55ff445257158d63ace7e8e9cb5445b0b6ee3fc207bc5ff897cf4e9d54a87cef; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-012 --timeout 3600.0 (driver: python3 tests/cwr/cases/3_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-012/20261106T142551Z-1/3.1/driver.stdout.log"
+observed = "task 3.1 driver for CWR-012 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 5 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-012.a1', 'CWR-012.a2', 'CWR-012.a3', 'CWR-012.a4', 'CWR-012.a5']; task 3.1 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0015_3_2]
+revision = "index seq 15; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:a7c7f6fcddf81d448be0512350421ad5b3b1d70c250902630b17760bab57c694; kernel sha256:55ff445257158d63ace7e8e9cb5445b0b6ee3fc207bc5ff897cf4e9d54a87cef; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-013 --timeout 3600.0 (driver: python3 tests/cwr/cases/3_2.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-013/20261106T142552Z-1/3.2/driver.stdout.log"
+observed = "task 3.2 driver for CWR-013 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 6 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-013.a1', 'CWR-013.a2', 'CWR-013.a3', 'CWR-013.a4', 'CWR-013.a5', 'CWR-013.a6']; task 3.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0016_4_1]
+revision = "index seq 16; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:a7c7f6fcddf81d448be0512350421ad5b3b1d70c250902630b17760bab57c694; kernel sha256:55ff445257158d63ace7e8e9cb5445b0b6ee3fc207bc5ff897cf4e9d54a87cef; sdk sha256:85ff69ef658cefa23d9a511eac58e33cd91fc9e67e09d10fbca36eb7801c82be"
+command = "python3 tests/cwr/qualify.py --case CWR-014 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-014/20261106T142552Z-1/4.1/driver.stdout.log"
+observed = "task 4.1 driver for CWR-014 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-014.a1', 'CWR-014.a2', 'CWR-014.a3', 'CWR-014.a4']; task 4.1 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0017_4_2]
+revision = "index seq 17; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:884b49c66ca16d0ed26a25fb3b042384053d03526f0ac7a97a1190c47faff77d; sdk sha256:14334c936cfaee2ce43c7d47d97c31ff30e5200980356db8454bebd35c1e5c7f"
+command = "python3 tests/cwr/qualify.py --case CWR-015 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_2.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-015/20261106T142553Z-1/4.2/driver.stdout.log"
+observed = "task 4.2 driver for CWR-015 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-015.a1', 'CWR-015.a2', 'CWR-015.a3', 'CWR-015.a4']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0018_4_3]
+revision = "index seq 18; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:3a7cd3f34846cfb6920d8545a1624e421ad68259412acaae11a09b53c97e3e41; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-016 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_3.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-016/20261106T142842Z-1/4.3/driver.stdout.log"
+observed = "task 4.3 driver for CWR-016 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-016.a1', 'CWR-016.a2', 'CWR-016.a3', 'CWR-016.a4']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0019_5_1]
+revision = "index seq 19; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:3a7cd3f34846cfb6920d8545a1624e421ad68259412acaae11a09b53c97e3e41; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-017 --timeout 3600.0 (driver: python3 tests/cwr/cases/5_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-017/20261106T143111Z-1/5.1/driver.stdout.log"
+observed = "task 5.1 driver for CWR-017 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 3 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-017.a1', 'CWR-017.a2', 'CWR-017.a3']; task 5.1 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0020_5_2]
+revision = "index seq 20; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:3a7cd3f34846cfb6920d8545a1624e421ad68259412acaae11a09b53c97e3e41; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-018 --timeout 3600.0 (driver: python3 tests/cwr/cases/5_2.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-018/20261106T143346Z-1/5.2/driver.stdout.log"
+observed = "task 5.2 driver for CWR-018 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 8 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-018.a1', 'CWR-018.a2', 'CWR-018.a3', 'CWR-018.a4', 'CWR-018.a5', 'CWR-018.a6', 'CWR-018.a7', 'CWR-018.a8']; task 5.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0020_5_3]
+revision = "index seq 20; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:3a7cd3f34846cfb6920d8545a1624e421ad68259412acaae11a09b53c97e3e41; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-018 --timeout 3600.0 (driver: python3 tests/cwr/cases/5_3.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-018/20261106T143346Z-1/5.3/driver.stdout.log"
+observed = "task 5.3 driver for CWR-018 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 8 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-018.a1', 'CWR-018.a2', 'CWR-018.a3', 'CWR-018.a4', 'CWR-018.a5', 'CWR-018.a6', 'CWR-018.a7', 'CWR-018.a8']; task 5.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0021_0_2]
+revision = "index seq 21; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:3a7cd3f34846cfb6920d8545a1624e421ad68259412acaae11a09b53c97e3e41; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-019 --timeout 3600.0 (driver: python3 tests/cwr/cases/0_2.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-019/20261106T143532Z-1/0.2/driver.stdout.log"
+observed = "task 0.2 driver for CWR-019 (case scope): exit 0; record outcome PASS, checker accepted False; 8 of 8 observed assertions PASS for 8 registered; no diagnostics"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0022_0_1]
+revision = "index seq 22; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-020 --timeout 3600.0 (driver: python3 tests/cwr/cases/0_1.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-020/20261106T143605Z-1/0.1/driver.stdout.log"
+observed = "task 0.1 driver for CWR-020 (case scope): exit 0; record outcome FAIL, checker accepted False; 2 of 4 observed assertions PASS for 7 registered; diagnostics: coverage gaps: ['CWR-020.a1', 'CWR-020.a2', 'CWR-020.a3']; failed assertions: ['CWR-020.a4', 'CWR-020.a5']; task 6.1 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0022_6_1]
+revision = "index seq 22; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-020 --timeout 3600.0 (driver: python3 tests/cwr/cases/6_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-020/20261106T143605Z-1/6.1/driver.stdout.log"
+observed = "task 6.1 driver for CWR-020 (case scope): exit 1; record outcome FAIL, checker accepted False; 2 of 4 observed assertions PASS for 7 registered; diagnostics: coverage gaps: ['CWR-020.a1', 'CWR-020.a2', 'CWR-020.a3']; failed assertions: ['CWR-020.a4', 'CWR-020.a5']; task 6.1 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0022_6_2]
+revision = "index seq 22; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-020 --timeout 3600.0 (driver: python3 tests/cwr/cases/6_2.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-020/20261106T143605Z-1/6.2/driver.stdout.log"
+observed = "task 6.2 driver for CWR-020 (case scope): exit 0; record outcome FAIL, checker accepted False; 2 of 4 observed assertions PASS for 7 registered; diagnostics: coverage gaps: ['CWR-020.a1', 'CWR-020.a2', 'CWR-020.a3']; failed assertions: ['CWR-020.a4', 'CWR-020.a5']; task 6.1 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0023_2_5]
+revision = "index seq 23; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-011 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_5.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-011/20261106T144113Z-1/2.5/driver.stdout.log"
+observed = "task 2.5 driver for CWR-011 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-011.a1', 'CWR-011.a2', 'CWR-011.a3', 'CWR-011.a4', 'CWR-011.a5', 'CWR-011.a6', 'CWR-011.a7']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0023_4_3]
+revision = "index seq 23; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-011 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_3.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-011/20261106T144113Z-1/4.3/driver.stdout.log"
+observed = "task 4.3 driver for CWR-011 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-011.a1', 'CWR-011.a2', 'CWR-011.a3', 'CWR-011.a4', 'CWR-011.a5', 'CWR-011.a6', 'CWR-011.a7']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0024_3_1]
+revision = "index seq 24; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-012 --timeout 3600.0 (driver: python3 tests/cwr/cases/3_1.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-012/20261106T144449Z-1/3.1/driver.stdout.log"
+observed = "task 3.1 driver for CWR-012 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 5 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-012.a1', 'CWR-012.a2', 'CWR-012.a3', 'CWR-012.a4', 'CWR-012.a5']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0025_3_2]
+revision = "index seq 25; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:f19d5582c7489d0844a7f790d2db84c341bd2a0384d01a53a2f38f5e4143bcbf; kernel sha256:5b89810f9cf41b1294a54123ec7c885c90422facd08c2c1ea4240a36f663be11; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-013 --timeout 3600.0 (driver: python3 tests/cwr/cases/3_2.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-013/20261106T144608Z-1/3.2/driver.stdout.log"
+observed = "task 3.2 driver for CWR-013 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 6 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-013.a1', 'CWR-013.a2', 'CWR-013.a3', 'CWR-013.a4', 'CWR-013.a5', 'CWR-013.a6']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0026_4_1]
+revision = "index seq 26; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:4c735721f222527573bbd5151c153dde2fd3fb131c63d86ed8149bd9a5c010c2; kernel sha256:137e7947885d3b4822b6b990fa271512928eefbb21199773e8074c88c14a9971; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-014 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_1.py)"
+exit_code = 0
+log = "tests/cwr/evidence/CWR-014/20261106T144752Z-1/4.1/driver.stdout.log"
+observed = "task 4.1 driver for CWR-014 (case scope): exit 0; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 4 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-014.a1', 'CWR-014.a2', 'CWR-014.a3', 'CWR-014.a4']; independent checker: no assertions were observed"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0027_2_2]
+revision = "index seq 27; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:6664a6fd317b87e2aed51018b66742186823530a4430002946ff557bca94c1ac; kernel sha256:1ee0386925f1ee853c7c815f87b354b4fe4e3d03ba7c79f99da094586672c12a; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-007 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_2.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-007/20261106T145953Z-1/2.2/driver.stdout.log"
+observed = "task 2.2 driver for CWR-007 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-007.a1', 'CWR-007.a2', 'CWR-007.a3', 'CWR-007.a4', 'CWR-007.a5', 'CWR-007.a6', 'CWR-007.a7']; task 2.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0028_2_3]
+revision = "index seq 28; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:6664a6fd317b87e2aed51018b66742186823530a4430002946ff557bca94c1ac; kernel sha256:1ee0386925f1ee853c7c815f87b354b4fe4e3d03ba7c79f99da094586672c12a; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-009 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_3.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T145956Z-1/2.3/driver.stdout.log"
+observed = "task 2.3 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0028_4_1]
+revision = "index seq 28; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:6664a6fd317b87e2aed51018b66742186823530a4430002946ff557bca94c1ac; kernel sha256:1ee0386925f1ee853c7c815f87b354b4fe4e3d03ba7c79f99da094586672c12a; sdk sha256:7dbe2a09d25d1d3e5f2a2ca16066597750362964c0286e8f059702dc4add2106"
+command = "python3 tests/cwr/qualify.py --case CWR-009 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T145956Z-1/4.1/driver.stdout.log"
+observed = "task 4.1 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted False; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = false
+
+[progress.attempt_0029_2_2]
+revision = "index seq 29; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:6208252ebad299e77f418fa7bce4e233776ba437f677a351a5441a3a99e1b51e; kernel sha256:9c84283607e20e69d0196dc84d4ca87434c9badb62d706d8b7b78f28603f7ac6; sdk sha256:d002b2502718fefb0832590294a7f518897ff1e854b7392cba280d655018569d"
+command = "python3 tests/cwr/qualify.py --case CWR-007 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_2.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-007/20261106T151322Z-1/2.2/driver.stdout.log"
+observed = "task 2.2 driver for CWR-007 (case scope): exit 1; record outcome FAIL, checker accepted True; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-007.a1', 'CWR-007.a2', 'CWR-007.a3', 'CWR-007.a4', 'CWR-007.a5', 'CWR-007.a6', 'CWR-007.a7']; task 2.2 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = true
+evidence = "tests/cwr/evidence/CWR-007/20261106T151322Z-1.json"
+
+[progress.attempt_0030_2_3]
+revision = "index seq 30; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cc61d65a81a41297b8ed38dbdca74f47e0638445dd9f41e749e4e68a40e433e6; kernel sha256:b48ba699fb6dd57cd2cb9a490d31418cfbc0d75e704f36627e799a1d00af501d; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
+command = "python3 tests/cwr/qualify.py --case CWR-009 --timeout 3600.0 (driver: python3 tests/cwr/cases/2_3.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T151334Z-1/2.3/driver.stdout.log"
+observed = "task 2.3 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted True; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = true
+evidence = "tests/cwr/evidence/CWR-009/20261106T151334Z-1.json"
+
+[progress.attempt_0030_4_1]
+revision = "index seq 30; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cc61d65a81a41297b8ed38dbdca74f47e0638445dd9f41e749e4e68a40e433e6; kernel sha256:b48ba699fb6dd57cd2cb9a490d31418cfbc0d75e704f36627e799a1d00af501d; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
+command = "python3 tests/cwr/qualify.py --case CWR-009 --timeout 3600.0 (driver: python3 tests/cwr/cases/4_1.py)"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T151334Z-1/4.1/driver.stdout.log"
+observed = "task 4.1 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted True; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
+assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
+product_evidence = true
+evidence = "tests/cwr/evidence/CWR-009/20261106T151334Z-1.json"
+
+[finding.blocked_task_1_3]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/1_3.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-005/20261106T140231Z-1/1.3/driver.stdout.log"
+observed = "task 1.3 is blocked: latest driver run (index seq 7, tests/cwr/evidence/CWR-005/20261106T140231Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_2_2]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/2_2.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-007/20261106T151322Z-1/2.2/driver.stdout.log"
+observed = "task 2.2 is blocked: latest driver run (index seq 29, tests/cwr/evidence/CWR-007/20261106T151322Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_2_3]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/2_3.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T151334Z-1/2.3/driver.stdout.log"
+observed = "task 2.3 is blocked: latest driver run (index seq 30, tests/cwr/evidence/CWR-009/20261106T151334Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_4_1]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/4_1.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-009/20261106T151334Z-1/4.1/driver.stdout.log"
+observed = "task 4.1 is blocked: latest driver run (index seq 30, tests/cwr/evidence/CWR-009/20261106T151334Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_5_1]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/5_1.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-017/20261106T143111Z-1/5.1/driver.stdout.log"
+observed = "task 5.1 is blocked: latest driver run (index seq 19, tests/cwr/evidence/CWR-017/20261106T143111Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_5_2]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/5_2.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-018/20261106T143346Z-1/5.2/driver.stdout.log"
+observed = "task 5.2 is blocked: latest driver run (index seq 20, tests/cwr/evidence/CWR-018/20261106T143346Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_5_3]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/5_3.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-018/20261106T143346Z-1/5.3/driver.stdout.log"
+observed = "task 5.3 is blocked: latest driver run (index seq 20, tests/cwr/evidence/CWR-018/20261106T143346Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+[finding.blocked_task_6_1]
+revision = "attempt index seq >= 3"
+command = "python3 tests/cwr/cases/6_1.py via tests/cwr/qualify.py"
+exit_code = 1
+log = "tests/cwr/evidence/CWR-020/20261106T143605Z-1/6.1/driver.stdout.log"
+observed = "task 6.1 is blocked: latest driver run (index seq 22, tests/cwr/evidence/CWR-020/20261106T143605Z-1.json) exited 1"
+assumption = "A task is implemented only when its driver exists and its latest run through the qualification runner exited 0."
+product_evidence = false
+
+# Deviation of tasks 4.1 and 4.2 (clauses 11.2, 11.3; reference-world.md section 4): stub-side rate
+# limits are not reproduced in replay mode.
+[finding.task_4_2_rate_limits_not_replayed]
+revision = "working-tree crates/cwr-kernel/src/gateway/mod.rs, benchmark/tasks 2026-11-06"
+command = "python3 benchmark/tasks/_authoring/build_suite.py --check"
+exit_code = 0
+log = "stdout of build_suite.py; it refuses any [rate] rule with 'rate limits are not enforced in replay mode'"
+observed = "The publish stub accepts three posts per 100 ticks and the search stub ten queries per 50 ticks. Replay serves cassette entries keyed by adapter, request hash and sequence, never by world_time, and the reference recordings never hit a limit, so four publish.post calls in one replayed turn all return ok. A [rate] rule can never fire in a campaign, rate_limited_beyond_first is always 0, and a rule-reuse score on a rate rule is vacuously 1."
+assumption = "Until the gateway's replay path enforces what the stubs enforce (by running the deterministic stub core in-process, or by recording RATE_LIMITED entries past the window), no task lists a [rate] rule: they were removed from t022, t027, t030, t046, t047, t048, t055 and t059. t046 now reuses publish.post[1]:INVALID (two source files open with a line longer than the 200-character title limit) and t048 reuses search.query[2]:LIMIT (the instruction asks for the largest limit the service accepts). The reference solutions still wait out the live windows, so recording against the stubs is unchanged in kind. The suite, cassette and campaign digests of the earlier registration are superseded by this change."
+product_evidence = false
+
+# Deviation of task 4.2 (clause 11.3): an adapter task is solvable in replay only with the reference
+# solution's exact request bytes.
+[finding.task_4_2_replay_exact_requests]
+revision = "working-tree benchmark/tasks, crates/cwr-kernel/src/gateway/mod.rs 2026-11-06"
+command = "python3 tests/cwr/cases/4_2.py"
+exit_code = 0
+log = "stdout of tests/cwr/cases/4_2.py, CLAUSE 11.3 (key release after a cassette miss on t008)"
+observed = "Replay answers a request only when its canonical parameters equal a recorded one; any other request misses the cassette and gets UNAVAILABLE. task.md now pins every adapter parameter the predicates bind (limits, idempotency keys, titles and exact bodies, including trailing newlines) for t003, t021, t022, t029, t046, t047, t048, t055, t058 and t060, and the predicates check the pinned requests through the gateway request hash (common.called_with). The gateway no longer stores a cassette miss as a key adapter's first outcome: the slot is released, so a corrected call under the pinned key still succeeds."
+assumption = "A well-formed request that differs from the recording, for example a search with another limit the instruction leaves open, still misses the cassette. Resolving this needs replay to answer any well-formed request deterministically from the stub core instead of a request-keyed lookup."
+product_evidence = false
+
+# Deviation of experiments.md section 3.1 for campaign H1: drift turns of single-turn tasks.
+[finding.task_4_2_single_turn_drift]
+revision = "working-tree benchmark/tasks, benchmark/suite.kvx 2026-11-06"
+command = "python3 tests/cwr/cases/4_2.py --write-counts FILE; python3 benchmark/tasks/_authoring/build_suite.py --kernel-counts FILE"
+exit_code = 0
+log = "benchmark/suite.kvx [task.<id>].turns"
+observed = "H1 injects drift at max(1, floor(len/2)) with len the reference turn count. The rule-reuse tasks t042, t043, t044, t045, t050, t051, t053 and t054 had one-turn reference solutions, so every drift landed on turn 1 before any call; each 'Do these steps in order' phase is now its own turn, giving three turns. Every short and most medium tasks still have a one-turn reference solution, so their drift is injected before the first call and H1 compares two static worlds for them."
+assumption = "A drift point placed by primitive-call position (inject before call index k) would make drift mid-task for every task; that is a change to the drift injector and the campaign harness, not to the suite. Until then H1 results for one-turn tasks measure a changed world, not a world that changes mid-task, and the report says so."
+product_evidence = false
+
+# Deviation of task 4.3 (clause 12.4, metric post_upgrade_misuse_rate) for pairs U2 and U5.
+[finding.task_4_3_sandbox_refusal_misuse]
+revision = "working-tree benchmark/upgrades.kvx, benchmark/harness/metrics.py 2026-11-06"
+command = "python3 tests/cwr/cases/4_3.py"
+exit_code = 0
+log = "stdout of tests/cwr/cases/4_3.py, NOTE sandbox-side refusal lines and CLAUSE 11.4"
+observed = "The U2 call to the removed fs.move and the U5 kv.get without ns fail inside the sandbox before any RPC: the turn ends error INVALID on turn.script with the SDK's exception text and no ledger record names the primitive. upgrades.kvx now freezes that observed record (pre_failure with detail_contains) and the driver compares it for equality. Their misuse_scope is not_computable, so the misuse rate is None for U2 and U5 and they drop out of the pooled H4 misuse estimate instead of counting as 0. U3 misuse is now an uncaught jobs.result CONFLICT that ends the turn in error (misuse_scope uncaught_turn), because a caught CONFLICT is correct use on Build B."
+assumption = "Requirement 12 asks for misuse from ledgers. U2 and U5 meet it once the SDK reports a call to an absent primitive or with a bad signature as a ledger call record naming the primitive."
+product_evidence = false
+
+# Deviation of reference-world.md section 4 and the refworld manual: reconciliation after TIMEOUT.
+[finding.refworld_timeout_reconciliation]
+revision = "examples/refworld 0.2.0 (manual/conventions.md, adapters/publish.kvx)"
+command = "python3 benchmark/stubs/record_refworld.py replay --set adapters --out DIR"
+exit_code = 0
+log = "benchmark/cassettes/refworld-adapters timeout scenario"
+observed = "The manual and the publish.status doc tell the model to reconcile a TIMEOUT on publish.post with publish.status before posting under a new key. publish.status takes a post_id, which the model never receives after a TIMEOUT; an identical replay returns the stored TIMEOUT; and the stub completes the side effect before answering late, so the advised new-key repost can create a duplicate post."
+assumption = "The fix is a key-addressed status (publish.lookup(key) in the adapter contract and the stub) or the deterministic post id in the TIMEOUT detail, with the manual and reference-world.md section 4 rewritten to match. Any byte of examples/refworld changes the refworld Build hash that arms.kvx, the upgrade pairs and every cassette set record, so the change is made together with the next re-registration of the campaigns, not inside this review."
+product_evidence = false

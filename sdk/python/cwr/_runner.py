@@ -11,14 +11,17 @@ every rule is enforced by the kernel on the other side of the RPC socket.
 Protocol: frames of ``cwr._rpc`` (4-byte big-endian length, canonical JSON) over the inherited unix socket
 named by ``CWR_RPC_FD``:
 
-* kernel -> runner, first frame: ``{"v": 1, "op": "start", "script": str, "modules": [str, ...]}``
+* kernel -> runner, first frame: ``{"v": 1, "op": "start", "script": str, "modules": [str, ...],
+  "guard": bool, "token": str}``
 * runner -> kernel: primitive requests made by the generated SDK (``cwr._rpc.call``), unchanged.
 * runner -> kernel: ``{"v": 1, "op": "refuse", "id": n, "facility": "sandbox.<what>", "detail": str}``, a
   closure refusal (an import outside the SDK, a file, socket, process, clock or interpreter facility); the
   kernel records it in the ledger and answers like a primitive call with an INVALID failure, which this
   runner raises as the typed exception (also an ImportError or PermissionError, so ordinary handlers work).
-* runner -> kernel: ``{"v": 1, "op": "limit", "limit": "memory_mb"}`` when an allocation exceeded the address
-  space cap; the runner then waits to be killed.
+* runner -> kernel: ``{"v": 1, "op": "limit", "limit": "memory_mb", "token": str}`` when an allocation made by
+  the interpreter exceeded the address space cap; ``token`` echoes the start frame's ``token``, which only
+  the memory monitor holds, so a script that writes raw frames cannot forge the report. The runner then
+  waits to be killed.
 * runner -> kernel, last frame: ``{"v": 1, "op": "end", "outcome": "ok" | "raised" | "unencodable",
   "returned": <codec value> | null, "failure": <failure> | null, "exception": str | null}``.
 
@@ -32,9 +35,15 @@ Language-level layer (the kernel-level layer, namespaces and rlimits, is set up 
    ``threading._time``, the sets of ``os.supports_fd``, closure cells), so a reference reached by walking
    the object graph is refused too. If any reference cannot be rewritten, the script is not run.
 4. ``builtins.__import__`` and ``builtins.open`` are replaced; an audit hook (which cannot be removed) refuses
-   file, socket, process, clock, frame-introspection and module-load events.
-5. A ``sys.monitoring`` RAISE callback turns any MemoryError into ``LIMIT memory_mb`` even if the script
-   would catch it.
+   file, socket, process, clock, frame-introspection and module-load events. The hook alone decides and
+   reports every refusal and has no off switch: the stubs and the import guard only raise the audit event
+   ``cwr.refuse`` and close over nothing but that builtin, strings and frozen sets, so walking any
+   reachable closure finds no flag, channel or original import function.
+5. A ``sys.monitoring`` RAISE callback turns a MemoryError raised by the interpreter (an allocation that
+   failed) into ``LIMIT memory_mb`` even if the script would catch it. A MemoryError the script raises
+   or throws itself is an ordinary exception. If the callback cannot be registered, the script is not run.
+6. The returned value is reduced to exact built-in types before the codec sees it (no user method runs),
+   with a cycle and depth guard; anything that fails is the ``unencodable`` outcome.
 """
 
 
@@ -43,6 +52,7 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
     import builtins
     import contextlib
     import json
+    import opcode
     import posix
     import sys
 
@@ -90,6 +100,7 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
     script = start["script"]
     modules = list(start.get("modules") or [])
     guard_enabled = bool(start.get("guard", True))
+    token = start.get("token") if isinstance(start.get("token"), str) else None
 
     # Import the Build's world modules from the SDK directory only.
     import importlib.util
@@ -149,8 +160,23 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
     import encodings.latin_1  # noqa: F401  imported for its side effect of registering the codec
 
     # ------------------------------------------------------------------ closure refusals
+    #
+    # Only the audit hook reports and raises a refusal. The stubs and the import guard raise the audit
+    # event ``cwr.refuse`` and close over nothing else a script could use; the hook's own state is a
+    # cell that only the hook and this frame hold (frames are refused as ``object.__getattr__``).
 
-    busy = [False]
+    facilities = frozenset(
+        {
+            "sandbox.os",
+            "sandbox.clock",
+            "sandbox.thread",
+            "sandbox.process",
+            "sandbox.import",
+            "sandbox.filesystem",
+            "sandbox.network",
+            "sandbox.interpreter",
+        }
+    )
     refusal_classes = {}
 
     def refusal_class(cls, py_base):
@@ -161,30 +187,27 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
             )
         return refusal_classes[key]
 
-    def refuse(facility, detail, py_base=PermissionError):
-        """Report a closure refusal to the kernel (it is recorded in the ledger) and raise it typed."""
-        if busy[0]:
-            raise PermissionError(f"{facility} refused by the CWR sandbox")
-        busy[0] = True
-        try:
-            rid = _rpc._next_id
-            _rpc._next_id = rid + 1
-            send(
-                {
-                    "v": 1,
-                    "op": "refuse",
-                    "id": rid,
-                    "facility": facility,
-                    "detail": str(detail)[:200],
-                }
-            )
-            response = json.loads(_rpc.recv_frame(chan).decode("utf-8"))
-            failure = response["result"]["error"]
-        finally:
-            busy[0] = False
+    def refuse(facility, detail, py_base):
+        """Report a closure refusal to the kernel (it is recorded in the ledger); return it typed.
+
+        Raises no audit event: frame I/O on the file object, JSON and class creation are unaudited.
+        """
+        rid = _rpc._next_id
+        _rpc._next_id = rid + 1
+        send(
+            {
+                "v": 1,
+                "op": "refuse",
+                "id": rid,
+                "facility": facility,
+                "detail": detail[:200],
+            }
+        )
+        response = json.loads(_rpc.recv_frame(chan).decode("utf-8"))
+        failure = response["result"]["error"]
         exc = errors.from_failure(failure)
         try:
-            typed = refusal_class(type(exc), py_base)(
+            return refusal_class(type(exc), py_base)(
                 failure["primitive"],
                 failure.get("precondition_index"),
                 failure.get("retry_after"),
@@ -192,42 +215,71 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
                 failure.get("detail", ""),
             )
         except TypeError:
-            typed = exc
-        raise typed
+            return exc
+
+    sys_audit = sys.audit
 
     def stub(facility, name):
         def refused(*args, **kwargs):
-            refuse(facility, name)
+            sys_audit("cwr.refuse", facility, name, "permission")
+            raise PermissionError(f"{facility} refused by the CWR sandbox")
 
         refused.__name__ = name
         refused.__qualname__ = name
         return refused
 
-    allowed_imports = {"cwr", "cwr.errors"} | set(world)
-    real_import = builtins.__import__
+    def import_stub():
+        """The import guard: resolves only modules loaded before the guard and never loads one."""
+        script_names = frozenset({"cwr", "cwr.errors"} | set(world))
+        error_names = frozenset(vars(errors))
+        loaded = type(type.__dict__)(
+            {
+                n: m
+                for n, m in sys.modules.items()
+                if n in script_names or n == "cwr" or n.startswith("cwr.")
+            }
+        )
 
-    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if level:
-            package = (globals or {}).get("__package__") or ""
-            if package == "cwr" or package.startswith("cwr."):
-                return real_import(name, globals, locals, fromlist, level)
-            full = name
-        else:
-            full = name
-        top = full.split(".")[0] if full else full
-        if full in allowed_imports or (top == "cwr" and full in allowed_imports):
-            mod = real_import(name, globals, locals, fromlist, level)
-            for item in fromlist or ():
-                if (
-                    item != "*"
-                    and full == "cwr"
-                    and "cwr." + item not in allowed_imports
-                    and not hasattr(errors, item)
-                    and item not in ("errors",)
-                ):
-                    refuse("sandbox.import", "cwr." + item, ImportError)
-            return mod
-        refuse("sandbox.import", full or "<relative>", ImportError)
+        def denied(what):
+            sys_audit("cwr.refuse", "sandbox.import", what, "import")
+            raise ImportError(f"sandbox.import refused by the CWR sandbox: {what}")
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if type(name) is not str or type(level) is not int or level < 0:
+                denied("<malformed import>")
+            items = tuple(fromlist) if type(fromlist) in (tuple, list) else ()
+            if any(type(item) is not str for item in items):
+                denied("<malformed fromlist>")
+            if level:
+                package = dict.get(globals, "__package__") if type(globals) is dict else None
+                if type(package) is not str or not (package == "cwr" or package.startswith("cwr.")):
+                    denied(name or "<relative>")
+                bits = package.rsplit(".", level - 1)
+                if len(bits) < level:
+                    denied(name or "<relative>")
+                full = f"{bits[0]}.{name}" if name else bits[0]
+                if full not in loaded:
+                    denied(full)
+            else:
+                full = name
+                if full not in script_names:
+                    denied(full or "<relative>")
+                if full == "cwr":
+                    for item in items:
+                        if (
+                            item != "*"
+                            and "cwr." + item not in script_names
+                            and item not in error_names
+                        ):
+                            denied("cwr." + item)
+            if items:
+                return loaded[full]
+            if not level:
+                return loaded[full.partition(".")[0]]
+            cut = len(name) - len(name.partition(".")[0])
+            return loaded[full[: len(full) - cut]]
+
+        return guarded_import
 
     # The events of PEP 578 refused once the script runs, by prefix, with the facility each is reported as.
     deny = (
@@ -271,6 +323,7 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
         ("sys.setprofile", "sandbox.interpreter"),
         ("sys.addaudithook", "sandbox.interpreter"),
         ("sys.remote_exec", "sandbox.interpreter"),
+        ("sys.monitoring", "sandbox.interpreter"),
         ("object.__getattr__", "sandbox.interpreter"),
         ("gc.", "sandbox.interpreter"),
         ("marshal.", "sandbox.interpreter"),
@@ -280,22 +333,35 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
         ("builtins.input", "sandbox.interpreter"),
         ("builtins.breakpoint", "sandbox.interpreter"),
     )
-    armed = [False]
+    # [inside the hook, turn over]: held only by ``audit`` and this frame. Either one makes the hook
+    # refuse without reporting; nothing makes it allow.
+    hook_state = [False, False]
 
     def audit(event, args):
-        if not armed[0] or busy[0]:
-            return
-        if event == "import":
-            name = args[0] if args else ""
-            refuse("sandbox.import", name, ImportError)
-        for prefix, facility in deny:
-            if event.startswith(prefix):
-                what = event
-                if args and isinstance(args[0], (str, bytes, int)):
-                    what = f"{event} {args[0]!r}"
-                refuse(
-                    facility, what, ImportError if facility == "sandbox.import" else PermissionError
-                )
+        if event == "cwr.refuse":
+            ok = len(args) == 3 and all(type(a) is str for a in args) and args[0] in facilities
+            facility = args[0] if ok else "sandbox.interpreter"
+            what = args[1] if ok else "cwr.refuse"
+            py_base = ImportError if ok and args[2] == "import" else PermissionError
+        elif event == "import":
+            facility, py_base = "sandbox.import", ImportError
+            what = args[0] if args and type(args[0]) is str else ""
+        else:
+            facility = next((f for prefix, f in deny if event.startswith(prefix)), None)
+            if facility is None:
+                return
+            py_base = PermissionError
+            what = event
+            if args and type(args[0]) in (str, bytes, int):
+                what = f"{event} {args[0]!r}"
+        if hook_state[0] or hook_state[1]:
+            raise py_base(f"{facility} refused by the CWR sandbox")
+        hook_state[0] = True
+        try:
+            exc = refuse(facility, what, py_base)
+        finally:
+            hook_state[0] = False
+        raise exc
 
     def neuter_all(neuter):
         """Replace every callable of the given modules, wherever it is referenced, by a refusing stub.
@@ -391,27 +457,70 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
     # ------------------------------------------------------------------ MemoryError is LIMIT memory_mb
 
     limit_payload = json.dumps(
-        {"v": 1, "op": "limit", "limit": "memory_mb"}, sort_keys=True, separators=(",", ":")
+        {"v": 1, "op": "limit", "limit": "memory_mb", "token": token},
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     limit_frame = len(limit_payload).to_bytes(4, "big") + limit_payload
+    # Instructions at which a MemoryError is one the script raised, re-raised or threw into a
+    # generator, never an allocation the interpreter failed to make.
+    script_raises = frozenset(
+        opcode.opmap[n]
+        for n in (
+            "RAISE_VARARGS",
+            "RERAISE",
+            "YIELD_VALUE",
+            "RESUME",
+            "SEND",
+            "END_SEND",
+            "CLEANUP_THROW",
+            "RETURN_GENERATOR",
+            "PUSH_EXC_INFO",
+            "WITH_EXCEPT_START",
+            "END_ASYNC_FOR",
+        )
+        if n in opcode.opmap
+    )
+    # MemoryErrors the script raised or threw, by id, held so that the interpreter cannot hand the
+    # same object out again as an allocation failure while it is marked (oldest dropped past 1024).
+    owned = {}
+
+    def own(exc):
+        owned[id(exc)] = exc
+        if len(owned) > 1024:
+            owned.pop(next(iter(owned)))
+
+    def on_throw(code_obj, offset, exc):
+        if type(exc) is MemoryError:
+            own(exc)
 
     def on_raise(code_obj, offset, exc):
-        if isinstance(exc, MemoryError):
-            try:
-                chan.sendall(limit_frame)
-                while chan.recv(65536):
-                    pass
-            finally:
-                raise SystemExit(71)
+        if type(exc) is not MemoryError or owned.get(id(exc)) is exc:
+            return
+        raw = code_obj.co_code
+        if exc.args or (0 <= offset < len(raw) and raw[offset] in script_raises):
+            own(exc)  # every later RAISE event of this exception is its propagation
+            return
+        try:
+            chan.sendall(limit_frame)
+            while chan.recv(65536):
+                pass
+        finally:
+            raise SystemExit(71)
 
     monitoring = sys.monitoring
     tool = 4
     try:
         monitoring.use_tool_id(tool, "cwr-sandbox")
         monitoring.register_callback(tool, monitoring.events.RAISE, on_raise)
-        monitoring.set_events(tool, monitoring.events.RAISE)
-    except ValueError:
-        pass
+        monitoring.register_callback(tool, monitoring.events.PY_THROW, on_throw)
+        monitoring.set_events(tool, monitoring.events.RAISE | monitoring.events.PY_THROW)
+    except ValueError as e:
+        compile_error = f"sandbox memory monitor unavailable: {e}"
+        code = None
+    # The script reaches ``sys``; without ``sys.monitoring`` it cannot free or replace the monitor.
+    with contextlib.suppress(AttributeError):
+        del sys.monitoring
 
     # ------------------------------------------------------------------ arm the guard
 
@@ -477,13 +586,62 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
             "__main__",
         ):
             sys.modules.pop(name, None)
-        builtins.__import__ = guarded_import
+        builtins.__import__ = import_stub()
         builtins.open = stub("sandbox.filesystem", "open")
         builtins.input = stub("sandbox.interpreter", "input")
         builtins.breakpoint = stub("sandbox.interpreter", "breakpoint")
         del posix, _io, _signal, _thread, _imp, _time_mod
+        # Armed for the rest of the process: nothing disarms it, not even the end of the turn.
         sys.addaudithook(audit)
-        armed[0] = True
+
+    # ------------------------------------------------------------------ the returned value
+
+    class UnencodableError(Exception):
+        """The returned value cannot cross the codec: a cycle, too deep, or a type outside it."""
+
+    max_depth = 100  # below the kernel's JSON nesting limit, with room for the end frame
+
+    def plain(v, depth, open_ids):
+        """``v`` rebuilt from exact built-in types through the base-class methods only.
+
+        No method a script defined runs: subclasses of int, float, str, bytes, list, tuple and dict
+        are read with ``int.__int__``, ``str.__str__``, ``dict.items`` and so on. Raises UnencodableError
+        on a cycle, on nesting deeper than ``max_depth`` and on any other type.
+        """
+        if v is None or type(v) is bool:
+            return v
+        if isinstance(v, int):
+            n = int.__int__(v)
+            if not -(2**63) <= n < 2**64:
+                raise UnencodableError("integer out of range")
+            return n
+        if isinstance(v, float):
+            f = float.__float__(v)
+            if f - f != 0.0:
+                raise UnencodableError("non-finite float")
+            return f
+        if isinstance(v, str):
+            return str.__str__(v)
+        if isinstance(v, bytes):
+            return bytes.__bytes__(v)
+        if isinstance(v, bytearray):
+            return bytes(bytearray.copy(v))
+        if not isinstance(v, (list, tuple, dict)):
+            raise UnencodableError(type(v).__name__)
+        if depth >= max_depth or id(v) in open_ids:
+            raise UnencodableError("cycle or nesting too deep")
+        open_ids.add(id(v))
+        if isinstance(v, dict):
+            out = {}
+            for k, x in dict.items(v):
+                if not isinstance(k, str):
+                    raise UnencodableError("dict key")
+                out[str.__str__(k)] = plain(x, depth + 1, open_ids)
+        else:
+            items = list.copy(v) if isinstance(v, list) else tuple.__getitem__(v, slice(None))
+            out = [plain(x, depth + 1, open_ids) for x in items]
+        open_ids.discard(id(v))
+        return out
 
     # ------------------------------------------------------------------ run the script
 
@@ -497,51 +655,32 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
             result = namespace.pop("__cwr_turn__")()
         except BaseException as e:  # every escape is reported; nothing reaches the host
             outcome = "raised"
-            if isinstance(e, MemoryError):
-                on_raise(None, 0, e)
             if isinstance(e, errors.WorldError):
-                failure = {
-                    "code": e.code,
-                    "primitive": e.primitive,
-                    "precondition_index": e.precondition_index,
-                    "retry_after": e.retry_after,
-                    "limit": e.limit,
-                    "detail": e.detail,
-                }
+                try:
+                    failure = {
+                        "code": e.code,
+                        "primitive": e.primitive,
+                        "precondition_index": e.precondition_index,
+                        "retry_after": e.retry_after,
+                        "limit": e.limit,
+                        "detail": e.detail,
+                    }
+                    json.dumps(failure, allow_nan=False)
+                except BaseException:  # attributes the script replaced: the kernel ignores them
+                    failure = None
             try:
                 exception = f"{type(e).__name__}: {e}"[:500]
             except BaseException:  # str(e) itself raised: report the type alone
                 exception = type(e).__name__
         else:
-            encoded = _codec.encode(result)
-
-            def representable(v):
-                if isinstance(v, bool) or v is None or isinstance(v, str):
-                    return True
-                if isinstance(v, int):
-                    return -(2**63) <= v < 2**64
-                if isinstance(v, float):
-                    return True
-                if isinstance(v, list):
-                    return all(representable(x) for x in v)
-                if isinstance(v, dict):
-                    if "$invalid" in v and len(v) == 1:
-                        return False
-                    return all(representable(x) for x in v.values())
-                return False
-
             try:
-                ok = representable(encoded)
-            except RecursionError:
-                ok = False
-            if ok:
-                returned = encoded
-            else:
+                returned = _codec.encode(plain(result, 0, set()))
+            except BaseException:  # a cycle, nesting too deep, or a value outside the codec
                 outcome, exception = (
                     "unencodable",
                     f"returned value of type {type(result).__name__} is outside the SDK codec",
                 )
-    armed[0] = False
+    hook_state[1] = True
     send(
         {
             "v": 1,

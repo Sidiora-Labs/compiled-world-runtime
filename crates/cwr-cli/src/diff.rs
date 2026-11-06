@@ -23,6 +23,14 @@ use std::path::PathBuf;
 use cwr_compiler::diff::{build_roots, diff_references};
 use cwr_compiler::Options;
 
+use crate::cli::{self, Spec};
+
+const SPEC: Spec = Spec {
+    values: &["--out"],
+    repeatable: &[],
+    flags: &["--allow-example"],
+};
+
 /// One-line help text for `cwr diff`, shown by `cwr help`.
 pub const SUMMARY: &str = "print the ContractDiff between two Builds or World Sources: cwr diff <a> <b> [--out <dir>] [--allow-example]";
 
@@ -35,28 +43,15 @@ fn usage_error(message: &str) -> i32 {
 /// Runs `cwr diff`; `args` follow `diff`. Returns 0 with the canonical diff on stdout, 5 when a
 /// Build or World Source cannot be used and 1 on a usage error.
 pub fn run(args: &[String]) -> i32 {
-    let mut refs: Vec<String> = Vec::new();
-    let mut out: Option<PathBuf> = None;
-    let mut allow_example = false;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--out" => {
-                i += 1;
-                match args.get(i) {
-                    Some(v) => out = Some(PathBuf::from(v)),
-                    None => return usage_error("--out needs a value"),
-                }
-            }
-            "--allow-example" => allow_example = true,
-            a if a.starts_with('-') => return usage_error(&format!("unknown option {a}")),
-            a => refs.push(a.to_string()),
-        }
-        i += 1;
-    }
-    let [a, b] = refs.as_slice() else {
+    let p = match cli::parse(args, &SPEC) {
+        Ok(p) => p,
+        Err(m) => return usage_error(&m),
+    };
+    let [a, b] = p.positional.as_slice() else {
         return usage_error("expected exactly two Builds or World Sources");
     };
+    let out = p.value("--out").map(PathBuf::from);
+    let allow_example = p.flag("--allow-example");
     let options = Options {
         out,
         allow_example,
@@ -66,10 +61,7 @@ pub fn run(args: &[String]) -> i32 {
     match diff_references(a, b, &roots, allow_example) {
         // Task 3.2: a control/experimental pair also prints the attribution (clause 10.5).
         Ok(d) => match cwr_compiler::experimental::diff_output(&d, a, b, &roots) {
-            Ok(text) => {
-                print!("{text}");
-                0
-            }
+            Ok(text) => cli::emit(&text),
             Err(m) => {
                 eprintln!("cwr diff: {m}");
                 5
@@ -81,5 +73,28 @@ pub fn run(args: &[String]) -> i32 {
             }
             5
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn usage_errors_exit_one_and_missing_builds_exit_five() {
+        assert_eq!(run(&args(&[])), 1);
+        assert_eq!(run(&args(&["a"])), 1);
+        assert_eq!(run(&args(&["a", "b", "c"])), 1);
+        assert_eq!(run(&args(&["a", "b", "--out", "x", "--out", "y"])), 1);
+        assert_eq!(
+            run(&args(&["a", "b", "--allow-example", "--allow-example"])),
+            1
+        );
+        assert_eq!(run(&args(&["a", "b", "--nope"])), 1);
+        assert_eq!(run(&args(&["/nonexistent/a", "/nonexistent/b"])), 5);
     }
 }

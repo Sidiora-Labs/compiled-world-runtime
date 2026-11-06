@@ -7,10 +7,13 @@
 //! module file exposing `pub fn run(args: &[String]) -> i32` and `pub const SUMMARY: &str`;
 //! adding a subcommand is one `mod` line and one match arm (plus one help line).
 //!
-//! Exit codes: 0 success; 1 usage or any other error; subcommands document their own
-//! codes (spec/cwr/compiler.md section 9: 2 parse or resolve, 3 lint, and so on).
+//! Exit codes: 0 success; 1 usage, an unwritable stdout ([`cli::emit`]) or any other error;
+//! subcommands document their own codes (spec/cwr/compiler.md section 9: 2 parse or resolve,
+//! 3 lint, and so on). Arguments follow one rule ([`cli::parse`]): a value option or flag
+//! given twice is a usage error.
 
 mod build;
+mod cli;
 mod context;
 mod contract;
 mod diff;
@@ -47,10 +50,7 @@ fn main() {
         Some("lint") => build::run_lint(&args[1..]),
         Some("manual") => manual::run(&args[1..]),
         Some("release") => release::run(&args[1..]),
-        Some("help") | Some("--help") | Some("-h") => {
-            print!("{}", usage());
-            0
-        }
+        Some("help") | Some("--help") | Some("-h") => cli::emit(&usage()),
         None => {
             eprint!("{}", usage());
             1

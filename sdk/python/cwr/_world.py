@@ -1,24 +1,20 @@
 # Copyright Sidiora Labs Inc. CWR® 2026-2027
 # SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
-"""CWR SDK world coordinates and the upward channel: world.version, world.build, world.time, world.propose.
+"""CWR world coordinates read from a turn result envelope: version, Build hash, world time, turn.
 
 Spec: spec/cwr/kernel.md sections 6 and 11, spec/cwr/model-surface.md sections 4 and 5; task 2.5, clause 5.4.
 
-Two kinds of reader use this module.
+This module is tooling-side: the model surface, a harness or a driver that holds a turn result envelope
+calls ``coordinates(envelope)`` and gets ``Coordinates(version, build, time, turn)``. It is not shipped in a
+Build and a turn script cannot import it. A turn script reaches the same facts through the Build's generated
+``world`` module, which performs one RPC per call: ``world.version()``, ``world.now()`` and
+``world.propose(text=...)``. ``PRIMITIVES`` names those generated primitives so tooling can check that a
+Build declares them.
 
-* A turn script, through the RPC channel of ``cwr._rpc``: ``version()``, ``time()`` and ``propose(text)`` each
-  perform exactly one RPC to the Build's ``world.version``, ``world.now`` and ``world.propose`` primitives. The
-  kernel validates and records every call like any other primitive; a Build that does not declare one of them
-  refuses the call as a closure violation. ``propose`` appends a ``proposal`` ledger record and one line to the
-  Instance's outbox, outside the Build and the state store, and returns the proposal id; it changes no
-  contract, state, limit or schedule, and the world will not answer it within this Build.
-* Anything that holds a turn result envelope (the model surface, a harness reading ledgers and envelopes):
-  ``coordinates(envelope)`` returns the envelope's ``world`` object as ``Coordinates(version, build, time,
-  turn)``. ``build`` is the hash of the Build the Instance is bound to; it changes only at an upgrade, so the
-  first envelope after ``cwr instance upgrade`` carries the new version and build.
-
-The Build hash is not a primitive: the SDK and the manual are inside the hash, so they cannot state it, and the
-envelope is the only place a script's result reports it.
+``build`` is the hash of the Build the Instance is bound to; it changes only at an upgrade, so the first
+envelope after ``cwr instance upgrade`` carries the new version and build. The Build hash is not a primitive:
+the SDK and the manual are inside the hash, so they cannot state it, and the envelope is the only place a
+script's result reports it.
 """
 
 from __future__ import annotations
@@ -26,17 +22,24 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
+try:
+    from . import _codec
+except ImportError:  # loaded as a standalone file by tooling: use the codec beside it
+    import importlib.util as _util
+    from pathlib import Path as _Path
+
+    _spec = _util.spec_from_file_location("cwr_sdk_codec", _Path(__file__).with_name("_codec.py"))
+    _codec = _util.module_from_spec(_spec)
+    _spec.loader.exec_module(_codec)
+
 __all__ = [
     "PRIMITIVES",
     "Coordinates",
     "CoordinatesError",
     "coordinates",
-    "propose",
-    "time",
-    "version",
 ]
 
-# The Build primitives behind the RPC helpers, by helper name.
+# The generated Build primitives a turn script calls for these coordinates, by coordinate.
 PRIMITIVES = {"version": "world.version", "time": "world.now", "propose": "world.propose"}
 
 _SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -44,7 +47,7 @@ _BUILD = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class CoordinatesError(ValueError):
-    """An envelope whose ``world`` object is not ``{version, build, time, turn}`` as model-surface.md fixes it."""
+    """An envelope that is not a turn result envelope, or whose ``world`` object is malformed."""
 
 
 class Coordinates(NamedTuple):
@@ -63,14 +66,17 @@ def _count(value, name: str) -> int:
 
 
 def coordinates(envelope: dict) -> Coordinates:
-    """The ``world`` object of a turn result envelope, checked; raises CoordinatesError otherwise."""
-    if not isinstance(envelope, dict) or not isinstance(envelope.get("world"), dict):
-        raise CoordinatesError("a turn result envelope carries a world object")
+    """The ``world`` object of a turn result envelope, checked; raises CoordinatesError otherwise.
+
+    The envelope must pass ``cwr._codec.check_turn_envelope`` (exactly the turn keys, a world object with
+    exactly ``version``, ``build``, ``time`` and ``turn``); the version is ``MAJOR.MINOR.PATCH``, the build
+    is ``sha256:<64 hex>`` and time and turn are non-negative integers.
+    """
+    try:
+        _codec.check_turn_envelope(envelope)
+    except _codec.CodecError as e:
+        raise CoordinatesError(f"not a turn result envelope: {e}") from None
     world = envelope["world"]
-    if set(world) != {"version", "build", "time", "turn"}:
-        raise CoordinatesError(
-            f"world must have exactly version, build, time and turn, found {sorted(world)}"
-        )
     if not isinstance(world["version"], str) or not _SEMVER.fullmatch(world["version"]):
         raise CoordinatesError(
             f"world.version must be MAJOR.MINOR.PATCH, found {world['version']!r}"
@@ -83,24 +89,3 @@ def coordinates(envelope: dict) -> Coordinates:
         _count(world["time"], "time"),
         _count(world["turn"], "turn"),
     )
-
-
-def version() -> str:
-    """Semantic version of the Build this Instance is bound to (one RPC to world.version)."""
-    from . import _rpc
-
-    return _rpc.call(PRIMITIVES["version"], {})
-
-
-def time() -> int:
-    """Current world time in ticks (one RPC to world.now); never host time."""
-    from . import _rpc
-
-    return _rpc.call(PRIMITIVES["time"], {})
-
-
-def propose(text: str) -> str:
-    """Send text to the human owner (one RPC to world.propose); returns the proposal id and changes nothing."""
-    from . import _rpc
-
-    return _rpc.call(PRIMITIVES["propose"], {"text": text})

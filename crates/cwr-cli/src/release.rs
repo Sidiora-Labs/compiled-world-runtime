@@ -15,19 +15,27 @@
 //! task suite digests (each also compared with the value frozen in `benchmark/suite.kvx`), the
 //! packaged CLI and SDK checksums, the campaign result digests, the specification digest and
 //! the pre-registration digest. `pin` prints the computed values and, with `--write`, rewrites
-//! the value lines of the release file in place; comments and layout are kept. `check` compares
-//! the recorded values with the recomputed ones.
+//! the value line of every pin whose computation succeeded; a pin that failed keeps its recorded
+//! line and is reported. Comments and layout are kept, and the new file replaces the old one
+//! atomically (sibling temporary file, fsync, rename), so an interrupted write never truncates it.
+//! `check` compares the recorded values with the recomputed ones.
+//!
+//! A registration source the release file names (`campaigns`, `registered_in`, `schedules`) that
+//! is missing or unreadable is a diagnostic on the pin it guards, never a skipped comparison.
 //!
 //! Every input that is missing, unrecorded or different from its recomputation produces one
 //! named diagnostic `CWR-Rnnn` with the release-file key and a reason; the codes and messages
 //! are listed in [`PINS`] and repeated in the `[diagnostic.*]` sections of the release file and
 //! in `RELEASE.md`. `--claim` adds `CWR-R015`, closure and owner acceptance (task 6.2), which a
-//! release claim needs on top of complete pins.
+//! release claim needs on top of complete pins: the closure report (the JSON of
+//! `tests/cwr/closure.py --json`) must say `ACCEPTED` with no blocking item and recorded owner
+//! acceptance, and the owner-acceptance file must record `owner_acceptance = true` with an owner.
 //!
-//! A revision is the `sha256:` tree digest of the component's directory in the layout of
-//! `benchmark/predicates/common.py::tree_digest` (relative POSIX path, NUL, decimal length,
-//! NUL, bytes, per file, sorted by path bytes), skipping `target`, `build`, `dist`,
-//! `__pycache__` and `*.egg-info` directories. The tree has no version-control history, so a
+//! A revision is the `sha256:` tree digest of the component's directory, exactly
+//! `benchmark/predicates/common.py::tree_digest`: relative POSIX path, NUL, decimal length, NUL,
+//! bytes, per file, sorted by path bytes; every regular file and every symbolic link to a regular
+//! file (read through the link) is included; only `__pycache__` directories are skipped, and
+//! symbolic links to directories are not entered. The tree has no version-control history, so a
 //! content digest is the revision.
 //!
 //! Exit codes: 0 every pin recorded and verified (`check`) or computed (`pin`); 2 at least one
@@ -42,6 +50,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use cwr_contract::kvx;
+
+use crate::cli;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -327,20 +337,9 @@ pub fn run(args: &[String]) -> i32 {
         })
         .collect();
     if a.write {
-        let updates: Vec<(&str, &str, Value)> = results
-            .iter()
-            .filter(|r| r.spec.code != "CWR-R019" && r.spec.code != "CWR-R015")
-            .map(|r| {
-                (
-                    r.spec.section,
-                    r.spec.key,
-                    r.computed.clone().unwrap_or(Value::Null),
-                )
-            })
-            .collect();
-        match rewrite(&text, &updates) {
+        match rewrite(&text, &write_updates(&results)) {
             Ok(new_text) => {
-                if let Err(e) = fs::write(&file, new_text) {
+                if let Err(e) = write_atomic(&file, new_text.as_bytes()) {
                     eprintln!("cwr release: cannot write {}: {e}", file.display());
                     return 1;
                 }
@@ -371,11 +370,15 @@ pub fn run(args: &[String]) -> i32 {
                 })
             })
             .collect();
-        println!(
+        let written = cli::emit_line(&format!(
             "{:#}",
             json!({"command": a.command, "ok": failing.is_empty(), "pins": pins})
-        );
+        ));
+        if written != 0 {
+            return written;
+        }
     } else {
+        let mut out = String::new();
         for r in &results {
             let key = format!("{}.{}", r.spec.section, r.spec.key);
             let problem = if check {
@@ -383,22 +386,26 @@ pub fn run(args: &[String]) -> i32 {
             } else {
                 r.computed.clone().err()
             };
-            match (problem, &r.computed) {
-                (None, Ok(v)) => println!("ok   {} {key} = {}", r.spec.code, compact(v)),
-                (None, Err(_)) => println!("ok   {} {key}", r.spec.code),
-                (Some(p), _) => println!("{}: {}: {key}: {p}", r.spec.code, r.spec.message),
-            }
+            out.push_str(&match (problem, &r.computed) {
+                (None, Ok(v)) => format!("ok   {} {key} = {}\n", r.spec.code, compact(v)),
+                (None, Err(_)) => format!("ok   {} {key}\n", r.spec.code),
+                (Some(p), _) => format!("{}: {}: {key}: {p}\n", r.spec.code, r.spec.message),
+            });
         }
         if failing.is_empty() {
-            println!("release {}: every pin verified", a.command);
+            out.push_str(&format!("release {}: every pin verified\n", a.command));
         } else {
             let codes: Vec<&str> = failing.iter().map(|r| r.spec.code).collect();
-            println!(
-                "release {}: {} diagnostic(s): {}",
+            out.push_str(&format!(
+                "release {}: {} diagnostic(s): {}\n",
                 a.command,
                 codes.len(),
                 codes.join(" ")
-            );
+            ));
+        }
+        let written = cli::emit(&out);
+        if written != 0 {
+            return written;
         }
     }
     if failing.is_empty() {
@@ -477,7 +484,8 @@ fn compute_one(
     spec: &PinSpec,
     builds: &BuildResults,
 ) -> Result<Value, String> {
-    let dir_of = |section: &str, default: &str| root.join(get_str(sections, section, "path", default));
+    let dir_of =
+        |section: &str, default: &str| root.join(get_str(sections, section, "path", default));
     match spec.code {
         "CWR-R001" => revision(&dir_of("pin.compiler", "crates/cwr-compiler")),
         "CWR-R002" => revision(&dir_of("pin.kernel", "crates/cwr-kernel")),
@@ -533,14 +541,12 @@ pub fn file_digest(path: &Path) -> Result<Value, String> {
     Ok(Value::String(format!("sha256:{}", hex(&hasher.finalize()))))
 }
 
-const SKIPPED_DIRS: [&str; 5] = ["target", "build", "dist", "__pycache__", ".pytest_cache"];
+/// The only directory name a tree digest skips, as in `common.py::tree_digest`.
+const SKIPPED_DIR: &str = "__pycache__";
 
-fn skipped(name: &str) -> bool {
-    SKIPPED_DIRS.contains(&name) || name.ends_with(".egg-info")
-}
-
-/// Every regular file under `dir`, as (relative POSIX path from `base`, absolute path), sorted
-/// by path bytes; skipped directories are not entered.
+/// Every regular file under `dir`, and every symbolic link to one, as (relative POSIX path from
+/// `base`, path), sorted by path bytes; `__pycache__` and symbolic links to directories are not
+/// entered (the `Path.rglob` and `Path.is_file` semantics of `common.py::tree_digest`).
 fn walk(dir: &Path, base: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -553,11 +559,13 @@ fn walk(dir: &Path, base: &Path) -> Result<Vec<(String, PathBuf)>, String> {
             let kind = entry
                 .file_type()
                 .map_err(|e| format!("{}: {e}", path.display()))?;
+            let file = kind.is_file()
+                || (kind.is_symlink() && fs::metadata(&path).is_ok_and(|m| m.is_file()));
             if kind.is_dir() {
-                if !skipped(&name) {
+                if name != SKIPPED_DIR {
                     stack.push(path);
                 }
-            } else if kind.is_file() {
+            } else if file {
                 let rel = path
                     .strip_prefix(base)
                     .map_err(|_| format!("{} is outside {}", path.display(), base.display()))?;
@@ -602,15 +610,22 @@ fn revision(dir: &Path) -> Result<Value, String> {
     tree_digest(dir).map(Value::String)
 }
 
+/// `^t[0-9]{3}-[a-z0-9-]+$`, the task directory pattern of `benchmark/predicates/common.py`.
 fn is_task_dir(name: &str) -> bool {
-    let b = name.as_bytes();
-    b.len() > 5
-        && b[0] == b't'
-        && b[1..4].iter().all(u8::is_ascii_digit)
-        && b[4] == b'-'
-        && b[5..]
-            .iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+    let Some(rest) = name.strip_prefix('t') else {
+        return false;
+    };
+    let (Some(digits), Some(slug)) = (rest.get(..3), rest.get(3..)) else {
+        return false;
+    };
+    let Some(slug) = slug.strip_prefix('-') else {
+        return false;
+    };
+    digits.bytes().all(|c| c.is_ascii_digit())
+        && !slug.is_empty()
+        && slug
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
 /// `common.py::suite_digest`: every file of every `tNNN-slug` directory, task directories in
@@ -655,13 +670,23 @@ pub fn cassette_set_digest(dir: &Path) -> Result<String, String> {
 }
 
 fn frozen_suite(root: &Path, sections: &Sections, section: &str) -> Result<Sections, String> {
-    let path = root.join(get_str(sections, section, "frozen_in", "benchmark/suite.kvx"));
+    let path = root.join(get_str(
+        sections,
+        section,
+        "frozen_in",
+        "benchmark/suite.kvx",
+    ));
     let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     load_sections(&path.display().to_string(), &text)
 }
 
 fn cassette_pin(root: &Path, sections: &Sections) -> Result<Value, String> {
-    let dir = root.join(get_str(sections, "cassettes", "path", "benchmark/cassettes"));
+    let dir = root.join(get_str(
+        sections,
+        "cassettes",
+        "path",
+        "benchmark/cassettes/suite",
+    ));
     let digest = cassette_set_digest(&dir)?;
     let suite = frozen_suite(root, sections, "cassettes")?;
     match get(&suite, "suite", "cassette_digest") {
@@ -772,9 +797,7 @@ fn toml_version(text: &str, table: &str) -> Option<Option<String>> {
 }
 
 fn version_pin(root: &Path, sections: &Sections) -> Result<Value, String> {
-    let read = |rel: &str| {
-        fs::read_to_string(root.join(rel)).map_err(|e| format!("{rel}: {e}"))
-    };
+    let read = |rel: &str| fs::read_to_string(root.join(rel)).map_err(|e| format!("{rel}: {e}"));
     let cli = match toml_version(&read("crates/cwr-cli/Cargo.toml")?, "package") {
         Some(Some(v)) => v,
         Some(None) => toml_version(&read("Cargo.toml")?, "workspace.package")
@@ -782,15 +805,16 @@ fn version_pin(root: &Path, sections: &Sections) -> Result<Value, String> {
             .ok_or("Cargo.toml [workspace.package] declares no version")?,
         None => return Err("crates/cwr-cli/Cargo.toml declares no version".into()),
     };
-    let sdk_rel = format!("{}/pyproject.toml", get_str(sections, "pin.sdk", "path", "sdk/python"));
+    let sdk_rel = format!(
+        "{}/pyproject.toml",
+        get_str(sections, "pin.sdk", "path", "sdk/python")
+    );
     let sdk = toml_version(&read(&sdk_rel)?, "project")
         .flatten()
         .ok_or(format!("{sdk_rel} [project] declares no version"))?;
     let release = get(sections, "meta", "release").and_then(Value::as_str);
     match release {
-        None => Err(format!(
-            "meta.release is null (cwr-cli {cli}, SDK {sdk})"
-        )),
+        None => Err(format!("meta.release is null (cwr-cli {cli}, SDK {sdk})")),
         Some(r) if r == cli && r == sdk => Ok(Value::String(r.to_string())),
         Some(r) => Err(format!(
             "meta.release {r}, cwr-cli {cli}, SDK {sdk}: all three must be equal"
@@ -798,16 +822,104 @@ fn version_pin(root: &Path, sections: &Sections) -> Result<Value, String> {
     }
 }
 
+/// Problems of a closure report (the JSON `tests/cwr/closure.py --json` prints): it must say
+/// `ACCEPTED`, list no blocking item and record owner acceptance.
+fn closure_problems(rel: &str, text: &str) -> Vec<String> {
+    let report: Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(e) => {
+            return vec![format!(
+                "evidence.closure {rel} is not a closure report: {e}"
+            )]
+        }
+    };
+    let mut problems = Vec::new();
+    if report["closure"] != "cwr" {
+        problems.push(format!(
+            "evidence.closure {rel} is not a CWR closure report"
+        ));
+    }
+    if report["verdict"] != "ACCEPTED" {
+        problems.push(format!(
+            "evidence.closure {rel} verdict is {}, not ACCEPTED",
+            compact(&report["verdict"])
+        ));
+    }
+    match report["blocking"].as_array() {
+        Some(items) if items.is_empty() => {}
+        Some(items) => problems.push(format!(
+            "evidence.closure {rel} names {} blocking item(s), first: {}",
+            items.len(),
+            items.first().map(compact).unwrap_or_default()
+        )),
+        None => problems.push(format!("evidence.closure {rel} has no blocking list")),
+    }
+    if report["owner_acceptance"]["recorded"] != true {
+        problems.push(format!(
+            "evidence.closure {rel} does not record owner acceptance"
+        ));
+    }
+    problems
+}
+
+/// Problems of an owner-acceptance record: a KVX file with `[progress.owner_acceptance]` (as
+/// `tests/cwr/closure.py --accept` writes it) or a JSON object, carrying `owner_acceptance =
+/// true` and a non-empty `accepted_by`.
+fn acceptance_problems(rel: &str, text: &str) -> Vec<String> {
+    let record: Option<Value> = if rel.ends_with(".kvx") {
+        match load_sections(rel, text) {
+            Ok(s) => s
+                .get("progress.owner_acceptance")
+                .map(|m| Value::Object(m.clone().into_iter().collect())),
+            Err(e) => return vec![format!("evidence.owner_acceptance {e}")],
+        }
+    } else {
+        match serde_json::from_str::<Value>(text) {
+            Ok(v) => Some(v),
+            Err(e) => return vec![format!("evidence.owner_acceptance {rel}: {e}")],
+        }
+    };
+    let Some(record) = record else {
+        return vec![format!(
+            "evidence.owner_acceptance {rel} holds no [progress.owner_acceptance]"
+        )];
+    };
+    let mut problems = Vec::new();
+    if record["owner_acceptance"] != true {
+        problems.push(format!(
+            "evidence.owner_acceptance {rel}: owner_acceptance is not true"
+        ));
+    }
+    if record["accepted_by"]
+        .as_str()
+        .is_none_or(|o| o.trim().is_empty())
+    {
+        problems.push(format!(
+            "evidence.owner_acceptance {rel}: accepted_by names no owner"
+        ));
+    }
+    problems
+}
+
 fn claim_pin(root: &Path, sections: &Sections) -> Result<Value, String> {
     let mut problems = Vec::new();
     for key in ["closure", "owner_acceptance"] {
-        match get(sections, "evidence", key).and_then(Value::as_str) {
-            None => problems.push(format!("evidence.{key} is null")),
-            Some(rel) if !root.join(rel).is_file() => {
-                problems.push(format!("evidence.{key} {rel} does not exist"))
+        let Some(rel) = get(sections, "evidence", key).and_then(Value::as_str) else {
+            problems.push(format!("evidence.{key} is null"));
+            continue;
+        };
+        let text = match fs::read_to_string(root.join(rel)) {
+            Ok(t) => t,
+            Err(e) => {
+                problems.push(format!("evidence.{key} {rel}: {e}"));
+                continue;
             }
-            Some(_) => {}
-        }
+        };
+        problems.extend(if key == "closure" {
+            closure_problems(rel, &text)
+        } else {
+            acceptance_problems(rel, &text)
+        });
     }
     if problems.is_empty() {
         Ok(get(sections, "evidence", "closure")
@@ -843,10 +955,15 @@ struct BuildPlan {
     upgrades_source: PathBuf,
     pairs: Vec<String>,
     drifts: Result<Vec<DriftJob>, String>,
-    /// `[registration] control_build` of every campaign file that exists, by path.
-    registered_controls: Vec<(String, String)>,
-    /// The one-primitive Build hash registered by the H2 campaign, when registered.
-    registered_one_primitive: Option<String>,
+    /// `[registration] control_build` of every listed campaign file, by path; an error when a
+    /// listed file is missing or unreadable.
+    registered_controls: Result<Vec<(String, String)>, String>,
+    /// The one-primitive Build hash registered by the H2 campaign, when registered; an error when
+    /// the named registration file is missing or unreadable.
+    registered_one_primitive: Result<Option<String>, String>,
+    /// `[pair.<id>]` sections of the H4 campaign file (`build_a`, `build_b` per notice arm); an
+    /// error when the named registration file is missing or unreadable.
+    registered_pairs: Result<Sections, String>,
 }
 
 /// Concurrent `cwr build` processes; each runs the contract tests in its own Python processes.
@@ -945,6 +1062,21 @@ fn load_kvx_file(path: &Path) -> Result<Sections, String> {
     load_sections(&path.display().to_string(), &text)
 }
 
+/// The registration file `[section] registered_in` names; `Ok(None)` when the release file names
+/// none, an error naming the file when it is missing or unreadable.
+fn registration(
+    root: &Path,
+    sections: &Sections,
+    section: &str,
+) -> Result<Option<Sections>, String> {
+    match get(sections, section, "registered_in").and_then(Value::as_str) {
+        None | Some("") => Ok(None),
+        Some(rel) => load_kvx_file(&root.join(rel))
+            .map(Some)
+            .map_err(|e| format!("{section}.registered_in {rel} cannot be read: {e}")),
+    }
+}
+
 fn drift_jobs(root: &Path, sections: &Sections) -> Result<Vec<DriftJob>, String> {
     let rel = get(sections, "build.x_drift", "schedules")
         .and_then(Value::as_str)
@@ -952,7 +1084,12 @@ fn drift_jobs(root: &Path, sections: &Sections) -> Result<Vec<DriftJob>, String>
     let campaign = load_kvx_file(&root.join(rel))?;
     let arms: Vec<String> = get(sections, "build.x_drift", "arms")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default();
     let mut jobs = Vec::new();
     for (name, body) in &campaign {
@@ -997,28 +1134,40 @@ impl BuildPlan {
         ));
         let pairs = get(sections, "build.upgrade_pairs", "pairs")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default();
-        let mut registered_controls = Vec::new();
         let campaigns = get(sections, "build.refworld_control", "campaigns")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        for rel in campaigns.iter().filter_map(Value::as_str) {
-            if let Ok(c) = load_kvx_file(&root.join(rel)) {
-                if let Some(h) = get(&c, "registration", "control_build").and_then(Value::as_str) {
-                    registered_controls.push((rel.to_string(), h.to_string()));
-                }
-            }
-        }
-        let registered_one_primitive = get_str(sections, "build.x_one_primitive", "registered_in", "");
-        let registered_one_primitive = load_kvx_file(&root.join(registered_one_primitive))
-            .ok()
-            .and_then(|c| {
-                get(&c, "registration", "builds")
-                    .and_then(|b| b.get("one-primitive"))
+        let registered_controls = campaigns
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|rel| {
+                let c = load_kvx_file(&root.join(rel)).map_err(|e| {
+                    format!(
+                        "campaign file {rel} listed in build.refworld_control cannot be read: {e}"
+                    )
+                })?;
+                Ok(get(&c, "registration", "control_build")
                     .and_then(Value::as_str)
-                    .map(String::from)
+                    .map(|h| (rel.to_string(), h.to_string())))
+            })
+            .filter_map(Result::transpose)
+            .collect::<Result<Vec<_>, String>>();
+        let registered_one_primitive =
+            registration(root, sections, "build.x_one_primitive").map(|c| {
+                c.and_then(|c| {
+                    get(&c, "registration", "builds")
+                        .and_then(|b| b.get("one-primitive"))
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                })
             });
         BuildPlan {
             control_source,
@@ -1027,6 +1176,8 @@ impl BuildPlan {
             drifts: drift_jobs(root, sections),
             registered_controls,
             registered_one_primitive,
+            registered_pairs: registration(root, sections, "build.upgrade_pairs")
+                .map(Option::unwrap_or_default),
         }
     }
 
@@ -1092,14 +1243,15 @@ impl BuildPlan {
         let one = hash(1)
             .and_then(|h| distinct(h, &control, "--x-one-primitive"))
             .and_then(|h| match &self.registered_one_primitive {
-                Some(r) if *r != h => Err(format!(
+                Err(e) => Err(e.clone()),
+                Ok(Some(r)) if *r != h => Err(format!(
                     "--x-one-primitive Build {h} differs from the {r} registered for the H2 campaign"
                 )),
-                _ => Ok(h),
+                Ok(_) => Ok(h),
             });
         let control = control.and_then(|h| {
-            let stale: Vec<String> = self
-                .registered_controls
+            let registered = self.registered_controls.as_ref().map_err(String::clone)?;
+            let stale: Vec<String> = registered
                 .iter()
                 .filter(|(_, r)| *r != h)
                 .map(|(f, r)| format!("{f} registered {r}"))
@@ -1107,10 +1259,7 @@ impl BuildPlan {
             if stale.is_empty() {
                 Ok(h)
             } else {
-                Err(format!(
-                    "the control Build is {h} but {}",
-                    stale.join(", ")
-                ))
+                Err(format!("the control Build is {h} but {}", stale.join(", ")))
             }
         });
         let pair_base = 2;
@@ -1137,7 +1286,12 @@ impl BuildPlan {
                 if errors.is_empty() {
                     Ok(Value::Object(map))
                 } else {
-                    Err(format!("{} of {}: {}", errors.len(), drifts.len(), errors.join("; ")))
+                    Err(format!(
+                        "{} of {}: {}",
+                        errors.len(),
+                        drifts.len(),
+                        errors.join("; ")
+                    ))
                 }
             }
         };
@@ -1164,8 +1318,8 @@ impl BuildPlan {
                 }
                 Some(Done::Pair(Err(e))) => {
                     pair_errors.push(format!("{pair}: {e}"));
-                    vo_errors.push(format!("{pair}: pair did not build"));
-                    sc_errors.push(format!("{pair}: pair did not build"));
+                    vo_errors.push(format!("{pair}: the pair failed to build or verify"));
+                    sc_errors.push(format!("{pair}: the pair failed to build or verify"));
                 }
                 _ => pair_errors.push(format!("{pair}: the build did not run")),
             }
@@ -1195,17 +1349,38 @@ impl BuildPlan {
         let s = Scratch::new()?;
         let a_src = self.upgrades_source.join(pair).join("A");
         let b_src = self.upgrades_source.join(pair).join("B");
+        let registered = self
+            .registered_pairs
+            .as_ref()
+            .map_err(String::clone)?
+            .get(&format!("pair.{pair}"));
+        let expect = |side: &str, arm: Option<&str>, hash: String| -> Result<String, String> {
+            let want = registered
+                .and_then(|r| r.get(side))
+                .and_then(|v| match arm {
+                    Some(arm) => v.get(arm).and_then(Value::as_str),
+                    None => v.as_str(),
+                });
+            match want {
+                Some(w) if w != hash => Err(format!(
+                    "{side}{} Build {hash} differs from the {w} registered for the H4 campaign",
+                    arm.map(|a| format!(" {a}")).unwrap_or_default()
+                )),
+                _ => Ok(hash),
+            }
+        };
         let a = build_hash(builder, &s.0, &a_src, &[])?;
         let b = build_hash(builder, &s.0, &b_src, &["--previous", &a])?;
-        let flagged = |flag: &str| {
+        let flagged = |flag: &str, arm: &str| {
             build_hash(builder, &s.0, &b_src, &["--previous", &a, flag])
                 .and_then(|h| distinct(h, &Ok(b.clone()), flag))
+                .and_then(|h| expect("build_b", Some(arm), h))
         };
-        let version_only = flagged("--x-version-only");
-        let silent = flagged("--x-silent-change");
+        let version_only = flagged("--x-version-only", "version-only");
+        let silent = flagged("--x-silent-change", "silent");
         Ok(PairHashes {
-            a,
-            b,
+            a: expect("build_a", None, a)?,
+            b: expect("build_b", Some("changelog"), b)?,
             version_only,
             silent,
         })
@@ -1242,17 +1417,57 @@ pub fn kvx_literal(v: &Value) -> String {
             items.iter().map(kvx_literal).collect::<Vec<_>>().join(", ")
         ),
         Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            let body: Vec<String> = keys
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            let body: Vec<String> = entries
                 .into_iter()
-                .map(|k| format!("{}: {}", kvx::quote(k), kvx_literal(&map[k])))
+                .map(|(k, v)| format!("{}: {}", kvx::quote(k), kvx_literal(v)))
                 .collect();
             format!("{{{}}}", body.join(", "))
         }
         Value::String(s) => kvx::quote(s),
         other => other.to_string(),
     }
+}
+
+/// The lines `pin --write` rewrites: every computed pin except the version (`CWR-R019`) and the
+/// claim (`CWR-R015`). A pin whose computation failed is left out, so its recorded line stays.
+fn write_updates(results: &[PinResult]) -> Vec<(&'static str, &'static str, Value)> {
+    results
+        .iter()
+        .filter(|r| r.spec.code != "CWR-R019" && r.spec.code != "CWR-R015")
+        .filter_map(|r| {
+            r.computed
+                .as_ref()
+                .ok()
+                .map(|v| (r.spec.section, r.spec.key, v.clone()))
+        })
+        .collect()
+}
+
+/// Replaces `path` with `bytes` atomically: the bytes go to a sibling temporary file, which is
+/// fsynced and renamed over `path`, then the directory is fsynced. A crash leaves either the old
+/// or the new file, never a truncated one.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let written = fs::File::create(&tmp).and_then(|mut f| {
+        f.write_all(bytes)?;
+        f.sync_all()
+    });
+    if let Err(e) = written.and_then(|()| fs::rename(&tmp, path)) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    fs::File::open(&dir).and_then(|d| d.sync_all())
 }
 
 /// Replaces the value of each `(section, key)` line in a KVX text, keeping every other byte.
@@ -1273,7 +1488,9 @@ pub fn rewrite(text: &str, updates: &[(&str, &str, Value)]) -> Result<String, St
             for (i, (s, k, v)) in updates.iter().enumerate() {
                 if *s == section && *k == key {
                     out.push_str(&format!("{key} = {}\n", kvx_literal(v)));
-                    done[i] = true;
+                    if let Some(d) = done.get_mut(i) {
+                        *d = true;
+                    }
                     replaced = true;
                     break;
                 }
@@ -1304,7 +1521,8 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("cwr-release-test-{}-{name}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("cwr-release-test-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
@@ -1388,6 +1606,150 @@ mod tests {
             Some(Some("0.1.0".into()))
         );
         assert_eq!(toml_version(ws, "project"), None);
+    }
+
+    #[test]
+    fn tree_digest_equals_common_py_with_build_dirs_and_symlinks() {
+        let d = tmp("tree-py");
+        for sub in [
+            "build",
+            "dist",
+            "pkg.egg-info",
+            ".pytest_cache",
+            "src",
+            "__pycache__",
+        ] {
+            fs::create_dir_all(d.join(sub)).unwrap();
+            fs::write(d.join(sub).join("f.txt"), sub).unwrap();
+        }
+        std::os::unix::fs::symlink(d.join("src/f.txt"), d.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(d.join("src"), d.join("dirlink")).unwrap();
+        std::os::unix::fs::symlink(d.join("missing"), d.join("broken")).unwrap();
+        let common = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benchmark/predicates");
+        let py = Command::new("python3")
+            .arg("-I")
+            .arg("-c")
+            .arg("import sys; sys.path.insert(0, sys.argv[1]); import common; print(common.tree_digest(sys.argv[2]))")
+            .arg(&common)
+            .arg(&d)
+            .output();
+        let rust = tree_digest(&d).unwrap();
+        if let Ok(out) = py {
+            if out.status.success() {
+                assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), rust);
+            }
+        }
+        let mut h = Sha256::new();
+        for sub in [".pytest_cache", "build", "dist"] {
+            h.update(format!("{sub}/f.txt\0{}\0{sub}", sub.len()).as_bytes());
+        }
+        h.update(b"link.txt\x003\x00src");
+        h.update(b"pkg.egg-info/f.txt\x0012\x00pkg.egg-info");
+        h.update(b"src/f.txt\x003\x00src");
+        assert_eq!(rust, format!("sha256:{}", hex(&h.finalize())));
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn pin_write_keeps_the_line_of_a_failed_pin() {
+        let text = "[pin.compiler]\nrevision = \"sha256:old\"\n\n[pin.kernel]\nrevision = \"sha256:keep\"\n";
+        let results = vec![
+            PinResult {
+                spec: PINS[0],
+                computed: Ok(json!("sha256:new")),
+                recorded: json!("sha256:old"),
+            },
+            PinResult {
+                spec: PINS[1],
+                computed: Err("the build did not run".into()),
+                recorded: json!("sha256:keep"),
+            },
+        ];
+        let updates = write_updates(&results);
+        assert_eq!(updates.len(), 1);
+        let out = rewrite(text, &updates).unwrap();
+        assert!(out.contains("revision = \"sha256:new\""), "{out}");
+        assert!(out.contains("revision = \"sha256:keep\""), "{out}");
+        assert!(!out.contains("null"), "{out}");
+        let d = tmp("atomic");
+        let f = d.join("release.kvx");
+        fs::write(&f, text).unwrap();
+        write_atomic(&f, out.as_bytes()).unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), out);
+        assert_eq!(
+            fs::read_dir(&d).unwrap().count(),
+            1,
+            "no temporary file left"
+        );
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_registration_source_is_an_error() {
+        let d = tmp("registration");
+        let text = "[build.refworld_control]\ncampaigns = [\"missing/h1.kvx\"]\n\n[build.x_one_primitive]\nregistered_in = \"missing/h2.kvx\"\n\n[build.upgrade_pairs]\nregistered_in = \"missing/h4.kvx\"\n";
+        let sections = load_sections("release.kvx", text).unwrap();
+        let plan = BuildPlan::from_sections(&d, &sections);
+        assert!(plan
+            .registered_controls
+            .unwrap_err()
+            .contains("missing/h1.kvx"));
+        assert!(plan
+            .registered_one_primitive
+            .unwrap_err()
+            .contains("missing/h2.kvx"));
+        assert!(plan
+            .registered_pairs
+            .unwrap_err()
+            .contains("missing/h4.kvx"));
+        let none = load_sections("release.kvx", "[meta]\nrelease = null\n").unwrap();
+        let plan = BuildPlan::from_sections(&d, &none);
+        assert_eq!(plan.registered_controls, Ok(Vec::new()));
+        assert_eq!(plan.registered_one_primitive, Ok(None));
+        assert!(plan.registered_pairs.unwrap().is_empty());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_claim_needs_accepted_closure_and_owner_acceptance() {
+        let d = tmp("claim");
+        let sections = load_sections(
+            "release.kvx",
+            "[evidence]\nclosure = \"closure.json\"\nowner_acceptance = \"qualification.kvx\"\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("closure.json"),
+            r#"{"closure": "cwr", "verdict": "REFUSED", "blocking": ["CWR-001 is UNRUN"], "owner_acceptance": {"recorded": false}}"#,
+        )
+        .unwrap();
+        fs::write(
+            d.join("qualification.kvx"),
+            "[progress.owner_acceptance]\nowner_acceptance = false\naccepted_by = \"\"\n",
+        )
+        .unwrap();
+        let e = claim_pin(&d, &sections).unwrap_err();
+        for part in [
+            "REFUSED",
+            "1 blocking item",
+            "owner acceptance",
+            "not true",
+            "no owner",
+        ] {
+            assert!(e.contains(part), "{part}: {e}");
+        }
+        fs::write(
+            d.join("closure.json"),
+            r#"{"closure": "cwr", "verdict": "ACCEPTED", "blocking": [], "owner_acceptance": {"recorded": true}}"#,
+        )
+        .unwrap();
+        fs::write(
+            d.join("qualification.kvx"),
+            "[progress.owner_acceptance]\nowner_acceptance = true\naccepted_by = \"Owner\"\n",
+        )
+        .unwrap();
+        assert_eq!(claim_pin(&d, &sections), Ok(json!("closure.json")));
+        fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

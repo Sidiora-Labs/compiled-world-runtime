@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -588,6 +589,24 @@ return r
         fresh,
         f"each turn is a fresh process: scratch marker visible next turn={env2 and env2['returned']}, module attribute survives={env4 and env4['returned']}",
     )
+    # A turn run with the language guard off is visible in its ledger records, a normal turn is not.
+    diag_turn, normal_turn = (
+        (env2 or {}).get("world", {}).get("turn"),
+        (env3 or {}).get("world", {}).get("turn"),
+    )
+    by_turn: dict = {}
+    for r in world.ledger(iid):
+        by_turn.setdefault(r["turn"], []).append(r)
+    stamped = by_turn.get(diag_turn, [])
+    R.check(
+        "6.1",
+        bool(stamped)
+        and all(r.get("language_guard") is False for r in stamped)
+        and all("language_guard" not in r for r in by_turn.get(normal_turn, []))
+        and "language_guard=off" in _stderr_of_guard_off(world, iid),
+        f"the {len(stamped)} records of diagnostic turn {diag_turn} carry language_guard=false and "
+        f"normal turn {normal_turn} carries no such field; the sandbox line names the guard as off",
+    )
 
 
 def check_limits(world: World, tight: Path, budget: Path) -> None:
@@ -736,6 +755,120 @@ def check_limits(world: World, tight: Path, budget: Path) -> None:
         "6.5",
         ok,
         f"adapter_calls={TIGHT['adapter_calls']}: third external call LIMIT adapter_calls, not executed, no tick; returned {env and env['returned']}",
+    )
+
+
+def check_hostile_runner(world: World, ctl: Path) -> None:
+    """6.1 and 6.4: state a script can reach never disarms a refusal, forges a limit or breaks the codec."""
+    iid = world.create(ctl)
+    walk = (
+        "import cwr\n"
+        "cells = []\n"
+        "for f in (open, __import__, *[c.cell_contents for c in (__import__.__closure__ or ())\n"
+        "          if callable(c.cell_contents)]):\n"
+        "    for c in getattr(f, '__closure__', None) or ():\n"
+        "        v = c.cell_contents\n"
+        "        cells.append(type(v).__name__)\n"
+        "        if isinstance(v, list):\n"
+        "            v[:] = [True] * len(v)\n"
+        "sys = cwr._rpc.json.decoder.re.enum.sys\n"
+        "raw = type(sys.stdin.buffer.raw)\n"
+        "try:\n"
+        "    data = raw('/cwr/sdk/cwr/_rpc.py').read(64)\n"
+        "except Exception as e:\n"
+        "    data = type(e).__name__\n"
+        "try:\n"
+        "    __import__('os')\n"
+        "    imported = 'os'\n"
+        "except ImportError as e:\n"
+        "    imported = type(e).__name__\n"
+        "return {'cells': sorted(set(cells)), 'read': str(data), 'import': imported}\n"
+    )
+    rc, env, _ = world.turn(iid, walk)
+    ret = (env or {}).get("returned") or {}
+    refused = [t["primitive"] for t in (env or {}).get("trace", []) if t["code"] == "INVALID"]
+    R.check(
+        "6.1",
+        rc == 0
+        and env["status"] == "ok"
+        and isinstance(ret.get("cells"), list)
+        and set(ret["cells"])
+        <= {"str", "builtin_function_or_method", "frozenset", "mappingproxy", "function"}
+        and ret.get("read", "").startswith("Refused")
+        and ret.get("import", "").startswith("Refused")
+        and "sandbox.filesystem" in refused
+        and "sandbox.import" in refused
+        and env["resources"]["primitive_calls"] >= 2,
+        f"closure walks of open.__closure__ and __import__.__closure__ reach only {ret.get('cells')}; "
+        f"after flipping every reachable cell the file read is {ret.get('read')!r} and import os is "
+        f"{ret.get('import')!r}, both recorded ({refused})",
+    )
+
+    forged = {
+        "raise": ("raise MemoryError('not really')\n", "turn.script"),
+        "nested": (
+            "def f():\n    raise MemoryError\ntry:\n    f()\nexcept MemoryError:\n    pass\nf()\n",
+            "turn.script",
+        ),
+        "throw": (
+            "def g():\n    yield 1\nit = g()\nnext(it)\nit.throw(MemoryError())\n",
+            "turn.script",
+        ),
+        "raw frame": (
+            "import cwr\n"
+            'p = b\'{"limit":"memory_mb","op":"limit","v":1}\'\n'
+            "cwr._rpc.send_frame(cwr._rpc._sock, p)\n"
+            "cwr._rpc._sock.recv(1)\n",
+            "sandbox.rpc",
+        ),
+    }
+    for name, (script, primitive) in forged.items():
+        rc, env, _ = world.turn(iid, script)
+        R.check(
+            "6.1",
+            rc == 0 and err(env)[:2] == ("INVALID", primitive) and err(env)[3] is None,
+            f"a MemoryError the script forges ({name}) is not LIMIT memory_mb: {summary(env)}",
+        )
+
+    unencodable = {
+        "cyclic list": "l = []\nl.append(l)\nreturn l\n",
+        "deep nesting": "v = 1\nfor _ in range(500):\n    v = [v]\nreturn v\n",
+        "non-finite float": "return float('nan')\n",
+        "set": "return {1, 2}\n",
+    }
+    for name, script in unencodable.items():
+        rc, env, _ = world.turn(iid, script)
+        spurious = [t["primitive"] for t in (env or {}).get("trace", [])]
+        R.check(
+            "6.4",
+            rc == 0
+            and env["status"] == "error"
+            and err(env)[:2] == ("INVALID", "turn.return")
+            and not spurious,
+            f"a returned {name} is INVALID turn.return with no spurious closure refusal: {summary(env)} trace={spurious}",
+        )
+    overriding = (
+        "class D(dict):\n"
+        "    def items(self):\n"
+        "        raise RuntimeError('items')\n"
+        "class I(int):\n"
+        "    def __int__(self):\n"
+        "        raise RuntimeError('int')\n"
+        "    def __index__(self):\n"
+        "        raise RuntimeError('index')\n"
+        "class S(str):\n"
+        "    def __str__(self):\n"
+        "        return 'evil'\n"
+        "return [D(a=1), I(5), S('s'), (1, 2)]\n"
+    )
+    rc, env, _ = world.turn(iid, overriding)
+    R.check(
+        "6.4",
+        rc == 0
+        and env["status"] == "ok"
+        and env["returned"] == [{"a": 1}, 5, "s", [1, 2]]
+        and not env["trace"],
+        f"subclass methods a script overrides never run while its return value is encoded: {summary(env)} returned={(env or {}).get('returned')}",
     )
 
 
@@ -1134,10 +1267,18 @@ return out
     R.check(
         "6.4",
         env
-        and env["status"] == "error"
+        and env["status"] == "partial"
         and err(env)[:2] == ("INVALID", "turn.return")
+        and [t["primitive"] for t in env["trace"]] == ["fs.write"]
         and world.state(iid2)["fs"]["files"].get("/r") is not None,
-        f"a return value outside the codec: {summary(env)} with the mutation applied (kernel.md section 5)",
+        f"a return value outside the codec after a mutation is partial: {summary(env)} with the "
+        "mutation applied and in the trace (kernel.md section 5, decisions.md C01)",
+    )
+    _rc, env, _ = world.turn(iid2, "import fs\nfs.exists(path='/r')\nreturn {1, 2}\n")
+    R.check(
+        "6.4",
+        env and env["status"] == "error" and err(env)[:2] == ("INVALID", "turn.return"),
+        f"a return value outside the codec with nothing changed is error: {summary(env)}",
     )
 
     # 6.4 envelope shape over every envelope of the run, against the Build's codec and the ledger.
@@ -1352,6 +1493,76 @@ def check_determinism(world: World, ctl: Path) -> None:
     )
 
 
+def _stderr_of_guard_off(world: World, iid: str) -> str:
+    """The sandbox line `cwr instance turn` prints for a turn with the language guard off."""
+    _rc, _env, stderr = world.turn(iid, "return 1\n", "--diagnostic-no-language-guard")
+    return next((ln for ln in stderr.splitlines() if "sandbox=" in ln), "")
+
+
+def check_conflict_and_stdin(world: World, ctl: Path) -> None:
+    """6.4: a turn against a busy Instance is refused with CONFLICT before anything executes;
+    6.1: standard input that opens a code fence is a model message under the turn protocol."""
+    iid = world.create(ctl)
+    world.n += 1
+    spin_file = world.scratch / f"turn-{world.n}.py"
+    spin_file.write_text("import fs\nfs.write(path='/spin', content=b'1')\nwhile True:\n    pass\n")
+    cmd = [world.cwr, "instance", "turn", iid, "--home", world.home, "--script", spin_file]
+    spin = subprocess.Popen(
+        [str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    meta = world.home / "instances" / iid / "instance.json"
+    busy = False
+    for _ in range(400):
+        try:
+            busy = json.loads(meta.read_text()).get("status") == "in_turn"
+        except (OSError, ValueError):
+            busy = False
+        if busy:
+            break
+        time.sleep(0.05)
+    second = run([world.cwr, "instance", "turn", iid, "--home", world.home], input="return 1\n")
+    spin.communicate(timeout=TIMEOUT)
+    try:
+        refusal = json.loads(second.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        refusal = {}
+    err_ = refusal.get("error") or {}
+    turns = [r for r in world.ledger(iid) if r["kind"] == "turn"]
+    R.check(
+        "6.4",
+        busy
+        and second.returncode == 8
+        and refusal.get("status") == "error"
+        and err_.get("code") == "CONFLICT"
+        and err_.get("primitive") == "kernel.instance"
+        and refusal.get("trace") == []
+        and len(turns) == 1,
+        f"a second `cwr instance turn` while the first is in its turn exits {second.returncode} with "
+        f"{err_.get('code')}/{err_.get('primitive')} on stdout and records nothing ({len(turns)} turn record)",
+    )
+    message = "I will read the clock.\n\n```python\nimport world\nreturn world.now()\n```\n"
+    ok = run([world.cwr, "instance", "turn", iid, "--home", world.home], input=message)
+    two = "```python\na = 1\n```\n```python\nb = 2\n```\n"
+    refused = run([world.cwr, "instance", "turn", iid, "--home", world.home], input=two)
+    try:
+        env_ok = json.loads(ok.stdout.strip().splitlines()[-1])
+        env_refused = json.loads(refused.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        env_ok, env_refused = {}, {}
+    R.check(
+        "6.1",
+        ok.returncode == 0
+        and env_ok.get("status") == "ok"
+        and isinstance(env_ok.get("returned"), int)
+        and refused.returncode == 4
+        and (env_refused.get("error") or {}).get("primitive") == "turn.protocol"
+        and env_refused.get("world", {}).get("time") == env_ok.get("world", {}).get("time"),
+        f"a fenced message on stdin runs its one python block (exit {ok.returncode}, status "
+        f"{env_ok.get('status')}); two blocks on stdin are a turn.protocol refusal with exit "
+        f"{refused.returncode} and no tick",
+    )
+
+
 def check_audit(world: World, excluded: set[str]) -> None:
     """1.3: the kernel.md section 8 determinism audit over every ledger this driver produced."""
     groups: dict[tuple, set] = {}
@@ -1490,6 +1701,8 @@ def main() -> int:
             check_closure(world, ctl)
         with OBS.observe("CWR-007.a6"):
             check_limits(world, tight, budget)
+        with OBS.observe("CWR-007.a1", match="closure walks"):
+            check_hostile_runner(world, ctl)
         with OBS.observe("CWR-008.a2"):
             check_preconditions(world, ctl)
         check_visibility(world, ctl)
@@ -1507,6 +1720,7 @@ def main() -> int:
             check_determinism(world, ctl)
         with OBS.observe("CWR-007.a7"):
             check_rules_frozen(world, ctl)
+        check_conflict_and_stdin(world, ctl)
         check_audit(world, {"sha256:" + defect.name})
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

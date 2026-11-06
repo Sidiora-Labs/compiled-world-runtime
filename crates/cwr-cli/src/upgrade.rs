@@ -30,6 +30,8 @@ use cwr_kernel::upgrade::{self, UpgradeError, UpgradeOptions};
 use cwr_kernel::{Instance, KernelError};
 use serde_json::json;
 
+use crate::cli::{self, Spec};
+
 const USAGE: &str = "usage:
   cwr instance upgrade <id> (<build-hash|dir> | --build <dir>) [--allow-experimental]
   cwr instance notice <id>
@@ -55,38 +57,42 @@ struct Args {
     positional: Vec<String>,
 }
 
+const UPGRADE_SPEC: Spec = Spec {
+    values: &["--home", "--build"],
+    repeatable: &["--builds"],
+    flags: &["--allow-experimental"],
+};
+const READ_SPEC: Spec = Spec {
+    values: &["--home"],
+    repeatable: &["--builds"],
+    flags: &[],
+};
+
+/// Parses the arguments of `cmd` (`upgrade`, `notice` or `outbox`); the error is the usage message.
 fn parse(cmd: &str, args: &[String]) -> Result<Args, String> {
-    let mut a = Args {
-        home: std::env::var_os("CWR_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(".cwr")),
-        builds: Vec::new(),
-        build: None,
-        allow_experimental: false,
-        positional: Vec::new(),
-    };
-    let mut it = args.iter();
-    while let Some(x) = it.next() {
-        match x.as_str() {
-            "--home" => a.home = PathBuf::from(it.next().ok_or("--home needs a directory")?),
-            "--builds" => a.builds.push(PathBuf::from(
-                it.next().ok_or("--builds needs a directory")?,
-            )),
-            "--build" if cmd == "upgrade" => {
-                if a.build.is_some() {
-                    return Err("--build given twice".into());
-                }
-                a.build = Some(it.next().ok_or("--build needs a directory")?.clone());
-            }
-            "--allow-experimental" if cmd == "upgrade" => a.allow_experimental = true,
-            o if o.starts_with("--") => return Err(format!("unknown option {o}")),
-            _ => a.positional.push(x.clone()),
-        }
+    let p = cli::parse(
+        args,
+        if cmd == "upgrade" {
+            &UPGRADE_SPEC
+        } else {
+            &READ_SPEC
+        },
+    )?;
+    let mut builds: Vec<PathBuf> = p
+        .values("--builds")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if builds.is_empty() {
+        builds = vec![PathBuf::from("build"), PathBuf::from("xbuild")];
     }
-    if a.builds.is_empty() {
-        a.builds = vec![PathBuf::from("build"), PathBuf::from("xbuild")];
-    }
-    Ok(a)
+    Ok(Args {
+        home: p.home(),
+        builds,
+        build: p.value("--build").map(str::to_string),
+        allow_experimental: p.flag("--allow-experimental"),
+        positional: p.positional.clone(),
+    })
 }
 
 fn run_upgrade(a: &Args) -> i32 {
@@ -118,15 +124,17 @@ fn run_upgrade(a: &Args) -> i32 {
                 eprintln!("cwr instance upgrade: {earlier}");
                 out["completed_interrupted"] = json!(earlier);
             }
-            println!("{out}");
-            0
+            cli::emit_line(&out.to_string())
         }
         Err(e @ UpgradeError::Interrupted(_)) => {
             eprintln!("cwr instance upgrade: {e}");
-            println!(
-                "{}",
-                json!({"status": if e.exit_code() == 0 { "completed_interrupted" } else { "rolled_back_interrupted" }, "detail": e.to_string()})
+            let written = cli::emit_line(
+                &json!({"status": if e.exit_code() == 0 { "completed_interrupted" } else { "rolled_back_interrupted" }, "detail": e.to_string()})
+                    .to_string(),
             );
+            if written != 0 {
+                return written;
+            }
             e.exit_code()
         }
         Err(e) => {
@@ -146,25 +154,23 @@ pub fn run(cmd: &str, args: &[String]) -> i32 {
         "upgrade" => run_upgrade(&a),
         "notice" | "outbox" if a.positional.len() == 1 => {
             let id = &a.positional[0];
-            if !Instance::dir_of(&a.home, id).is_dir() {
+            let dir = match Instance::checked_dir(&a.home, id) {
+                Ok(d) => d,
+                Err(e) => return fail(cmd, e),
+            };
+            if !dir.is_dir() {
                 return fail(cmd, KernelError::Refused(format!("no instance {id}")));
             }
             if cmd == "notice" {
                 match Instance::open(&a.home, id).and_then(|i| notice::component(&i)) {
-                    Ok(Some(text)) => {
-                        println!("{text}");
-                        0
-                    }
+                    Ok(Some(text)) => cli::emit_line(&text),
                     Ok(None) => 0,
                     Err(e) => fail(cmd, e),
                 }
             } else {
-                let path = Instance::dir_of(&a.home, id).join(OUTBOX_FILE);
+                let path = dir.join(OUTBOX_FILE);
                 match std::fs::read_to_string(&path) {
-                    Ok(text) => {
-                        print!("{text}");
-                        0
-                    }
+                    Ok(text) => cli::emit(&text),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
                     Err(e) => {
                         eprintln!("cwr instance outbox: {}: {e}", path.display());
@@ -174,5 +180,56 @@ pub fn run(cmd: &str, args: &[String]) -> i32 {
             }
         }
         _ => usage_error(cmd, &format!("wrong arguments for {cmd}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn upgrade_options_parse_and_builds_repeat() {
+        let a = parse(
+            "upgrade",
+            &args(&[
+                "i",
+                "--build",
+                "b",
+                "--builds",
+                "r1",
+                "--builds",
+                "r2",
+                "--allow-experimental",
+            ]),
+        )
+        .unwrap();
+        assert_eq!(a.positional, args(&["i"]));
+        assert_eq!(a.build.as_deref(), Some("b"));
+        assert_eq!(a.builds, vec![PathBuf::from("r1"), PathBuf::from("r2")]);
+        assert!(a.allow_experimental);
+        let d = parse("notice", &args(&["i"])).unwrap();
+        assert_eq!(
+            d.builds,
+            vec![PathBuf::from("build"), PathBuf::from("xbuild")]
+        );
+    }
+
+    #[test]
+    fn repeats_and_foreign_options_are_usage_errors() {
+        assert!(parse("upgrade", &args(&["i", "--build", "a", "--build", "b"])).is_err());
+        assert!(parse("upgrade", &args(&["i", "--home", "a", "--home", "b"])).is_err());
+        assert!(parse(
+            "upgrade",
+            &args(&["i", "--allow-experimental", "--allow-experimental"])
+        )
+        .is_err());
+        assert!(parse("notice", &args(&["i", "--build", "b"])).is_err());
+        assert!(parse("outbox", &args(&["i", "--allow-experimental"])).is_err());
+        assert_eq!(run("notice", &args(&["a", "b"])), 1);
+        assert_eq!(run("upgrade", &args(&["only-id"])), 1);
     }
 }

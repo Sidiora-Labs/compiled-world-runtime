@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Build a search catalogue
 
 For every topic in /topics.txt (one per line), search for it with a limit of three results and write

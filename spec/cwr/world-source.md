@@ -3,7 +3,7 @@
 
 # World Source and rule contracts
 
-Status: proposed contract; no compiler exists and every case is UNRUN. Requirements 2 and 3 in [spec.kvx](spec.kvx) apply. The grammar below is what the compiler in [compiler.md](compiler.md) is proposed to accept; nothing in this document has been parsed by an implementation. The illustrative source under [examples/refworld](examples/refworld/world.kvx) passes only the structural checks of the authoring validator.
+Status: proposed contract; every case is UNRUN. Requirements 2 and 3 in [spec.kvx](spec.kvx) apply. The grammar below is what the compiler in [compiler.md](compiler.md) is proposed to accept; nothing in this document has been parsed by an implementation. The illustrative source under [examples/refworld](examples/refworld/world.kvx) passes only the structural checks of the authoring validator.
 
 ## 1. What the World Source is
 

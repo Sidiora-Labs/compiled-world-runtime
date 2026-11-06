@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Merge configuration
 
 Merge /config/base.ini and /config/override.ini, both made of lines key=value, into /config/app.ini:

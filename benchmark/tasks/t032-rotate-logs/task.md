@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Rotate logs
 
 Rotate the logs app and db under /logs. For each of them the .3 file is discarded, .2 becomes .3, .1

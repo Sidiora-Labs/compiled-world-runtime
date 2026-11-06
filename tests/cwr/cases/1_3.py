@@ -7,7 +7,7 @@ Case CWR-005; clauses 1.4, 2.4, 2.5, 4.5, 4.6 and 9.2 of spec/cwr/spec.kvx.
 
 Builds the `cwr` binary with cargo and runs the unit tests of the crates this task touches
 (cwr-compiler, cwr-cli), then drives the real `cwr build`, `cwr manual` and `cwr instance create`
-binaries as subprocesses over copies of examples/refworld (README.md removed, the only file outside
+binaries (and `cwr instance turn`) as subprocesses over copies of examples/refworld (README.md removed, the only file outside
 the World Source grammar):
 
 * two compilations in two differing working directories on this host (different cwd, relative
@@ -31,8 +31,13 @@ the World Source grammar):
   counts frames, so "exactly one RPC per call" is observed, not assumed. The server takes each
   primitive's content_guaranteed label from the World Source KVX files (never from contracts.json or
   the SDK), and a second run answers every primitive with the label true, false and missing in turn:
-  the SDK must accept exactly the World Source label and refuse the other two. The kernel-side
-  producer of per-call envelopes is task 2.2 and does not exist yet; the label is checked at the SDK.
+  the SDK must accept exactly the World Source label and refuse the other two;
+* the label end to end: real sandboxed kernel turns (`cwr instance turn`) call every primitive and,
+  through the local stub servers of benchmark/stubs (never a live service), every adapter with ok and
+  error outcomes; every per-call result in the turn envelopes must carry the Build's label;
+* every generated SDK file carries the template source header exactly once, at the top, with no
+  duplicated boilerplate; a Build made writable again without a byte changed is refused by
+  `cwr manual` (the tampered copies above must be refused by hash verification, not by that check).
 
 Prints one line per clause, `CLAUSE <req.ac> PASS|FAIL <evidence>`, and exits 0 only when every
 clause passes. Honours CARGO_TARGET_DIR; defaults to the workspace target dir.
@@ -1072,7 +1077,12 @@ def check_identity_and_tamper(build: Path) -> None:
         all(p.returncode == 0 for p in procs)
         and hashes == {f"sha256:{hx}"}
         and sorted(x.name for x in out.iterdir()) == [hx],
-        f"two racing builds: exits {[p.returncode for p in procs]}, one hash, one directory, no partial or temporary directory",
+        f"two racing builds: exits {[p.returncode for p in procs]}, one hash, one directory, no partial or temporary directory"
+        + "".join(
+            f"; build {i} failed: {(o[0].strip()[-300:] or o[1].strip()[-300:])}"
+            for i, (p, o) in enumerate(zip(procs, outs, strict=True))
+            if p.returncode != 0
+        ),
     )
 
 
@@ -1490,26 +1500,16 @@ def check_sdk_files(build: Path, contracts: dict) -> None:
     )
 
 
-KERNEL_TURN = r"""
+# Prelude of every label-probe turn: `probe` records [name, status, code] of one SDK call as the script sees it.
+KERNEL_PRELUDE = r"""
 import cwr, {imports}
 out = []
 def probe(name, f):
     try:
         v = f()
-        out.append([name, "ok", None])
-        return v
+        out.append([name, "ok", None, v if name == "publish.post" else None])
     except cwr.errors.WorldError as e:
-        out.append([name, "error", e.code])
-        return None
-{calls}
-r = probe("publish.post", lambda: publish.post(key="k-1_3", title="t", body="b"))
-pid = r["post_id"] if isinstance(r, dict) and "post_id" in r else "p-missing"
-probe("publish.status", lambda: publish.status(post_id=pid))
-probe("publish.delete", lambda: publish.delete(post_id=pid))
-probe("search.query", lambda: search.query(q="tennis", limit=3))
-probe("search.query", lambda: search.query(q="", limit=3))
-probe("publish.status", lambda: publish.status(post_id="p-unknown"))
-return out
+        out.append([name, "error", e.code, None])
 """
 
 
@@ -1548,29 +1548,58 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
         args = ", ".join(f"{k}={lit(t, i)!r}" for i, (k, t) in enumerate(p["params"]))
         lines.append(f"if hasattr({mod}, {py!r}): probe({p['name']!r}, lambda: {mod}.{py}({args}))")
     mods = sorted({p["name"].split(".", 1)[0] for p in contracts["primitives"] + contracts["adapters"]})
-    script = KERNEL_TURN.replace("{imports}", ", ".join(mods)).replace("{calls}", "\n".join(lines))
-    f = SCRATCH / "label-turn.py"
-    f.write_text(script)
+    prelude = KERNEL_PRELUDE.replace("{imports}", ", ".join(mods))
+    # One adapter call per turn: a call to a stub can take seconds on a loaded host, and a turn has a wall budget.
+    # publish.status and publish.delete use the post id the publish.post turn returned.
+    turns = [
+        *("\n".join(lines[i : i + 4]) for i in range(0, len(lines), 4)),
+        'probe("publish.post", lambda: publish.post(key="k-1_3", title="t", body="b"))',
+        'probe("publish.status", lambda: publish.status(post_id={pid!r}))',
+        'probe("publish.delete", lambda: publish.delete(post_id={pid!r}))',
+        'probe("search.query", lambda: search.query(q="tennis", limit=3))',
+        'probe("search.query", lambda: search.query(q="", limit=3))',
+        'probe("publish.status", lambda: publish.status(post_id="p-unknown"))',
+    ]
     stubs = [start_stub("search"), start_stub("publish")]
+    returned: list = []
+    trace: list = []
+    bad = []
+    pid = "p-missing"
     try:
-        t = run(
-            [CWR, "instance", "turn", iid, "--home", home, "--script", f,
-             "--stub", f"search=http://127.0.0.1:{stubs[0][1]}", "--stub", f"publish=http://127.0.0.1:{stubs[1][1]}"]
-        )
+        for n, body in enumerate(turns):
+            f = SCRATCH / f"label-turn-{n}.py"
+            f.write_text(prelude + body.replace("{pid!r}", repr(pid)) + "\nreturn out\n")
+            # A turn the kernel ends for its wall-time budget (a host-load artefact on a shared machine) is run
+            # again, up to three times; its partial trace is not counted.
+            for _attempt in range(3):
+                t = run(
+                    [CWR, "instance", "turn", iid, "--home", home, "--script", f,
+                     "--stub", f"search=http://127.0.0.1:{stubs[0][1]}",
+                     "--stub", f"publish=http://127.0.0.1:{stubs[1][1]}"]
+                )
+                try:
+                    env = json.loads(t.stdout.strip().splitlines()[-1])
+                except (ValueError, IndexError):
+                    env = None
+                    break
+                if (env.get("error") or {}).get("limit") != "wall_ms":
+                    break
+            if env is None:
+                bad.append(f"turn {n} printed no envelope (exit {t.returncode}): {t.stderr[-200:]}")
+                continue
+            got = env.get("returned") or []
+            if t.returncode != 0 or env.get("status") != "ok" or len(got) != len(env.get("trace") or []) or not got:
+                bad.append(f"turn {n}: exit {t.returncode} status {env.get('status')} error {env.get('error')}")
+            for row in got:
+                # PostReceipt names the post id `id` (examples/refworld/manual/types.md).
+                if row[0] == "publish.post" and isinstance(row[3], dict) and isinstance(row[3].get("id"), str):
+                    pid = row[3]["id"]
+            returned += [r[:3] for r in got]
+            trace += env.get("trace") or []
     finally:
         for proc, _ in stubs:
             proc.kill()
             proc.wait()
-    try:
-        env = json.loads(t.stdout.strip().splitlines()[-1])
-    except (ValueError, IndexError):
-        R.check("2.5", False, f"kernel turn printed no envelope (exit {t.returncode}): {t.stderr[-300:]}")
-        return
-    returned = env.get("returned") or []
-    trace = env.get("trace") or []
-    bad = []
-    if env.get("status") != "ok" or len(returned) != len(trace) or not trace:
-        bad.append(f"status {env.get('status')} returned {len(returned)} trace {len(trace)} error {env.get('error')}")
     seen = set()
     for (name, st, code), item in zip(returned, trace, strict=False):
         cg = item.get("content_guaranteed")
@@ -1587,9 +1616,9 @@ def check_kernel_labels(build: Path, contracts: dict) -> None:
         bad.append(f"label/status combinations seen {sorted(seen)}")
     R.check(
         "2.5",
-        t.returncode == 0 and not bad,
-        f"a real sandboxed kernel turn of {len(trace)} SDK calls (every primitive, every adapter ok via the local stub "
-        f"servers, adapter failures): every per-call result in the turn envelope carries content_guaranteed equal to the "
+        trace and not bad,
+        f"real sandboxed kernel turns ({len(turns)}) of {len(trace)} SDK calls (every primitive, every adapter ok via the local stub "
+        f"servers, adapter failures): every per-call result in the turn envelopes carries content_guaranteed equal to the "
         f"Build's label (false for the {len(want_adapters)} adapters, ok and error alike; true otherwise)"
         + (f"; BAD {bad[:5]}" if bad else ""),
     )

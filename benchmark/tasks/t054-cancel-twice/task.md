@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Cancel two job sets around a publication
 
 Do these steps in order. First cancel whichever of the jobs w1, w2 and w3 have not finished. Then,

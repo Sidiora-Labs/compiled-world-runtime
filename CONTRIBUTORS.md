@@ -3,12 +3,13 @@
 
 # Contributors
 
-The Compiled World Runtime is developed by the **Sidiora Development Team** at Sidiora Labs Inc.,
-which holds the copyright in the repository (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).
+The Compiled World Runtime is developed by the Sidiora Development Team at Sidiora Labs Inc.
+Sidiora Labs Inc. holds the copyright in the repository; see [LICENSE](LICENSE) and
+[NOTICE](NOTICE).
 
-Contributions are recorded in the version history under the committing author. To be listed here,
-add yourself in the same change as your first contribution, in the form `Name (affiliation)`, and
-follow [CONTRIBUTING.md](CONTRIBUTING.md).
+The version history records every contribution under its author. To be listed here, add yourself
+in the same change as your first contribution, in the form `Name (affiliation)`, and follow
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Team
 

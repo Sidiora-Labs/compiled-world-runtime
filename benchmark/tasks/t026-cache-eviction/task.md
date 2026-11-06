@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Fill a cache
 
 Store each file in /incoming in kv namespace cache, keyed by its file name without the directory

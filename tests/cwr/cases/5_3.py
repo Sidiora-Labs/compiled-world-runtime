@@ -264,7 +264,9 @@ def suite_cassette_digest() -> str | None:
     return harness.cassette_set_digest(root) if root.is_dir() else None
 
 
-def record_pair_cassettes(pair: str, a: str, b: str, seeds: list[int]) -> str:
+def record_pair_cassettes(
+    pair: str, a: str, b: str, seeds: list[int], rerecord: bool = False
+) -> str:
     """Record the replay cassette set of one pair task through the real kernel gateway.
 
     For every seed the pair's reference turns (first half on Build A, upgrade, post-upgrade turns
@@ -285,8 +287,11 @@ def record_pair_cassettes(pair: str, a: str, b: str, seeds: list[int]) -> str:
     initial_path = home / f"{pair}-initial.json"
     initial_path.parent.mkdir(parents=True, exist_ok=True)
     initial_path.write_text(json.dumps(initial, sort_keys=True, separators=(",", ":")), "utf-8")
-    for seed in seeds:
+
+    def one(seed: int) -> None:
         cassette = REPO / H4_CASSETTES / body["task"] / f"seed-{seed}.jsonl"
+        if cassette.exists() and not rerecord:
+            return
         if cassette.exists():
             cassette.unlink()
         cassette.parent.mkdir(parents=True, exist_ok=True)
@@ -326,8 +331,12 @@ def record_pair_cassettes(pair: str, a: str, b: str, seeds: list[int]) -> str:
                 script = (pair_dir / arg).read_text("utf-8")
                 proc = cwr("instance", "turn", instance, "--home", str(home), *record, stdin=script)
             if proc.returncode != 0:
+                cassette.unlink(missing_ok=True)
                 raise RuntimeError(f"{pair} seed {seed}: {kind} failed: {proc.stderr[-300:]}")
         cwr("instance", "destroy", instance, "--home", str(home))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(seeds)) as pool:
+        list(pool.map(one, seeds))
     return harness.cassette_set_digest(REPO / H4_CASSETTES)
 
 
@@ -424,6 +433,11 @@ def register(args: argparse.Namespace) -> int:
             "cassette_set": "benchmark/cassettes/suite",
             "cassette_digest": suite_cassette_digest(),
         },
+        "deviations": {
+            "items": [
+                "The K sweep runs on the full 60-task suite as benchmark/preregistration.kvx registers (verification.md section 3); experiments.md names only the 20 long tasks, a subset of what runs.",
+            ]
+        },
         "directions": {
             "source": "benchmark/preregistration.kvx [hypothesis.H3]",
             "ids": [d["id"] for d in prereg["hypothesis.H3"]["directions"]],
@@ -463,7 +477,11 @@ def register(args: argparse.Namespace) -> int:
     for pair in PAIRS:
         body = h4_pairs[f"pair.{pair}"]
         h4_digest = record_pair_cassettes(
-            pair, body["build_a"], body["build_b"]["changelog"], prereg["campaign"]["seeds"]
+            pair,
+            body["build_a"],
+            body["build_b"]["changelog"],
+            prereg["campaign"]["seeds"],
+            rerecord=args.rerecord,
         )
     h4 = {
         "meta": {**h3["meta"], "hypothesis": "H4"},
@@ -494,6 +512,12 @@ def register(args: argparse.Namespace) -> int:
             "cassette_digest": h4_digest,
             "cassette_note": "pair tasks are not in the suite cassette set; this set is recorded through the real kernel gateway from each pair's reference turns, one cassette per pair task and seed",
             "layout": "benchmark/results/h4/<arm>/<task>/<seed>/{ledger.jsonl, final_state.kvx, attempt.kvx, states/}",
+        },
+        "deviations": {
+            "items": [
+                "The upgrade-pair tasks are not in the suite cassette set of task 4.1, so H4 replays its own cassette set, recorded through the real kernel gateway from each pair's reference turns and registered in benchmark/preregistration.kvx [hypothesis.H4].cassette_digest; analyse.py checks H4 ledgers against that digest and never pools across hypotheses.",
+                "Whether a proposal names the changed primitive is not computable from the ledger (a proposal record carries a text hash) and is not reported, as benchmark/preregistration.kvx registers.",
+            ]
         },
         "directions": {
             "source": "benchmark/preregistration.kvx [hypothesis.H4]",
@@ -1519,6 +1543,9 @@ def verify(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--register", action="store_true")
+    parser.add_argument(
+        "--rerecord", action="store_true", help="re-record existing H4 pair cassettes"
+    )
     parser.add_argument(
         "--force-reregister-without-results", action="store_true", help=argparse.SUPPRESS
     )

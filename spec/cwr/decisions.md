@@ -50,6 +50,6 @@ Contract, ledger and snapshot schemas are versioned before any Instance is creat
 
 A campaign freezes its arms, seeds, cassette digest, suite digest and metric definitions before execution. A result cannot be turned into a pass by changing a metric or a limit after the run. A revised campaign is a new recorded profile with the original result retained.
 
-## Relationship to the earlier draft
+## Format, envelope and baseline choices
 
-The first draft of this feature was seven narrative documents, `00-overview.md` through `06-reference-world.md`, written on 2026-11-06. This pack replaces them. Three things changed in the rewrite. World Source files use KVX rather than TOML, matching the repository's own configuration format and allowing one strict parser for the whole pack. The failure envelope gained INVARIANT_VIOLATION so that a kernel or Build defect can never be reported as an ordinary outcome. Every hypothesis arm is now stated as an internal ablation Build; the earlier draft's language about comparison baselines is withdrawn entirely.
+Three choices shape the whole pack. World Source files use KVX rather than TOML, matching the repository's own configuration format and allowing one strict parser for the whole pack. The failure envelope includes INVARIANT_VIOLATION so that a kernel or Build defect can never be reported as an ordinary outcome. Every hypothesis arm is an internal ablation Build; no comparison baseline exists.

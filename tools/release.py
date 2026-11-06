@@ -15,7 +15,7 @@ Usage:
     sdk/python/pyproject.toml ([project] version) and benchmark/release.kvx ([meta] release)
     disagree or are malformed; a file that does not exist is skipped;
   * benchmark/release.kvx exists and its [meta] release is null (unpinned), unless --snapshot;
-  * a file selected for the bundle looks like a credential (.env, keys, certificates);
+  * a file selected for the bundle looks like a credential (environment files, keys, certificates);
   * a bundle of the same name already exists with different content.
 
 The bundle is artifacts/cwr-<version>[-snapshot].tar.gz: every non-ignored file of the tree under a

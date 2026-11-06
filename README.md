@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Compiled World Runtime
 
 Status: CWR is in development and has no release. One of the twenty qualification cases that decide
@@ -92,9 +95,11 @@ cwr build examples/refworld
 
 `cwr build` runs eight stages: parse, resolve, lint, contract tests, diff, changelog gate, generate
 and package. It writes the Build under `build/` and prints its hash as `built sha256:<hex> at
-<path>`. Use that hash in the commands below.
+<path>`. Use that hash in the commands below. When `build/` already holds an earlier Build of the
+same world, the changelog gate compares the two, and a changed world must carry a new version and a
+changelog entry.
 
-Read the manual the model will see, then create an Instance. `cwr instance create` prints the new
+Read the manual the model sees, then create an Instance. `cwr instance create` prints the new
 Instance id. Instances live under `.cwr/` in the working directory unless `--home` or `CWR_HOME`
 names another location.
 
@@ -106,8 +111,78 @@ cwr instance create sha256:<hex> --seed 7
 Run one turn. The script arrives on standard input, exactly as a model would send it:
 
 ```sh
-cwr instance turn <id> <<'EOF'
+cwr instance turn <id> <<'SCRIPT'
 import fs
 
 fs.write(path="/notes/hello.md", content=b"hello")
 return fs.exists(path="/notes/hello.md")
+SCRIPT
+```
+
+The kernel prints the result envelope as JSON: the turn status, a trace of every primitive call and
+the resources used. Inspect what was recorded:
+
+```sh
+cwr instance tail <id>
+cwr instance ledger <id>
+```
+
+`cwr instance tail` prints the ledger tail the model sees on its next turn. `cwr instance ledger`
+verifies the ledger's sequence numbers and hash chain. `cwr help` lists every subcommand.
+
+## Documentation
+
+| Reader | Start here |
+|---|---|
+| World author | [docs/cwr/world-source.md](docs/cwr/world-source.md): source layout, contracts, preconditions, the failure envelope, adapters, changelogs, migrations, building |
+| Operator | [docs/cwr/kernel.md](docs/cwr/kernel.md): Instances, turns, sandbox limits, the adapter gateway, the ledger, snapshots, replay, upgrades |
+| Experimenter | [docs/cwr/experiments.md](docs/cwr/experiments.md): hypotheses, arms, pre-registration, metrics, analysis |
+| Reviewer | [spec/cwr/README.md](spec/cwr/README.md): the normative specification and its reading order |
+| Contributor | [CONTRIBUTING.md](CONTRIBUTING.md) and [GOVERNANCE.md](GOVERNANCE.md) |
+| Security researcher | [SECURITY.md](SECURITY.md) |
+
+The specification, [spec/cwr/spec.kvx](spec/cwr/spec.kvx), is normative. Where a guide and the
+specification disagree, the specification wins.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `spec/cwr/` | Normative specification: requirements, contract chapters, decisions, diagrams and the specification validator |
+| `crates/` | Rust workspace: `cwr-contract` (contract model and failure envelope), `cwr-compiler` (World Compiler), `cwr-kernel` (World Kernel), `cwr-cli` (the `cwr` binary) |
+| `sdk/python/` | Runtime and templates for the Python SDK generated into each Build |
+| `examples/` | The `refworld` reference World Source and the upgrade pairs U1 to U6 derived from it |
+| `modules/` | Reusable World Source module packs |
+| `benchmark/` | Task suite, predicates, adapter stub servers, cassettes, experiment harness, campaigns, analysis and release pins |
+| `tests/cwr/` | Qualification runner, independent evidence checker, per-task drivers and the evidence registry |
+| `docs/cwr/` | Guides for world authors, operators and experimenters |
+| `core/` | Shared Python reference code: the KVX reader and the failure envelope |
+| `tools/` | Repository tooling: source headers, code map and release checks |
+| `scripts/` | Operator scripts: host setup, campaigns and release |
+| `vendor/` | Target of `make vendor` for offline, reproducible builds |
+| `artifacts/` | Release bundles written by `make release` |
+
+## Status
+
+No release exists. A claim about CWR's behaviour counts only when a qualification case backs it.
+The specification defines twenty cases, CWR-001 to CWR-020. The runner `tests/cwr/qualify.py`
+executes a case, and its outcome enters the evidence registry
+[tests/cwr/registry.kvx](tests/cwr/registry.kvx) only after the independent checker
+`tests/cwr/check_evidence.py` accepts the attempt. One case has passed: CWR-019, which qualifies the
+runner and checker themselves. The others have not run, and no hypothesis has a result.
+
+Read the recorded status of any case with:
+
+```sh
+python3 tests/cwr/check_evidence.py --status CWR-019
+```
+
+How a release is cut and what it must contain is in [RELEASE.md](RELEASE.md). Changes are recorded
+in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+CWR is licensed under Sidiora DEV OSS-1.0 (`LicenseRef-Sidiora-DEV-OSS-1.0`). It permits
+noncommercial use and converts automatically to the MIT License on the first stable release
+designated 1.0.0 or higher. The full text is in [LICENSE](LICENSE), and third-party notices are in
+[NOTICE](NOTICE). To cite CWR, use [CITATION.cff](CITATION.cff).

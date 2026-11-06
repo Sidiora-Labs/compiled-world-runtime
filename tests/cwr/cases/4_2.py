@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import base64
 import concurrent.futures
 import importlib.util
 import json
@@ -59,6 +58,7 @@ SUITE = REPO / "benchmark/suite.kvx"
 COMMON = REPO / "benchmark/predicates/common.py"
 STUBS = REPO / "benchmark/stubs"
 REFWORLD = REPO / "examples/refworld"
+FROZEN = REPO / "benchmark/cassettes/suite"
 CLAUSES = ["11.2", "11.3"]
 BINS = {"short": (0, 5), "medium": (6, 25), "long": (26, 120)}
 PER_BIN = 20
@@ -83,27 +83,38 @@ c = load_common()
 
 
 class Results:
-    """Collects per-clause evidence; a clause passes when it has evidence and no failure."""
+    """Per-clause results: a clause passes when it ran at least one check, no check failed and it
+    has evidence. Passing checks are counted; failing checks keep their text."""
 
     def __init__(self) -> None:
-        self.ok: dict[str, list[str]] = {k: [] for k in CLAUSES}
+        self.passed: dict[str, int] = {k: 0 for k in CLAUSES}
+        self.evidence: dict[str, list[str]] = {k: [] for k in CLAUSES}
         self.bad: dict[str, list[str]] = {k: [] for k in CLAUSES}
 
-    def check(self, clause: str, condition, evidence: str) -> bool:
-        (self.ok if condition else self.bad)[clause].append(evidence)
+    def check(self, clause: str, condition, failure: str) -> bool:
+        if condition:
+            self.passed[clause] += 1
+        else:
+            self.bad[clause].append(failure)
         return bool(condition)
+
+    def note(self, clause: str, evidence: str) -> None:
+        self.evidence[clause].append(evidence)
 
     def report(self) -> int:
         failed = 0
         for clause in CLAUSES:
-            if self.bad[clause] or not self.ok[clause]:
+            if self.bad[clause] or not self.passed[clause] or not self.evidence[clause]:
                 failed += 1
+                for line in self.bad[clause]:
+                    print(f"4_2: {clause} FAIL {line}", file=sys.stderr)
                 shown = self.bad[clause][:6] or ["no evidence collected"]
                 more = len(self.bad[clause]) - len(shown)
                 tail = f" (+{more} more)" if more > 0 else ""
                 print(f"CLAUSE {clause} FAIL {' | '.join(shown)}{tail}")
             else:
-                print(f"CLAUSE {clause} PASS {' | '.join(self.ok[clause])}")
+                checks = f"{self.passed[clause]} checks"
+                print(f"CLAUSE {clause} PASS {checks}: {' | '.join(self.evidence[clause])}")
         return 1 if failed else 0
 
 
@@ -119,6 +130,16 @@ def run(cmd, timeout=900, **kw) -> subprocess.CompletedProcess:
     return subprocess.run(
         [str(x) for x in cmd], capture_output=True, text=True, timeout=timeout, **kw
     )
+
+
+def ram_dir():
+    """A RAM-backed parent for Instance homes when the host has one (the Build itself stays on
+    disk, where the sandbox can bind it). Every ledger append and state
+    write is fsynced (kernel.md section 8); on a shared, I/O-saturated disk that made single calls
+    take seconds and large reference turns hit the 30000 ms wall limit. Durability itself is case
+    CWR-010's subject, not this driver's. None means the platform temp dir."""
+    shm = Path("/dev/shm")
+    return str(shm) if shm.is_dir() and os.access(shm, os.W_OK) else None
 
 
 def build_cli() -> Path:
@@ -289,18 +310,30 @@ def reuse_shape(positions: list, total: int) -> tuple[bool, dict]:
     }
 
 
-def run_task(task_dir: Path, cwr: Path, build: Path, work: Path, stubs: dict, fenced: bool):
-    """Record once, replay twice, evaluate. Returns a result dict; never raises."""
+def record_task(task_dir: Path, cwr: Path, build: Path, homes: Path, stubs: dict, fenced: bool):
+    """Record mode against the live stubs; this run only produces the task's cassette. Returns an
+    error string or None; never raises."""
+    task = task_dir.name
+    try:
+        root = homes / task
+        root.mkdir(parents=True, exist_ok=True)
+        rec = Instance(cwr, build, root / "record", c.kernel_initial_state(task_dir))
+        drive(rec, task, "record", root / "cassette.jsonl", stubs, fenced)
+        return None
+    except Exception as error:  # report every broken task, not only the first
+        return f"record: {type(error).__name__}: {error}"
+
+
+def replay_task(task_dir: Path, cwr: Path, build: Path, homes: Path, fenced: bool, frozen: bool):
+    """Two replay-mode runs with no stub bound, plus the idle Instance, plus one run against the
+    frozen suite cassette of task 4.1 when that set exists. Never raises."""
     task = task_dir.name
     out: dict = {"task": task, "errors": []}
     try:
         initial = c.kernel_initial_state(task_dir)
         predicate = c.load_predicate(task_dir)
-        root = work / "tasks" / task
+        root = homes / task
         cassette = root / "cassette.jsonl"
-        cassette.parent.mkdir(parents=True, exist_ok=True)
-        rec = Instance(cwr, build, root / "record", initial)
-        drive(rec, task, "record", cassette, stubs, fenced)
         runs = []
         for label in ("replay-a", "replay-b"):
             inst = Instance(cwr, build, root / label, initial)
@@ -312,20 +345,25 @@ def run_task(task_dir: Path, cwr: Path, build: Path, work: Path, stubs: dict, fe
                     "state": state,
                     "ledger": ledger,
                     "success": c.evaluate_twice(predicate, state, ledger),
-                    "count": len(c.calls(ledger)),
-                    "failing_calls": len(c.calls(ledger, status="error")),
+                    "calls": c.calls(ledger),
                     "turn_status": sorted({e["status"] for e in envelopes}),
                 }
             )
+        frozen_cassette = FROZEN / task / "seed-1.jsonl"
+        if frozen and frozen_cassette.is_file():
+            inst = Instance(cwr, build, root / "replay-frozen", initial)
+            drive(inst, task, "replay", frozen_cassette, {}, fenced)
+            out["frozen_success"] = c.evaluate_twice(predicate, *inst.view())
         idle = Instance(cwr, build, root / "idle", initial)
         idle_state, idle_ledger = idle.view()
         out["idle_success"] = c.evaluate_twice(predicate, idle_state, idle_ledger)
         a, b = runs
         out["success"] = [a["success"], b["success"]]
-        out["count"] = a["count"]
-        out["counts"] = [a["count"], b["count"]]
+        out["count"] = len(a["calls"])
+        out["counts"] = [len(a["calls"]), len(b["calls"])]
         out["turns"] = len(a["envelopes"])
-        out["failing_calls"] = a["failing_calls"]
+        out["max_turn_calls"] = max(e["resources"]["primitive_calls"] for e in a["envelopes"])
+        out["failing_calls"] = sum(1 for r in a["calls"] if r["outcome"]["status"] != "ok")
         out["turn_status"] = a["turn_status"]
         out["replay_equal"] = host_free_ledger(a["ledger"]) == host_free_ledger(
             b["ledger"]
@@ -333,12 +371,10 @@ def run_task(task_dir: Path, cwr: Path, build: Path, work: Path, stubs: dict, fe
         out["state_equal"] = json.dumps(a["state"], sort_keys=True) == json.dumps(
             b["state"], sort_keys=True
         )
-        out["adapter_calls"] = c.count(a["ledger"], None) - len(
-            [r for r in c.calls(a["ledger"]) if r.get("kind") == "primitive"]
-        )
-        out["primitives"] = [r["primitive"] for r in c.calls(a["ledger"])]
+        out["adapter_calls"] = sum(1 for r in a["calls"] if r.get("kind") == "adapter")
+        out["primitives"] = [r["primitive"] for r in a["calls"]]
     except Exception as error:  # report every broken task, not only the first
-        out["errors"].append(f"{type(error).__name__}: {error}")
+        out["errors"].append(f"replay: {type(error).__name__}: {error}")
     return out
 
 
@@ -428,6 +464,7 @@ def main() -> int:
     parser.add_argument("--write-counts", help="write measured counts as JSON to this file")
     parser.add_argument("--only", help="comma-separated task id prefixes (diagnostics)")
     parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 2))
+    parser.add_argument("--homes", help="parent of the Instance homes (default: RAM-backed)")
     args = parser.parse_args()
 
     started = time.monotonic()
@@ -439,18 +476,32 @@ def main() -> int:
     R.check("11.2", len(c.task_dirs(TASKS)) == 60, f"{len(c.task_dirs(TASKS))} task directories")
     manifest = check_static(suite, tasks)
 
+    frozen = suite.get("suite", {}).get("cassette_digest") is not None and FROZEN.is_dir()
     cwr = build_cli()
     work = Path(tempfile.mkdtemp(prefix="cwr-4_2-"))
+    homes = Path(tempfile.mkdtemp(prefix="cwr-4_2-homes-", dir=args.homes or ram_dir()))
     stubs = None
     try:
         build = compile_refworld(cwr, work)
-        fenced = probe_fenced(cwr, build, work)
+        fenced = probe_fenced(cwr, build, homes)
         stubs = Stubs(1, work)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            futures = [
-                pool.submit(run_task, t, cwr, build, work, stubs.urls, fenced) for t in tasks
-            ]
-            results = {f.result()["task"]: f.result() for f in futures}
+            recorded = dict(
+                zip(
+                    [t.name for t in tasks],
+                    pool.map(
+                        lambda t: record_task(t, cwr, build, homes, stubs.urls, fenced), tasks
+                    ),
+                )
+            )
+        stubs.stop()
+        stubs = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            replayed = pool.map(lambda t: replay_task(t, cwr, build, homes, fenced, frozen), tasks)
+            results = {r["task"]: r for r in replayed}
+        for name, error in recorded.items():
+            if error:
+                results[name]["errors"].insert(0, error)
     finally:
         if stubs is not None:
             stubs.stop()
@@ -471,6 +522,8 @@ def main() -> int:
             f"{name}: predicate {res['success']} on two replay runs",
         )
         R.check("11.3", res["idle_success"] is False, f"{name}: predicate true when idle")
+        if "frozen_success" in res:
+            R.check("11.3", res["frozen_success"], f"{name}: predicate false on frozen cassette")
         R.check("11.3", res["replay_equal"] and res["state_equal"], f"{name}: replay differs")
         R.check(
             "11.2",
@@ -510,31 +563,52 @@ def main() -> int:
     sizes = {b: len(v) for b, v in measured_bins.items()}
     R.check("11.2", sizes == {b: PER_BIN for b in BINS}, f"measured bins {sizes}")
     R.check("11.2", len(reuse_ok) >= MIN_REUSE, f"{len(reuse_ok)} long rule-reuse tasks")
-    ranges = {
-        b: [results[n]["count"] for n in v] for b, v in measured_bins.items() if v
-    }
-    adapter_tasks = sum(1 for r in results.values() if r.get("adapter_calls"))
-    total = sum(r.get("count", 0) for r in results.values())
-    R.check(
+    clean = [r for r in results.values() if not r["errors"]]
+    ranges = {b: [results[n]["count"] for n in v] for b, v in measured_bins.items() if v}
+    reused = sorted({manifest[n]["suite"].get("reused_rule") for n in reuse_ok})
+    R.note(
         "11.2",
-        True,
-        f"{len(tasks)} tasks on the real kernel ({'fenced' if fenced else 'raw'} turns), "
-        f"{total} ledger calls per replay, bins {sizes} with primitive ranges "
-        + ", ".join(f"{b} {min(v)}..{max(v)}" for b, v in ranges.items())
-        + f", {len(reuse_ok)} rule-reuse long tasks, {adapter_tasks} tasks replayed adapter "
-        "calls from cassettes with no stub bound, suite.kvx digests checked",
+        f"{len(clean)}/{len(tasks)} reference solutions replayed on the real kernel "
+        f"({'fenced' if fenced else 'raw'} turn scripts) with the stub servers stopped, "
+        f"{sum(r['count'] for r in clean)} ledger calls per replay, "
+        f"{sum(1 for r in clean if r['adapter_calls'])} tasks with adapter calls served from "
+        f"cassettes, every turn ok with no failing call",
     )
-    R.check(
+    R.note(
+        "11.2",
+        f"bins measured from ledgers {sizes}: "
+        + ", ".join(f"{b} {min(v)}..{max(v)}" for b, v in ranges.items())
+        + f"; equal to suite.kvx primitive_count and bin files; largest turn "
+        f"{max((r['max_turn_calls'] for r in clean), default=0)} calls",
+    )
+    R.note(
+        "11.2",
+        f"{len(reuse_ok)} long rule-reuse tasks with the section 6 ledger shape, reusing "
+        f"{len(reused)} distinct rules; suite.kvx suite, task, solutions and common digests match",
+    )
+    frozen_runs = [r for r in clean if "frozen_success" in r]
+    R.note(
+        "11.2",
+        f"{len(frozen_runs)} tasks also replayed against the frozen suite cassettes of "
+        "benchmark/cassettes/suite"
+        if frozen
+        else "suite.kvx cassette_digest is null (task 4.1 has not frozen the suite cassettes): "
+        "replays use cassettes recorded by this driver from the stubs with seed 1",
+    )
+    R.note(
         "11.3",
-        True,
-        f"{len(tasks)} predicates audited and loaded through common.load_predicate; true on two "
-        "replay runs, false on the idle Instance, deterministic under evaluate_twice",
+        f"{len(tasks)} task directories with task.md, initial.kvx, success.py, bin and rules; "
+        "every predicate passes the AST audit (imports only common, no kernel module, no model "
+        "text, no I/O), loads through common.load_predicate, is true on two replay runs, false on "
+        "the idle Instance and deterministic under evaluate_twice; common.py imports only the "
+        "standard library",
     )
     if args.write_counts:
         Path(args.write_counts).write_text(
             json.dumps(counts_out, sort_keys=True, indent=1) + "\n", encoding="utf-8"
         )
     shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(homes, ignore_errors=True)
     print(f"4_2: {time.monotonic() - started:.0f}s", file=sys.stderr)
     return R.report()
 

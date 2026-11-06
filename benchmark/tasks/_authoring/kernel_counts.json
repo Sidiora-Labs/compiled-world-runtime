@@ -1,0 +1,358 @@
+{
+ "t001-copy-readme": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t002-remove-old-log": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t003-tennis-note": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t004-rename-key": {
+  "count": 3,
+  "reuse": null,
+  "turns": 1
+ },
+ "t005-archive-report": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t006-thumbnail-job": {
+  "count": 3,
+  "reuse": null,
+  "turns": 2
+ },
+ "t007-lock-swap": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t008-publish-release": {
+  "count": 3,
+  "reuse": null,
+  "turns": 1
+ },
+ "t009-cancel-unfinished": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t010-essay-post": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t011-split-blob": {
+  "count": 3,
+  "reuse": null,
+  "turns": 1
+ },
+ "t012-config-fallback": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t013-clear-cache": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t014-report-slot": {
+  "count": 3,
+  "reuse": null,
+  "turns": 5
+ },
+ "t015-clear-session": {
+  "count": 4,
+  "reuse": null,
+  "turns": 1
+ },
+ "t016-finish-queue-item": {
+  "count": 2,
+  "reuse": null,
+  "turns": 1
+ },
+ "t017-raffle": {
+  "count": 3,
+  "reuse": null,
+  "turns": 1
+ },
+ "t018-replace-site-index": {
+  "count": 4,
+  "reuse": null,
+  "turns": 1
+ },
+ "t019-import-outcome": {
+  "count": 2,
+  "reuse": null,
+  "turns": 2
+ },
+ "t020-unlock-shared": {
+  "count": 3,
+  "reuse": null,
+  "turns": 1
+ },
+ "t021-sports-report": {
+  "count": 8,
+  "reuse": null,
+  "turns": 1
+ },
+ "t022-notice-versions": {
+  "count": 9,
+  "reuse": null,
+  "turns": 1
+ },
+ "t023-batch-archive": {
+  "count": 10,
+  "reuse": null,
+  "turns": 1
+ },
+ "t024-render-trio": {
+  "count": 9,
+  "reuse": null,
+  "turns": 3
+ },
+ "t025-kv-migrate": {
+  "count": 19,
+  "reuse": null,
+  "turns": 1
+ },
+ "t026-cache-eviction": {
+  "count": 14,
+  "reuse": null,
+  "turns": 1
+ },
+ "t027-publish-burst": {
+  "count": 16,
+  "reuse": null,
+  "turns": 11
+ },
+ "t028-dedupe-photos": {
+  "count": 13,
+  "reuse": null,
+  "turns": 1
+ },
+ "t029-topic-digest": {
+  "count": 15,
+  "reuse": null,
+  "turns": 1
+ },
+ "t030-search-sweep": {
+  "count": 14,
+  "reuse": null,
+  "turns": 6
+ },
+ "t031-resubmit-jobs": {
+  "count": 12,
+  "reuse": null,
+  "turns": 2
+ },
+ "t032-rotate-logs": {
+  "count": 14,
+  "reuse": null,
+  "turns": 1
+ },
+ "t033-size-index": {
+  "count": 21,
+  "reuse": null,
+  "turns": 1
+ },
+ "t034-config-merge": {
+  "count": 12,
+  "reuse": null,
+  "turns": 1
+ },
+ "t035-job-slots": {
+  "count": 12,
+  "reuse": null,
+  "turns": 3
+ },
+ "t036-retract-post": {
+  "count": 9,
+  "reuse": null,
+  "turns": 1
+ },
+ "t037-copy-tree": {
+  "count": 19,
+  "reuse": null,
+  "turns": 1
+ },
+ "t038-chunk-files": {
+  "count": 12,
+  "reuse": null,
+  "turns": 1
+ },
+ "t039-lock-audit": {
+  "count": 19,
+  "reuse": null,
+  "turns": 1
+ },
+ "t040-assign-reviewers": {
+  "count": 14,
+  "reuse": null,
+  "turns": 1
+ },
+ "t041-poll-then-reuse": {
+  "count": 31,
+  "reuse": {
+   "first": 1,
+   "first_late": 29,
+   "last_early": 1
+  },
+  "turns": 3
+ },
+ "t042-cleanup-twice": {
+  "count": 31,
+  "reuse": {
+   "first": 1,
+   "first_late": 28,
+   "last_early": 1
+  },
+  "turns": 1
+ },
+ "t043-archive-twice": {
+  "count": 30,
+  "reuse": {
+   "first": 1,
+   "first_late": 28,
+   "last_early": 1
+  },
+  "turns": 1
+ },
+ "t044-chunks-twice": {
+  "count": 32,
+  "reuse": {
+   "first": 1,
+   "first_late": 29,
+   "last_early": 2
+  },
+  "turns": 1
+ },
+ "t045-quota-twice": {
+  "count": 34,
+  "reuse": {
+   "first": 2,
+   "first_late": 31,
+   "last_early": 2
+  },
+  "turns": 1
+ },
+ "t046-burst-twice": {
+  "count": 38,
+  "reuse": {
+   "first": 5,
+   "first_late": 34,
+   "last_early": 8
+  },
+  "turns": 29
+ },
+ "t047-key-twice": {
+  "count": 33,
+  "reuse": {
+   "first": 1,
+   "first_late": 29,
+   "last_early": 4
+  },
+  "turns": 9
+ },
+ "t048-search-twice": {
+  "count": 59,
+  "reuse": {
+   "first": 1,
+   "first_late": 46,
+   "last_early": 12
+  },
+  "turns": 14
+ },
+ "t049-slots-twice": {
+  "count": 39,
+  "reuse": {
+   "first": 0,
+   "first_late": 30,
+   "last_early": 6
+  },
+  "turns": 5
+ },
+ "t050-locked-pages-twice": {
+  "count": 33,
+  "reuse": {
+   "first": 2,
+   "first_late": 27,
+   "last_early": 2
+  },
+  "turns": 1
+ },
+ "t051-lock-sets-twice": {
+  "count": 40,
+  "reuse": {
+   "first": 2,
+   "first_late": 33,
+   "last_early": 8
+  },
+  "turns": 1
+ },
+ "t052-collect-twice": {
+  "count": 31,
+  "reuse": {
+   "first": 0,
+   "first_late": 27,
+   "last_early": 0
+  },
+  "turns": 13
+ },
+ "t053-purge-twice": {
+  "count": 30,
+  "reuse": {
+   "first": 1,
+   "first_late": 27,
+   "last_early": 3
+  },
+  "turns": 1
+ },
+ "t054-cancel-twice": {
+  "count": 32,
+  "reuse": {
+   "first": 1,
+   "first_late": 28,
+   "last_early": 4
+  },
+  "turns": 1
+ },
+ "t055-inbox-digest": {
+  "count": 67,
+  "reuse": null,
+  "turns": 6
+ },
+ "t056-kv-v2-migration": {
+  "count": 47,
+  "reuse": null,
+  "turns": 1
+ },
+ "t057-job-farm": {
+  "count": 37,
+  "reuse": null,
+  "turns": 4
+ },
+ "t058-site-build": {
+  "count": 36,
+  "reuse": null,
+  "turns": 1
+ },
+ "t059-search-catalogue": {
+  "count": 42,
+  "reuse": null,
+  "turns": 6
+ },
+ "t060-report-pipeline": {
+  "count": 32,
+  "reuse": null,
+  "turns": 3
+ }
+}

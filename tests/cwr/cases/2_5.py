@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Sidiora Labs Inc. CWR® 2026-2027
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
 """Task 2.5 driver: instance upgrade, migrations, recompile notice and proposal outbox (case CWR-011).
 
 Clauses: 3.6, 5.1, 5.2, 5.3, 5.4, 5.5 (spec/cwr/spec.kvx). Everything runs against the real `cwr` binary
@@ -104,9 +106,13 @@ def compile_world(src: Path, out: Path, previous: str | None = None, extra=()) -
     if previous:
         args += ["--previous", previous]
     proc = cwr(*args)
-    m = re.search(r"built (?:experimental )?sha256:([0-9a-f]{64})(?: \([^)]*\))? at (\S+)", proc.stdout)
+    m = re.search(
+        r"built (?:experimental )?sha256:([0-9a-f]{64})(?: \([^)]*\))? at (\S+)", proc.stdout
+    )
     if proc.returncode != 0 or not m:
-        raise RuntimeError(f"cwr build {src} failed ({proc.returncode}): {proc.stdout[-1500:]}{proc.stderr[-500:]}")
+        raise RuntimeError(
+            f"cwr build {src} failed ({proc.returncode}): {proc.stdout[-1500:]}{proc.stderr[-500:]}"
+        )
     d = Path(m.group(2))
     BUILD_DIGESTS[str(d)] = tree_digest(d)
     return m.group(1), d
@@ -326,7 +332,10 @@ def prepare_pair(work: Path, pair: str) -> tuple[Path, Path, bool]:
 
 
 def strip_host(records: list[dict]) -> list[dict]:
-    return [{k: v for k, v in r.items() if k not in ("host_ts", "duration_us", "instance")} for r in records]
+    return [
+        {k: v for k, v in r.items() if k not in ("host_ts", "duration_us", "instance")}
+        for r in records
+    ]
 
 
 def envelope_core(env: dict) -> dict:
@@ -356,11 +365,19 @@ def run_pairs(work: Path, home: Home, frozen: dict, builds: dict) -> dict:
         tdir = REPO / task["dir"]
         iid = home.create(da, initial_state(tdir / "initial.kvx", da))
         for s in task["first_half"]:
-            rc, env, err = home.turn(iid, (PAIRS / pair / s).read_text())
-            R.check("5.2", rc == 0 and env and env["status"] == "ok", f"{pair} first half {s} on A: {env and env['status']} rc={rc}")
+            rc, env, _ = home.turn(iid, (PAIRS / pair / s).read_text())
+            R.check(
+                "5.2",
+                rc == 0 and env and env["status"] == "ok",
+                f"{pair} first half {s} on A: {env and env['status']} rc={rc}",
+            )
         before = snapshot_of(home, iid)
         proc = home.upgrade(iid, db)
-        ok = R.check("5.2", proc.returncode == 0, f"{pair} upgrade {meta['from_version']}->{meta['to_version']} exit {proc.returncode} {proc.stderr.strip()[:300]}")
+        ok = R.check(
+            "5.2",
+            proc.returncode == 0,
+            f"{pair} upgrade {meta['from_version']}->{meta['to_version']} exit {proc.returncode} {proc.stderr.strip()[:300]}",
+        )
         if not ok:
             continue
         res = json.loads(proc.stdout)
@@ -389,12 +406,22 @@ def run_pairs(work: Path, home: Home, frozen: dict, builds: dict) -> dict:
             flat = before["state"]["kv"]
             want = dict(before["state"])
             want["kv"] = {"namespaces": {"default": flat} if flat else {}}
-            R.check("3.6", after["state"] == want, f"{pair}: kv migrated by {meta['migrations'][0]}: {len(flat)} flat keys now under namespace default, other modules untouched")
+            R.check(
+                "3.6",
+                after["state"] == want,
+                f"{pair}: kv migrated by {meta['migrations'][0]}: {len(flat)} flat keys now under namespace default, other modules untouched",
+            )
             R.check("5.2", after["state"] == want, f"{pair}: migrated state committed")
         else:
-            R.check("5.2", after["state"] == before["state"], f"{pair}: no migration declared, state byte-identical across the upgrade")
+            R.check(
+                "5.2",
+                after["state"] == before["state"],
+                f"{pair}: no migration declared, state byte-identical across the upgrade",
+            )
         # Notice: stored, pending, rendered into component 2 of the next context only.
-        expected = note["text"].replace("{hash_a}", f"sha256:{ha}").replace("{hash_b}", f"sha256:{hb}")
+        expected = (
+            note["text"].replace("{hash_a}", f"sha256:{ha}").replace("{hash_b}", f"sha256:{hb}")
+        )
         shown = home.notice(iid)
         ctx = home.context(iid)
         R.check(
@@ -403,20 +430,37 @@ def run_pairs(work: Path, home: Home, frozen: dict, builds: dict) -> dict:
             f"{pair}: notice equals frozen [notice.{pair}].text ({len(expected)} bytes, listed {note['listed_targets']}) and is component 2 of the next context",
         )
         for s in task["post_upgrade"][:1]:
-            rc, env, err = home.turn(iid, (PAIRS / pair / s).read_text())
+            rc, env, _ = home.turn(iid, (PAIRS / pair / s).read_text())
             coords = WORLD.coordinates(env) if env else None
             R.check(
                 "5.3",
-                rc == 0 and coords and coords.version == meta["to_version"] and coords.build == f"sha256:{hb}" and env["status"] == "ok",
+                rc == 0
+                and coords
+                and coords.version == meta["to_version"]
+                and coords.build == f"sha256:{hb}"
+                and env["status"] == "ok",
                 f"{pair}: first turn after upgrade ({s}) {env and env['status']}, envelope world.version {coords and coords.version}, world.build new",
             )
         ctx2 = home.context(iid)
-        R.check("5.3", home.notice(iid) == "" and SEP_NOTICE not in ctx2, f"{pair}: notice absent from the context of the second turn after the upgrade")
-        out[pair] = {"iid": iid, "ha": ha, "hb": hb, "da": da, "db": db, "src_a": src_a, "src_b": src_b}
+        R.check(
+            "5.3",
+            home.notice(iid) == "" and SEP_NOTICE not in ctx2,
+            f"{pair}: notice absent from the context of the second turn after the upgrade",
+        )
+        out[pair] = {
+            "iid": iid,
+            "ha": ha,
+            "hb": hb,
+            "da": da,
+            "db": db,
+            "src_a": src_a,
+            "src_b": src_b,
+        }
     R.check(
         "5.3",
         True,
-        "B-side world.version fixtures patched in the scratch copy for " + (",".join(patched_pairs) or "no pair"),
+        "B-side world.version fixtures patched in the scratch copy for "
+        + (",".join(patched_pairs) or "no pair"),
     )
     return out
 
@@ -447,14 +491,22 @@ def run_failures(work: Path, home: Home, pairs: dict) -> None:
     mig.write_text(text.replace("def migrate(state: dict) -> dict:\n", guard, 1))
     _, dbad = compile_world(bad_src, da.parent, previous=ha)
 
-    for key, why in [("poison", "migrate raised"), ("badshape", "state.kv"), ("mutate", "mutated its argument")]:
+    for key, why in [
+        ("poison", "migrate raised"),
+        ("badshape", "state.kv"),
+        ("mutate", "mutated its argument"),
+    ]:
         st = json.loads(json.dumps(base))
         st["kv"][key] = {"$bytes": base64.b64encode(b"x").decode()}
         iid = home.create(da, st)
         before = snapshot_of(home, iid)
         proc = home.upgrade(iid, dbad)
         after = snapshot_of(home, iid)
-        leftovers = [p.name for p in (home.dir(iid) / "notices").glob("*")] if (home.dir(iid) / "notices").exists() else []
+        leftovers = (
+            [p.name for p in (home.dir(iid) / "notices").glob("*")]
+            if (home.dir(iid) / "notices").exists()
+            else []
+        )
         rc, env, _ = home.turn(iid, 'import kv\nreturn kv.get(key="receipt-golf")\n')
         clause = "3.6" if key == "mutate" else "5.2"
         R.check(
@@ -475,7 +527,7 @@ def run_failures(work: Path, home: Home, pairs: dict) -> None:
     before = snapshot_of(home, iid)
     crash = home.upgrade(iid, db, env={"CWR_FAULT_INJECT": "upgrade:after_migrate"})
     mid = home.meta(iid)["status"]
-    rc_turn, _, err_turn = home.turn(iid, "import world\nreturn world.now()\n")
+    rc_turn, _, _ = home.turn(iid, "import world\nreturn world.now()\n")
     retry = home.upgrade(iid, db)
     after = snapshot_of(home, iid)
     R.check(
@@ -489,7 +541,11 @@ def run_failures(work: Path, home: Home, pairs: dict) -> None:
         f"crash mid-migration: kernel killed (rc {crash.returncode}), Instance left '{mid}', turn refused (rc {rc_turn}), next upgrade exits {retry.returncode} reporting the earlier failure, pre-upgrade snapshot restored, no upgrade record",
     )
     again = home.upgrade(iid, db)
-    R.check("5.2", again.returncode == 0, f"after the rollback the same upgrade commits (exit {again.returncode})")
+    R.check(
+        "5.2",
+        again.returncode == 0,
+        f"after the rollback the same upgrade commits (exit {again.returncode})",
+    )
 
     # Crash after the commit point: the next upgrade completes the commit (roll forward).
     iid = home.create(da, base)
@@ -533,9 +589,11 @@ def run_failures(work: Path, home: Home, pairs: dict) -> None:
     equal = home.upgrade(on_b, dbad)
     R.check(
         "5.5",
-        down.returncode == 5 and "not greater" in down.stderr
+        down.returncode == 5
+        and "not greater" in down.stderr
         and same.returncode == 5
-        and equal.returncode == 5 and "not greater" in equal.stderr
+        and equal.returncode == 5
+        and "not greater" in equal.stderr
         and snapshot_of(home, on_b) == before,
         f"0.3.0 Instance: upgrade to 0.2.0 exit {down.returncode}, to its own Build exit {same.returncode}, to another 0.3.0 Build exit {equal.returncode}; nothing changed",
     )
@@ -559,7 +617,15 @@ def run_failures(work: Path, home: Home, pairs: dict) -> None:
     shutil.rmtree(nomig, ignore_errors=True)
     shutil.copytree(p5["src_b"], nomig)
     cl = nomig / "CHANGELOG.kvx"
-    cl.write_text(re.sub(r'^migration = "migrations/[^"]+"$', 'migration = ""', cl.read_text(), count=1, flags=re.M))
+    cl.write_text(
+        re.sub(
+            r'^migration = "migrations/[^"]+"$',
+            'migration = ""',
+            cl.read_text(),
+            count=1,
+            flags=re.M,
+        )
+    )
     for f in (nomig / "fixtures" / "kv").glob("migration_*.kvx"):
         f.unlink()
     for f in (nomig / "migrations").glob("*.py"):
@@ -585,8 +651,10 @@ def forge_experimental(src_build: Path, out_root: Path, flag: str) -> Path:
         p.chmod(p.stat().st_mode | stat.S_IWUSR)
     man = tmp / "manifest.kvx"
     lines = man.read_text().splitlines(keepends=True)[:-1]
-    body = "".join(lines).replace("experimental = false", "experimental = true").replace(
-        "experimental_flag = null", f'experimental_flag = "{flag}"'
+    body = (
+        "".join(lines)
+        .replace("experimental = false", "experimental = true")
+        .replace("experimental_flag = null", f'experimental_flag = "{flag}"')
     )
     man.write_text(body)
     files = []
@@ -617,7 +685,9 @@ def experimental_build(work: Path, src: Path, flag: str, control: Path) -> tuple
     doc = VALIDATE.parse_kvx((d / "manifest.kvx").read_text())
     if doc["build"].get("experimental") is True and doc["build"].get("experimental_flag") == flag:
         return d, "compiled by cwr build"
-    return forge_experimental(control, out, flag), "forged fixture (cwr build did not mark it experimental)"
+    return forge_experimental(
+        control, out, flag
+    ), "forged fixture (cwr build did not mark it experimental)"
 
 
 def run_experimental(work: Path, home: Home, pairs: dict) -> None:
@@ -625,7 +695,10 @@ def run_experimental(work: Path, home: Home, pairs: dict) -> None:
     for flag, rendering in [("x-version-only", "header"), ("x-silent-change", "nothing")]:
         dx, how = experimental_build(work, p6["src_a"], flag, p6["da"])
         iid = home.create(p6["da"])
-        rc, env, _ = home.turn(iid, 'import fs\nreturn fs.read(path="/notes/readme.md") if fs.exists(path="/notes/readme.md") else None\n')
+        rc0, env0, _ = home.turn(
+            iid,
+            'import fs\nreturn fs.read(path="/notes/readme.md") if fs.exists(path="/notes/readme.md") else None\n',
+        )
         before = snapshot_of(home, iid)
         refused = home.upgrade(iid, dx)
         unchanged = snapshot_of(home, iid) == before
@@ -637,7 +710,12 @@ def run_experimental(work: Path, home: Home, pairs: dict) -> None:
         want = header if rendering == "header" else ""
         R.check(
             "5.5",
-            refused.returncode == 5 and "experimental" in refused.stderr and unchanged and allowed.returncode == 0,
+            rc0 == 0
+            and env0["status"] == "ok"
+            and refused.returncode == 5
+            and "experimental" in refused.stderr
+            and unchanged
+            and allowed.returncode == 0,
             f"{flag} Build at the same version 0.2.0 ({how}): refused without --allow-experimental (exit {refused.returncode}), accepted with it (exit {allowed.returncode})",
         )
         R.check(
@@ -648,7 +726,11 @@ def run_experimental(work: Path, home: Home, pairs: dict) -> None:
     # The flag lifts the version rule only for an experimental target.
     iid = home.create(p6["db"])
     proc = home.upgrade(iid, p6["da"], "--allow-experimental")
-    R.check("5.5", proc.returncode == 5 and "not greater" in proc.stderr, f"--allow-experimental does not admit a control Build with a lower version (exit {proc.returncode})")
+    R.check(
+        "5.5",
+        proc.returncode == 5 and "not greater" in proc.stderr,
+        f"--allow-experimental does not admit a control Build with a lower version (exit {proc.returncode})",
+    )
 
 
 def run_outbox(work: Path, home: Home, pairs: dict) -> None:
@@ -679,7 +761,8 @@ def run_outbox(work: Path, home: Home, pairs: dict) -> None:
         and recs[0]["id"] == pid
         and recs[0]["text_hash"] == "sha256:" + hashlib.sha256(text.encode()).hexdigest()
         and "text" not in recs[0]
-        and lines == [json.dumps({"id": pid, "text": text, "turn": 1}, sort_keys=True, separators=(",", ":"))]
+        and lines
+        == [json.dumps({"id": pid, "text": text, "turn": 1}, sort_keys=True, separators=(",", ":"))]
         and home.state(a) == state0,
         f"world.propose returned {pid}: one proposal ledger record carrying only the text hash, one outbox line with the text, state unchanged",
     )
@@ -690,12 +773,19 @@ def run_outbox(work: Path, home: Home, pairs: dict) -> None:
     same_ledger = strip_host(home.records(a)) == strip_host(home.records(b))
     R.check(
         "5.4",
-        rca == 0 and rcb == 0 and envelope_core(enva) == envelope_core(envb) and same_ledger and home.state(a) == home.state(b)
+        rca == 0
+        and rcb == 0
+        and envelope_core(enva) == envelope_core(envb)
+        and same_ledger
+        and home.state(a) == home.state(b)
         and enva["returned"]["texts"] == [None],
         "after overwriting Instance A's outbox, A and its replica B give identical envelopes, ledgers (host fields aside), states, limits and RNG draws; world.history shows the proposal without its text",
     )
     # Readable only outside the world: a script cannot open the outbox; the operator command can.
-    rc, env, _ = home.turn(a, f"try:\n    open({str(outbox)!r}).read()\n    return 'read'\nexcept Exception as e:\n    return type(e).__name__\n")
+    rc, env, _ = home.turn(
+        a,
+        f"try:\n    open({str(outbox)!r}).read()\n    return 'read'\nexcept Exception as e:\n    return type(e).__name__\n",
+    )
     op = cwr("instance", "outbox", a, "--home", home.root)
     R.check(
         "5.4",
@@ -710,7 +800,9 @@ def run_outbox(work: Path, home: Home, pairs: dict) -> None:
         if "proposals.jsonl" in p.read_text() or "OUTBOX_FILE" in p.read_text()
     )
     outbox_rs = (src / "outbox.rs").read_text().split("#[cfg(test)]")[0]
-    readers = [w for w in ("fs::read", "read_to_string", "File::open", "BufReader") if w in outbox_rs]
+    readers = [
+        w for w in ("fs::read", "read_to_string", "File::open", "BufReader") if w in outbox_rs
+    ]
     R.check(
         "5.4",
         mentions == ["crates/cwr-kernel/src/outbox.rs"] and not readers,
@@ -719,14 +811,20 @@ def run_outbox(work: Path, home: Home, pairs: dict) -> None:
     # The SDK helpers name exactly the Build's world primitives.
     contracts = json.loads((p6["da"] / "contracts.json").read_text())
     names = {p["name"] for p in contracts["primitives"]}
-    R.check("5.4", set(WORLD.PRIMITIVES.values()) <= names, f"sdk/python/cwr/_world.py helpers map to {sorted(WORLD.PRIMITIVES.values())}, all declared by the Build")
+    R.check(
+        "5.4",
+        set(WORLD.PRIMITIVES.values()) <= names,
+        f"sdk/python/cwr/_world.py helpers map to {sorted(WORLD.PRIMITIVES.values())}, all declared by the Build",
+    )
 
 
 def run_closure(work: Path, home: Home, pairs: dict, digests_before: dict) -> None:
     """5.1: nothing but `cwr build` creates or modifies a Build."""
     p1 = pairs["U1"]
     # A source edit without recompilation changes nothing for a running Instance.
-    iid = home.create(p1["da"], initial_state(REPO / "examples/refworld-upgrades/U1/task/initial.kvx", p1["da"]))
+    iid = home.create(
+        p1["da"], initial_state(REPO / "examples/refworld-upgrades/U1/task/initial.kvx", p1["da"])
+    )
     manual_before = (p1["da"] / "manual.md").read_bytes()
     contracts = p1["src_a"] / "contracts" / "fs.kvx"
     text = contracts.read_text()
@@ -737,17 +835,30 @@ def run_closure(work: Path, home: Home, pairs: dict, digests_before: dict) -> No
         flags=re.S,
     )
     contracts.write_text(edited)
-    rc, env, _ = home.turn(iid, 'import fs\nfs.delete(path="/batch/one/a.txt")\nreturn fs.exists(path="/batch/one/a.txt")\n')
+    rc, env, _ = home.turn(
+        iid,
+        'import fs\nfs.delete(path="/batch/one/a.txt")\nreturn fs.exists(path="/batch/one/a.txt")\n',
+    )
     R.check(
         "5.1",
-        edited != text and rc == 0 and env["status"] == "ok" and env["returned"] is False
+        edited != text
+        and rc == 0
+        and env["status"] == "ok"
+        and env["returned"] is False
         and (p1["da"] / "manual.md").read_bytes() == manual_before
         and home.meta(iid)["build"] == f"sha256:{p1['ha']}",
         "U1/A source edited to refuse deleting a locked file, not recompiled: the running Instance still deletes the locked /batch/one/a.txt (ok), Build and manual unchanged",
     )
     # A script cannot write into the Build's SDK.
-    rc, env, _ = home.turn(iid, "try:\n    open('/cwr/sdk/cwr/x.py', 'w').write('x')\n    return 'wrote'\nexcept Exception as e:\n    return type(e).__name__\n")
-    R.check("5.1", rc == 0 and env["returned"] != "wrote", f"a script writing into /cwr/sdk is refused ({env and env['returned']})")
+    rc, env, _ = home.turn(
+        iid,
+        "try:\n    open('/cwr/sdk/cwr/x.py', 'w').write('x')\n    return 'wrote'\nexcept Exception as e:\n    return type(e).__name__\n",
+    )
+    R.check(
+        "5.1",
+        rc == 0 and env["returned"] != "wrote",
+        f"a script writing into /cwr/sdk is refused ({env and env['returned']})",
+    )
     # Every Build compiled by this driver is byte-identical after all kernel activity, and read-only.
     changed = [k for k, d in digests_before.items() if tree_digest(Path(k)) != d]
     writable = [w for k in digests_before for w in writable_entries(Path(k))]
@@ -759,14 +870,21 @@ def run_closure(work: Path, home: Home, pairs: dict, digests_before: dict) -> No
     # Static: the kernel cannot reach the compiler; only `cwr build` calls compile; the SDK has no write path.
     kernel_toml = (REPO / "crates" / "cwr-kernel" / "Cargo.toml").read_text()
     callers = sorted(
-        p.name for p in (REPO / "crates" / "cwr-cli" / "src").glob("*.rs") if re.search(r"\bcompile\(", p.read_text())
+        p.name
+        for p in (REPO / "crates" / "cwr-cli" / "src").glob("*.rs")
+        if re.search(r"\bcompile\(", p.read_text())
     )
     sdk_writes = []
     for p in sorted((REPO / "sdk" / "python" / "cwr").glob("*.py")):
         if p.name == "_runner.py":
             continue
         t = p.read_text()
-        for pat in (r"open\([^)]*['\"][wax]", r"\bshutil\b", r"os\.(remove|unlink|rename|replace|mkdir|makedirs|write)\b", r"write_(text|bytes)\("):
+        for pat in (
+            r"open\([^)]*['\"][wax]",
+            r"\bshutil\b",
+            r"os\.(remove|unlink|rename|replace|mkdir|makedirs|write)\b",
+            r"write_(text|bytes)\(",
+        ):
             if re.search(pat, t):
                 sdk_writes.append(f"{p.name}:{pat}")
     R.check(
@@ -792,7 +910,7 @@ def main() -> int:
         run_experimental(work, home, pairs)
         run_outbox(work, home, pairs)
         run_closure(work, home, pairs, BUILD_DIGESTS)
-    except Exception as e:  # noqa: BLE001 - any driver failure is a FAIL line, not a traceback
+    except Exception as e:
         R.check("5.2", False, f"driver error: {type(e).__name__}: {str(e)[:600]}")
     finally:
         shutil.rmtree(work, ignore_errors=True)

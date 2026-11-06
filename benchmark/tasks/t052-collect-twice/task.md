@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Collect nightly jobs around a conversion
 
 Do these steps in order. First store the result of job nightly-a in kv namespace nightly under

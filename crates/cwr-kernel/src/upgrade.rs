@@ -472,3 +472,95 @@ pub fn check_target(current: &Build, target: &Build, opts: UpgradeOptions) -> Re
 pub fn resolve_target(reference: &str, roots: &[PathBuf]) -> Result<PathBuf> {
     Build::resolve(reference, roots).map_err(|e| UpgradeError::Refused(e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::TickConfig;
+    use std::collections::BTreeMap;
+
+    fn build(name: &str, version: &str, hash: &str, experimental: Option<&str>) -> Build {
+        Build {
+            dir: PathBuf::from(format!("/nonexistent/{hash}")),
+            hash: format!("sha256:{hash}"),
+            name: name.into(),
+            version: version.into(),
+            experimental: experimental.map(str::to_string),
+            modules: vec![],
+            limits: BTreeMap::new(),
+            clock: TickConfig::new(1, 10).unwrap(),
+            seed_visible: true,
+            primitives: BTreeMap::new(),
+        }
+    }
+
+    fn refused(r: Result<()>) -> String {
+        match r {
+            Err(UpgradeError::Refused(m)) => m,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn version_name_and_experimental_rules() {
+        let cur = build("refworld", "0.2.0", "a", None);
+        let plain = UpgradeOptions::default();
+        let allow = UpgradeOptions {
+            allow_experimental: true,
+        };
+        assert!(check_target(&cur, &build("refworld", "0.10.0", "b", None), plain).is_ok());
+        assert!(refused(check_target(
+            &cur,
+            &build("refworld", "0.2.0", "b", None),
+            plain
+        ))
+        .contains("not greater"));
+        assert!(refused(check_target(
+            &cur,
+            &build("refworld", "0.1.9", "b", None),
+            allow
+        ))
+        .contains("not greater"));
+        assert!(refused(check_target(
+            &cur,
+            &build("other", "0.3.0", "b", None),
+            allow
+        ))
+        .contains("world name"));
+        assert!(refused(check_target(
+            &cur,
+            &build("refworld", "0.3.0", "a", None),
+            plain
+        ))
+        .contains("already bound"));
+        let x = build("refworld", "0.2.0", "x", Some("x-version-only"));
+        assert!(refused(check_target(&cur, &x, plain)).contains("experimental"));
+        assert!(check_target(&cur, &x, allow).is_ok());
+        assert!(refused(check_target(
+            &cur,
+            &build("refworld", "0.3", "b", None),
+            plain
+        ))
+        .contains("MAJOR.MINOR.PATCH"));
+    }
+
+    #[test]
+    fn exit_codes_follow_kernel_md() {
+        assert_eq!(UpgradeError::Refused(String::new()).exit_code(), 5);
+        let rb = UpgradeError::RolledBack {
+            detail: String::new(),
+            snapshot: String::new(),
+        };
+        assert_eq!(rb.exit_code(), 6);
+        let earlier = Resolution::RolledBack {
+            snapshot: String::new(),
+            failure: String::new(),
+        };
+        assert_eq!(UpgradeError::Interrupted(earlier).exit_code(), 6);
+        let done = Resolution::Completed {
+            seq: 3,
+            build: String::new(),
+        };
+        assert_eq!(UpgradeError::Interrupted(done).exit_code(), 0);
+    }
+}

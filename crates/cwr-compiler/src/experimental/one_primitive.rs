@@ -99,10 +99,11 @@ pub fn explains(rel: &str, bc: &[u8], bx: &[u8], control: &Path, experimental: &
             let (Ok(c), Ok(x)) = (std::str::from_utf8(bc), std::str::from_utf8(bx)) else {
                 return false;
             };
-            let Some(old) = serde_json::from_slice::<Value>(&std::fs::read(control.join("contracts.json")).unwrap_or_default())
-                .ok()
-                .and_then(|v| v["limits"]["primitive_calls"].as_u64())
-            else {
+            let Some(old) = serde_json::from_slice::<Value>(
+                &std::fs::read(control.join("contracts.json")).unwrap_or_default(),
+            )
+            .ok()
+            .and_then(|v| v["limits"]["primitive_calls"].as_u64()) else {
                 return false;
             };
             let expected = c.replace(&sc, &sx).replacen(

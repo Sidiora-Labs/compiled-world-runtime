@@ -73,7 +73,13 @@ FALLBACK_TUNNELS = {
     "ip6_vti0",
     "ip6gre0",
 }
-TIGHT = {"cpu_ms": 800, "wall_ms": 4000, "memory_mb": 96, "primitive_calls": 12, "adapter_calls": 2}
+# Process-limit Build: tight cpu and memory so the bombs end fast. wall_ms leaves room for a durable
+# primitive before a cpu or memory bomb: each primitive fsyncs its ledger record before it is answered,
+# and on a loaded host that can take about a second, which must not be mistaken for the bomb's own limit.
+TIGHT = {"cpu_ms": 800, "wall_ms": 8000, "memory_mb": 96, "primitive_calls": 12, "adapter_calls": 2}
+# Budget Build (clause 6.5): the same small call budgets with the spec-default process limits, so a slow
+# host can never end a budget probe on wall time before the budget is reached.
+BUDGET = {**TIGHT, "cpu_ms": 5000, "wall_ms": 30000, "memory_mb": 256}
 
 
 class Results:
@@ -492,7 +498,7 @@ return r
     )
 
 
-def check_limits(world: World, tight: Path) -> None:
+def check_limits(world: World, tight: Path, budget: Path) -> None:
     """6.1 (cpu_ms, wall_ms, memory_mb) and 6.5 (primitive_calls, adapter_calls)."""
     iid = world.create(tight)
     cases = {
@@ -552,7 +558,8 @@ def check_limits(world: World, tight: Path) -> None:
         "the Instance is idle and usable after every limit termination",
     )
 
-    # 6.5 primitive_calls
+    # 6.5 primitive_calls, on the budget Build (same call budgets, default process limits)
+    iid = world.create(budget)
     script = (
         "import world, cwr\nr0 = world.limits()\nn = 0\nwhile True:\n    try:\n        world.now()\n        n += 1\n"
         "    except cwr.errors.Limit as e:\n        return [r0['remaining_primitive_calls'], r0['primitive_calls'], n, e.code, e.limit, e.primitive]\n"
@@ -573,7 +580,7 @@ def check_limits(world: World, tight: Path) -> None:
     R.check(
         "6.5",
         ok,
-        f"primitive_calls={TIGHT['primitive_calls']}: world.limits() showed {env and env['returned'][:2]} before acting; 13th call LIMIT primitive_calls, not executed (no tick, ledger limit field), returned {env and env['returned']}",
+        f"primitive_calls={TIGHT['primitive_calls']}: world.limits() showed {(env['returned'] or [None, None])[:2] if env and isinstance(env.get('returned'), list) else None} before acting; 13th call LIMIT primitive_calls, not executed (no tick, ledger limit field), returned {env and env['returned']} ({summary(env)}, {len(recs)} ledger records)",
     )
     rc, env, _ = world.turn(
         iid, "import world\nreturn world.limits()['remaining_primitive_calls']\n"
@@ -1305,12 +1312,17 @@ def main() -> int:
         world = World(cwr, scratch)
         ctl = world.build("control")
 
-        def tight_limits(src: Path) -> None:
-            w = src / "world.kvx"
-            text = w.read_text()
-            for k, v in TIGHT.items():
-                text = re.sub(rf"^{k} = \d+$", f"{k} = {v}", text, flags=re.M)
-            w.write_text(text)
+        def set_limits(values: dict):
+            def mutate(src: Path) -> None:
+                w = src / "world.kvx"
+                text = w.read_text()
+                for k, v in values.items():
+                    text, n = re.subn(rf"^{k} = \d+$", f"{k} = {v}", text, flags=re.M)
+                    if n != 1:
+                        raise SystemExit(f"world.kvx has no single {k} line to set")
+                w.write_text(text)
+
+            return mutate
 
         def inject_defects(src: Path) -> None:
             p = src / "lib/fs.py"
@@ -1329,13 +1341,14 @@ def main() -> int:
                 raise SystemExit("defect injection did not apply to lib/fs.py")
             p.write_text(s)
 
-        tight = world.build("tight", tight_limits)
+        tight = world.build("tight", set_limits(TIGHT))
+        budget = world.build("budget", set_limits(BUDGET))
         defect = world.build("defect", inject_defects)
-        for b in (ctl, tight, defect):
+        for b in (ctl, tight, budget, defect):
             if b.name != build_hash(b):
                 raise SystemExit(f"independent Build hash mismatch for {b}")
         check_closure(world, ctl)
-        check_limits(world, tight)
+        check_limits(world, tight, budget)
         check_preconditions(world, ctl)
         check_visibility(world, ctl)
         check_atomic_and_script(world, ctl)

@@ -3,21 +3,19 @@
 
 # Writing a CWR world: World Source guide
 
-Audience: world authors. Status: **pending verification**. As of 2026-11-06 implementation code for waves 0 to 2 is landing in the tree, but no qualification case that covers this guide has an executed attempt in the evidence registry, so nothing here is verified behaviour. This guide is derived from the contract chapter [spec/cwr/world-source.md](../../spec/cwr/world-source.md) and the command table in [spec/cwr/compiler.md](../../spec/cwr/compiler.md). Where this guide and the contract disagree, the contract wins and the difference is a defect in this guide.
+Audience: world authors. Status on 2026-11-06: **implemented, not yet qualified**. The compiler, contract model and kernel described here are in the tree and the commands in this guide run against the packaged release, but no qualification case that covers this guide has an accepted attempt in the evidence registry, so nothing here is verified behaviour. This guide is derived from the contract chapter [spec/cwr/world-source.md](../../spec/cwr/world-source.md) and the command table in [spec/cwr/compiler.md](../../spec/cwr/compiler.md). Where this guide and the contract disagree, the contract wins and the difference is a defect in this guide.
 
 ## How to read this guide
 
-Every section that describes what the compiler or kernel does carries a block like this one:
+Every section that describes what the compiler or kernel does opens with one of three status markers:
 
-> **Pending verification.** Evidence: CWR-002 (driver `tests/cwr/cases/1_1.py`, no attempt recorded). Source in tree, unverified: `crates/cwr-compiler/src/lint.rs`.
+- **Verified, <tier> tier.** The named case has an attempt record that the independent checker accepted and the runner wrote into [tests/cwr/registry.kvx](../../tests/cwr/registry.kvx). The marker links that record, the source and the driver.
+- **Implemented, not yet qualified.** The source exists and is linked, and the commands shown run against the packaged release, but the named case has no accepted attempt. The section describes shipped code, not verified behaviour.
+- **Proposed, not implemented.** The source does not exist yet; the section is the design contract only.
 
-The block names the qualification case that would show the behaviour, the driver its task creates and the source files that implement it. A source file listed as "in tree, unverified" exists but its behaviour has not been shown by an executed case; one listed as "proposed" has not been written. Paths stay in backticks rather than links while implementation is in flux. A block is removed only by task 6.1, and only when the named case has an executed attempt in the evidence registry; until then every statement in the section is the design contract, not a description of running software. Sections without such a block describe the files you write, not program behaviour.
-
-Commands are shown exactly as the specification names them. A command shown here is not evidence that it exists or passes.
+Every `sh` block in this guide runs, in order and in one shell, from the root of an unpacked release bundle with the packaged `cwr` on `PATH` (see [Install](../../README.md#install)). The release driver [tests/cwr/cases/6_1.py](../../tests/cwr/cases/6_1.py) executes each command exactly as written and fails if any exits non-zero. Blocks marked `text` show syntax or file contents and are not executed. Running a command is not evidence that a case passes.
 
 ## 1. What you are writing
-
-> **Pending verification.** Evidence: CWR-011 (driver `tests/cwr/cases/2_5.py`) for "a source edit changes nothing until rebuilt and upgraded", CWR-005 (driver `tests/cwr/cases/1_3.py`) for generation from one contract, no attempt recorded. Source in tree, unverified: `crates/cwr-compiler/src/generate/manual.rs`, `crates/cwr-compiler/src/generate/sdk.rs`.
 
 The World Source is the only layer a human edits. The manual the model reads, the SDK its scripts import, the kernel's enforcement table and the recompile notice shown after an upgrade are all generated from it. A source edit changes nothing for any running Instance until you run `cwr build` and then explicitly upgrade the Instance.
 
@@ -38,11 +36,9 @@ Every file except Python code and manual prose is KVX: `[section]` headers, one 
 | `fixtures/<module>/*.kvx` | Initial states and recorded adapter responses that reach every declared failure |
 | `manual/intro.md`, `manual/conventions.md`, `manual/types.md`, `manual/examples.md` | Prose merged into the generated manual |
 
-The illustrative source under [spec/cwr/examples/refworld](../../spec/cwr/examples/refworld/world.kvx) shows the grammar. It has `meta.example = true`, is not a release input and establishes no registered Build hash. The authored reference world for `examples/refworld/` (task 4.1) is in the tree but unverified: CWR-014 has no recorded attempt.
+The illustrative source under [spec/cwr/examples/refworld](../../spec/cwr/examples/refworld/world.kvx) shows the grammar. It has `meta.example = true`, is not a release input and establishes no registered Build hash. The reference world in `examples/refworld/` is qualified by CWR-014, which has no recorded attempt yet.
 
 ## 3. world.kvx
-
-> **Pending verification.** Evidence: CWR-001 (driver `tests/cwr/cases/0_3.py`) for required keys and missing-limit errors, no attempt recorded. Source in tree, unverified: `crates/cwr-contract/src/world.rs`.
 
 Every key is required. There are no defaults: an omitted limit, clock or RNG key is a compile error, because a limit the model can hit must be printed in the manual and a value you never wrote cannot be presented as a rule you chose.
 
@@ -89,8 +85,6 @@ The limit values above are the proposed refworld values from [spec/cwr/decisions
 
 ## 4. Primitive contracts
 
-> **Pending verification.** Evidence: CWR-001 (driver `tests/cwr/cases/0_3.py`) and CWR-002 (driver `tests/cwr/cases/1_1.py`), no attempt recorded. Source in tree, unverified: `crates/cwr-contract/src/primitive.rs`, `crates/cwr-compiler/src/resolve.rs`.
-
 A contract file declares one module and one section per primitive.
 
 ```text
@@ -115,11 +109,9 @@ doc = "Remove the file at path. Refused when the path does not exist or is locke
 | `effects` | Postconditions over read_only primitives. Mutating primitives declare at least one; read_only primitives declare none |
 | `doc` | One or two sentences, rendered verbatim in the manual; must not be empty |
 
-The compiler is proposed to refuse, before anything else runs: a primitive name declared twice (CWR-C002, naming both places); a contract without a `lib/` function of the same name and parameter list, or the reverse (CWR-L002); effects on a read_only primitive or none on a mutating one (CWR-C001); a failure code outside the envelope (CWR-F001).
+The compiler refuses, before anything else runs: a primitive name declared twice (CWR-C002, naming both places); a contract without a `lib/` function of the same name and parameter list, or the reverse (CWR-L002); effects on a read_only primitive or none on a mutating one (CWR-C001); a failure code outside the envelope (CWR-F001).
 
 ## 5. Preconditions
-
-> **Pending verification.** Evidence: CWR-002 (driver `tests/cwr/cases/1_1.py`) for the language, CWR-008 (driver `tests/cwr/cases/2_2.py`) for evaluation order, no attempt recorded. Source in tree, unverified: `crates/cwr-compiler/src/expr.rs`, `crates/cwr-kernel/src/contract_check.rs`.
 
 Preconditions are the visible half of every rule, so every term must be something the model can evaluate itself before acting.
 
@@ -132,7 +124,7 @@ Preconditions are the visible half of every rule, so every term must be somethin
 | `and`, `or`, `not`, parentheses (short-circuit, left to right) | |
 | JSON integer and string literals | |
 
-How the kernel is proposed to evaluate them:
+How the kernel evaluates them:
 
 1. Parameters are type-checked first; a mismatch or missing argument is `INVALID` and no precondition runs.
 2. Preconditions run in declared order. The first false expression stops evaluation and the call fails with that precondition's code, the primitive name and the one-based precondition index.
@@ -142,8 +134,6 @@ How the kernel is proposed to evaluate them:
 Order matters to the model: list the precondition it should check first, first. Two preconditions may share a code; a model that receives `LOCKED` then has at most the listed expressions to re-check.
 
 ## 6. The failure envelope
-
-> **Pending verification.** Evidence: CWR-001 (driver `tests/cwr/cases/0_3.py`), no attempt recorded. Source in tree, unverified: `crates/cwr-contract/src/envelope.rs`.
 
 There are exactly eleven failure codes. You cannot add one; a world that needs another is a specification change.
 
@@ -170,8 +160,6 @@ Every failure the model sees has this shape; `precondition` is the one-based ind
 
 ## 7. Adapters
 
-> **Pending verification.** Evidence: CWR-002 (driver `tests/cwr/cases/1_1.py`) for the contract checks, CWR-009 (driver `tests/cwr/cases/2_3.py`) for gateway behaviour, no attempt recorded. Source in tree, unverified: `crates/cwr-contract/src/adapter.rs`, `crates/cwr-kernel/src/gateway/mod.rs`.
-
 An adapter is the only place your world touches anything outside itself. Its contract guarantees the interface and declares that it guarantees nothing about content.
 
 | Key | Rule |
@@ -183,6 +171,8 @@ An adapter is the only place your world touches anything outside itself. Its con
 | `timeout_ms` | Positive integer, host time; world time still advances by `tick_per_primitive` |
 | `endpoint` | The only destination the gateway may contact; illustrative sources use `stub://` |
 | `failures` | Nonempty subset of the envelope, and must include `UNAVAILABLE` (CWR-F002) |
+| `undeclared_status` | Optional: `UNAVAILABLE` (default) or `INVALID`, the code a service status the adapter does not map falls back to; must be in `failures` |
+| `retry_after_ratio` | Optional positive integer: world ticks per unit of the service's `retry_after` (default 1) |
 | `content_guaranteed` | Must be present and `false` (CWR-F002) |
 | `effects` | Forbidden (CWR-C001) |
 
@@ -198,8 +188,6 @@ What "content not guaranteed" means in practice: `search.query("tennis", 10)` is
 
 ## 8. lib/
 
-> **Pending verification.** Evidence: CWR-002 (driver `tests/cwr/cases/1_1.py`) for the import scan, CWR-003 (driver `tests/cwr/cases/1_2.py`) for undeclared codes, no attempt recorded. Source in tree, unverified: `crates/cwr-compiler/src/pyimports.rs`, `crates/cwr-compiler/src/contract_tests.rs`.
-
 `lib/<module>.py` runs inside the kernel process, never in the script sandbox. Each public function implements exactly one contract and takes the kernel state handle plus the declared parameters.
 
 - Allowed imports: `cwr_state`, `typing`, `dataclasses`, `json`, `re`, `math`, `collections`, `itertools`.
@@ -208,8 +196,6 @@ What "content not guaranteed" means in practice: `search.query("tennis", 10)` is
 - Raise only codes your contract declares for that primitive. Anything else is a contract-test failure at build time and `INVARIANT_VIOLATION` at run time.
 
 ## 9. fixtures/
-
-> **Pending verification.** Evidence: CWR-003 (driver `tests/cwr/cases/1_2.py`), no attempt recorded. Source in tree, unverified: `crates/cwr-compiler/src/contract_tests.rs`.
 
 The compiler does not search for states on its own. For every primitive and adapter provide, under `fixtures/<module>/`:
 
@@ -221,13 +207,9 @@ A declared failure without a fixture, or a fixture that reaches no declared fail
 
 ## 10. manual/
 
-> **Pending verification.** Evidence: CWR-005 (driver `tests/cwr/cases/1_3.py`) for generation, CWR-002 (driver `tests/cwr/cases/1_1.py`) for CWR-D001, no attempt recorded. Source in tree, unverified: `crates/cwr-compiler/src/generate/manual.rs`.
-
 The manual has ten generated sections; four of them merge your prose: `manual/intro.md`, `manual/conventions.md`, `manual/types.md` and `manual/examples.md`. Everything else, including every primitive entry, the failure envelope, limits and the changelog, is rendered from the compiled contracts. Prose that names a primitive, code or limit the contracts do not define is CWR-D001. Section order and the rendered entry format are in [spec/cwr/model-surface.md](../../spec/cwr/model-surface.md) section 2.
 
 ## 11. CHANGELOG.kvx and versions
-
-> **Pending verification.** Evidence: CWR-004 (driver `tests/cwr/cases/1_2.py`), no attempt recorded. Source in tree, unverified: `crates/cwr-compiler/src/diff.rs`, `crates/cwr-compiler/src/changelog_gate.rs`, `crates/cwr-compiler/src/version.rs`.
 
 Every rule change ships with a human-written change entry, or the Build is refused. See the [example changelog](../../spec/cwr/examples/refworld/CHANGELOG.kvx).
 
@@ -262,13 +244,11 @@ The `summary` is the first line the model reads in the recompile notice; write i
 | `adapter_changed` | major |
 | `doc_only` | patch |
 
-The compiler is proposed to compute a ContractDiff against the previous Build, derive the minimum bump and refuse the Build (exit 6) when any diff entry has no matching change in the newest release, when the newest release announces a change the diff does not contain, when `world.version` is not greater than the previous version or is below the derived bump, or when a `state_shape` change has no migration (CWR-M001). Versions compare numerically, never lexically.
+The compiler computes a ContractDiff against the previous Build, derive the minimum bump and refuse the Build (exit 6) when any diff entry has no matching change in the newest release, when the newest release announces a change the diff does not contain, when `world.version` is not greater than the previous version or is below the derived bump, or when a `state_shape` change has no migration (CWR-M001). Versions compare numerically, never lexically.
 
-Pre-1.0 rule: while the major version is 0, a minor increment satisfies a derived major bump, and the diff output says the rule was applied. That is why the example is at 0.2.0 despite two major-kind changes. [spec/cwr/decisions.md](../../spec/cwr/decisions.md) (P15) additionally states that a patch increment satisfies a derived minor while the major is 0; the compiler chapter states only the first half. Treat the second half as unresolved until task 1.2 pins it.
+Pre-1.0 rule ([spec/cwr/decisions.md](../../spec/cwr/decisions.md) P15, implemented in [crates/cwr-compiler/src/version.rs](../../crates/cwr-compiler/src/version.rs)): while the previous version's major is 0, a minor increment satisfies a derived major bump and a patch increment satisfies a derived minor; from 1.0.0 the derived bump applies literally. The diff output says when the rule was applied. That is why the reference world is at 0.2.0 despite two major-kind changes.
 
 ## 12. Migrations
-
-> **Pending verification.** Evidence: CWR-003 (driver `tests/cwr/cases/1_2.py`) for idempotency at build time, CWR-011 (driver `tests/cwr/cases/2_5.py`) for upgrade rollback, no attempt recorded. Proposed source, not yet written: `crates/cwr-kernel/src/migrate.rs`.
 
 A migration is a pure function `migrate(state: dict) -> dict` in `migrations/<from>_<to>_<name>.py`; see the [example](../../spec/cwr/examples/refworld/migrations/0_2_0_kv_namespaces.py).
 
@@ -279,27 +259,42 @@ A migration is a pure function `migrate(state: dict) -> dict` in `migrations/<fr
 
 ## 13. Checking and building your world
 
-> **Pending verification.** Evidence: CWR-002 (driver `tests/cwr/cases/1_1.py`), CWR-004 (driver `tests/cwr/cases/1_2.py`) and CWR-005 (driver `tests/cwr/cases/1_3.py`), no attempt recorded. Source in tree, unverified: `crates/cwr-cli/src/build.rs`, `crates/cwr-compiler/src/package.rs`.
-
-Check the source without building (parse, resolve and lint only):
+Every command in this guide uses one helper that reads the Build hash from the compiler's JSON report:
 
 ```sh
-cwr lint <source>
+build_hash() { python3 -c 'import json, sys; print(json.load(sys.stdin)["build"]["hash"])'; }
 ```
 
-Build it (all eight stages: parse, resolve, lint, contract tests, diff, changelog gate, generate, package):
+Check a source without building (parse, resolve and lint only). The illustrative example is refused unless `--allow-example` is given:
 
 ```sh
-cwr build <source>
-cwr build <source> --out <dir> --previous <hash>
+cwr lint examples/refworld
+cwr lint spec/cwr/examples/refworld || echo "refused with exit $?"
+```
+
+Build it (all eight stages: parse, resolve, lint, contract tests, diff, changelog gate, generate, package). Building the same source again is "already built" with exit 0 and the same hash, so the second command only reads the hash:
+
+```sh
+cwr build examples/refworld
+BUILD=$(cwr build examples/refworld --json | build_hash)
+echo "$BUILD"
+```
+
+Syntax:
+
+```text
+cwr lint  <source> [--allow-example] [--json]
+cwr build <source> [--out <dir>] [--previous <hash|dir>] [--allow-example] [--json]
+                   [--x-drift <file> | --x-silent-change | --x-version-only | --x-one-primitive]
 ```
 
 | `cwr build` option | Meaning |
 |---|---|
-| `--out <dir>` | Output root; default `build/` |
-| `--previous <hash>` | Build to diff against; default the newest Build of the same world name under `--out` |
-| `--debug-effects` | Assert declared effects after every primitive at run time |
+| `--out <dir>` | Build root; default `build/` in the working directory. Experimental Builds go to `xbuild/` |
+| `--previous <hash\|dir>` | Build to diff against; default the newest Build of the same world name under `--out` |
+| `--debug-effects` | Accepted and ignored by `cwr build`; effect assertion is the `cwr instance turn --debug-effects` option ([kernel.md](kernel.md) section 5) |
 | `--allow-example` | Permit a source whose `meta.example` is `true` |
+| `--json` | Print the machine-readable report (stages, every diagnostic with file, line, column and code, and `build.hash`) |
 | `--x-*` | One experimental flag; see [experiments.md](experiments.md). Two `--x-*` flags together are refused with exit 1 |
 
 | Exit | `cwr build` | `cwr lint` |
@@ -313,11 +308,11 @@ cwr build <source> --out <dir> --previous <hash>
 | 6 | Changelog gate refusal | |
 | 7 | Package failure, including an existing output directory whose content does not verify | |
 
-The first failing stage stops the run and the report lists every error of that stage and nothing from later stages. A successful build writes a read-only directory `build/<sha256>/` whose name is the content hash. Inspect it with:
+The first failing stage stops the run and the report lists every error of that stage and nothing from later stages. A successful build writes a read-only directory `build/<sha256>/` whose name is the content hash. Read the manual the model will see, after hash verification:
 
 ```sh
-cwr manual <hash>
-cwr diff <hash-a> <hash-b>
+cwr manual "$BUILD" > refworld-manual.md
+sed -n '1,5p' refworld-manual.md
 ```
 
 Lint codes you may see:
@@ -340,19 +335,24 @@ There is no warning level; every code fails the build.
 
 ## 14. Shipping a change to running Instances
 
-> **Pending verification.** Evidence: CWR-011 (driver `tests/cwr/cases/2_5.py`), no attempt recorded. Proposed source, not yet written: `crates/cwr-kernel/src/upgrade.rs`, `crates/cwr-kernel/src/notice.rs`.
-
 1. Edit the source and add a release to `CHANGELOG.kvx` covering every rule change.
 2. Run `cwr build <source>`; on success a new Build hash appears.
-3. Review the change with `cwr diff <hash-a> <hash-b>`.
-4. The operator moves each Instance with `cwr instance upgrade <id> <new-build-hash>`; see [kernel.md](kernel.md).
+3. Review the change with `cwr diff`, which prints the ContractDiff, the derived and declared bumps and whether the pre-1.0 rule applied.
+4. The operator moves each Instance with `cwr instance upgrade`; see [kernel.md](kernel.md) section 14.
 5. On the Instance's next turn the model sees the recompile notice: old and new versions, your summary and every change touching a primitive that Instance has used.
+
+Upgrade pair U1 of [examples/refworld-upgrades](../../examples/refworld-upgrades/README.md) is a worked example: side B adds a `LOCKED` precondition to `fs.delete`. Build each side into its own Build root, B with `--previous` naming A's Build directory, and read the diff. Separate roots keep the commands repeatable: rebuilding A into a root that already holds the newer B is refused by the changelog gate, because `--previous` defaults to the newest Build of the world under `--out`.
+
+```sh
+A=$(cwr build examples/refworld-upgrades/U1/A --out pairs/U1-A --json | build_hash)
+B=$(cwr build examples/refworld-upgrades/U1/B --out pairs/U1-B --previous "pairs/U1-A/${A#sha256:}" --json | build_hash)
+cwr diff "pairs/U1-A/${A#sha256:}" "pairs/U1-B/${B#sha256:}" > U1-diff.json
+python3 -c 'import json; d = json.load(open("U1-diff.json")); print(d["derived_bump"], d["declared_bump"])'
+```
 
 ## 15. Quick reference: situations and results
 
-> **Pending verification.** Evidence: CWR-001, CWR-002 and CWR-004, no attempt recorded.
-
-| Situation | Proposed result |
+| Situation | Result |
 |---|---|
 | Two preconditions of one primitive are both false | The first in declared order is reported; the second is not evaluated |
 | A precondition references a primitive this release removes | CWR-V002 |
@@ -373,7 +373,4 @@ There is no warning level; every code fails the build.
 
 ## 16. Open points in the contract
 
-These are differences between specification chapters that this guide does not resolve. Each must be settled by the owning task and recorded in the specification before this guide can describe it as behaviour.
-
-- [spec/cwr/kernel.md](../../spec/cwr/kernel.md) section 7 refers to an adapter field `undeclared_status` and to a declared ratio for converting `retry_after` into ticks. Neither key appears in the adapter key table of [spec/cwr/world-source.md](../../spec/cwr/world-source.md) section 7, and unknown keys are CWR-C001. Owner: tasks 0.3 and 2.3.
-- The pre-1.0 patch-satisfies-minor rule appears in decisions P15 but not in the compiler chapter (section 11 above). Owner: task 1.2.
+The two points this guide left open on its first edition are settled in the specification and the code: the optional adapter keys `undeclared_status` and `retry_after_ratio` are in the key table of [spec/cwr/world-source.md](../../spec/cwr/world-source.md) section 7, and both halves of the pre-1.0 rule are implemented (section 11 above). No open point remains for this guide.

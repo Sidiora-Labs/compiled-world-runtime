@@ -45,6 +45,8 @@ const USAGE: &str = "usage:
   cwr instance show|state|ledger|tail <id>
   cwr instance probe <id> <call>...
   cwr instance context <id> [--tail K|full] [--json]
+  cwr instance upgrade <id> (<build-hash|dir> | --build <dir>) [--allow-experimental]
+  cwr instance notice|outbox <id>
 global options: --home <dir>, --builds <dir>";
 
 fn usage_error(message: &str) -> i32 {

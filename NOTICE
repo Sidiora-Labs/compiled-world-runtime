@@ -4,16 +4,14 @@
 Compiled World Runtime (CWR)
 Copyright Sidiora Labs Inc. CWR® 2026-2027
 
-CWR is licensed under the Sidiora DEV OSS-1.0 license (license identifier
-LicenseRef-Sidiora-DEV-OSS-1.0), reproduced in full in LICENSE: a development license for
-noncommercial use that converts automatically and irrevocably to the MIT License on the first
-official stable release of the Project designated 1.0.0 or higher. Distribute copies with this
-NOTICE and the complete LICENSE file, including its MIT text.
+CWR is licensed under the Sidiora DEV OSS-1.0 license (LicenseRef-Sidiora-DEV-OSS-1.0), reproduced
+in full in LICENSE. It permits noncommercial use and converts automatically and irrevocably to the
+MIT License on the first official stable release of the Project designated 1.0.0 or higher.
+Distribute every copy with this NOTICE and the complete LICENSE file, including its MIT text.
 
 This product includes third-party Rust crates, resolved through Cargo.lock and distributed under
-their own licenses. The list below is every non-workspace package in Cargo.lock as of 2026-11-06,
-with the license expression its manifest declares (from `cargo metadata`). Regenerate it whenever
-Cargo.lock changes.
+their own licenses. The list below names every non-workspace package in Cargo.lock with the
+license expression its manifest declares. The Python SDK has no third-party dependencies.
 
 Direct dependencies of the workspace crates:
 
@@ -48,6 +46,3 @@ Transitive dependencies:
   unicode-ident 1.0.27   (MIT OR Apache-2.0) AND Unicode-3.0
   version_check 0.9.5    MIT/Apache-2.0
   zmij 1.0.23            MIT
-
-thiserror is declared in [workspace.dependencies] in Cargo.toml but no workspace crate uses it,
-so it is not in Cargo.lock and is not distributed.

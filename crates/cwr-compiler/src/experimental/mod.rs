@@ -129,7 +129,7 @@ pub fn build(root: &Path, options: &Options, flag: &Flag) -> Report {
     let staged = match flag {
         Flag::Drift(file) => match drift::Staged::new(root, file, &xroot) {
             Ok(s) => Some(s),
-            Err(d) => return stopped(root, Stage::Parse, vec![d], Vec::new()),
+            Err(d) => return stopped(root, Stage::Parse, vec![*d], Vec::new()),
         },
         _ => None,
     };
@@ -167,7 +167,12 @@ pub fn build(root: &Path, options: &Options, flag: &Flag) -> Report {
     };
     let extra = staged
         .as_ref()
-        .map(|s| vec![(cwr_kernel::drift_injector::SCHEDULE_PATH, s.schedule.clone())])
+        .map(|s| {
+            vec![(
+                cwr_kernel::drift_injector::SCHEDULE_PATH,
+                s.schedule.clone(),
+            )]
+        })
         .unwrap_or_default();
     match package_experimental(&cx, &transformed, flag, &extra, &xroot) {
         Ok(built) => {
@@ -387,8 +392,12 @@ fn package_experimental(
     extra: &[(&str, Vec<u8>)],
     xroot: &Path,
 ) -> Result<Built, String> {
-    fs::create_dir_all(xroot)
-        .map_err(|e| format!("cannot create the experimental root {}: {e}", xroot.display()))?;
+    fs::create_dir_all(xroot).map_err(|e| {
+        format!(
+            "cannot create the experimental root {}: {e}",
+            xroot.display()
+        )
+    })?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -670,6 +679,9 @@ mod tests {
             ..Options::default()
         };
         assert_eq!(xbuild_root(&o(None)), PathBuf::from("xbuild"));
-        assert_eq!(xbuild_root(&o(Some("/w/build"))), PathBuf::from("/w/xbuild"));
+        assert_eq!(
+            xbuild_root(&o(Some("/w/build"))),
+            PathBuf::from("/w/xbuild")
+        );
     }
 }

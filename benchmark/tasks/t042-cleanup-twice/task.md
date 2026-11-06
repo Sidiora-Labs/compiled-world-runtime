@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Clean reports between two cleanups
 
 Do these steps in order. First remove /scratch/session.tmp. Then, for every file under /reports/raw,

@@ -3,28 +3,33 @@
 
 # Support
 
-CWR is a Sidiora Labs research system under active implementation. There is no release and no
-service-level commitment; support is provided by the Sidiora Development Team on a best-effort
-basis to people with repository access.
+CWR has no release and no service-level commitment. The Sidiora Development Team answers questions
+and defect reports on a best-effort basis.
 
-## Before asking
+## Before you ask
 
-1. Read [README.md](README.md), then [spec/cwr/README.md](spec/cwr/README.md) for what CWR promises
-   and the user guides under [docs/cwr/](docs/cwr/README.md) for how to use it.
-2. Check [GOTCHA.kvx](GOTCHA.kvx) for known pitfalls (cargo lock stalls, strict KVX, header
-   exemptions, validator stage rules).
-3. Run `make check` and the relevant task driver; most problems show up there with a located error.
-4. Check [CODEMAP.md](CODEMAP.md) to find the code that owns a behaviour.
+1. Read [README.md](README.md) for what CWR is and how to run it.
+2. Read the guide for your role under [docs/cwr/](docs/cwr/world-source.md): world author,
+   operator or experimenter. The normative behaviour is in
+   [spec/cwr/README.md](spec/cwr/README.md).
+3. Check [GOTCHA.kvx](GOTCHA.kvx) for known pitfalls, such as cargo lock contention and strict KVX
+   values.
+4. Run `make check` and the relevant task driver. Most problems surface there with a file, line
+   and column.
+5. Use [CODEMAP.md](CODEMAP.md) to find the code that owns a behaviour.
 
-## Asking
+## Ask a question or report a defect
 
-Open an issue in the repository tracker with the commit, the command you ran, the full output
-(with any secret removed) and what you expected. A disagreement between the code and the
-specification is a defect report; say which clause you are reading. Security issues go through
-[SECURITY.md](SECURITY.md), never the public tracker.
+Open an issue in the repository's issue tracker. Include the commit, the command you ran, its full
+output with any credential removed, and what you expected instead. When the code and the
+specification disagree, name the clause you are reading. That disagreement is a defect report.
 
-## What we cannot help with
+Report security issues privately as described in [SECURITY.md](SECURITY.md). Never use the public
+issue tracker for them.
 
-Comparisons with other agents or harnesses are out of scope by design (see
-[GOVERNANCE.md](GOVERNANCE.md)). Results reported outside `benchmark/results/` and the
-`research/` reports are not supported claims.
+## Out of scope
+
+- Comparisons between CWR and other systems. The project does not make them by design; see
+  [GOVERNANCE.md](GOVERNANCE.md).
+- Numbers reported anywhere other than a campaign result under `benchmark/results/` or a
+  hypothesis report under `research/`. Those are not supported claims.

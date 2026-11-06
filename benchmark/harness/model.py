@@ -28,11 +28,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import json
 import os
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -47,6 +50,40 @@ KEY_NAMES = tuple(f"CLUSTER_{n}_GATEWAY_API_KEY" for n in range(1, 6))
 ANTHROPIC_VERSION = "2023-06-01"
 RETRY_STATUSES = frozenset({429}) | frozenset(range(500, 600))
 AUTH_STATUSES = frozenset({401, 403})
+INFLIGHT_ENV = "CWR_GATEWAY_MAX_INFLIGHT"
+INFLIGHT_DEFAULT = 48
+
+
+@contextlib.contextmanager
+def inflight_slot() -> Generator[None]:
+    """Hold one of N machine-wide gateway request slots while one HTTP request is in flight.
+
+    N is $CWR_GATEWAY_MAX_INFLIGHT (default 48; 0 disables the bound). Slots are flock-ed files under
+    the system temp directory, so every campaign process on the host (tasks 5.2 and 5.3 run
+    concurrently) shares one bound on concurrent gateway requests. Backoff sleeps hold no slot.
+    """
+    limit = int(os.environ.get(INFLIGHT_ENV, INFLIGHT_DEFAULT))
+    if limit <= 0:
+        yield
+        return
+    root = Path(tempfile.gettempdir()) / "cwr-gateway-slots"
+    root.mkdir(exist_ok=True)
+    start = (os.getpid() * 31 + threading.get_ident()) % limit
+    while True:
+        for offset in range(limit):
+            fd = os.open(root / f"slot-{(start + offset) % limit}", os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(fd)
+                continue
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+            return
+        time.sleep(0.2)
 
 
 class ModelError(RuntimeError):
@@ -208,7 +245,10 @@ class GatewayClient:
         for attempt in range(self.max_attempts):
             slot = self._take_slot()
             try:
-                with self._open(self._request(slot, body), timeout=self.timeout_s) as response:
+                with (
+                    inflight_slot(),
+                    self._open(self._request(slot, body), timeout=self.timeout_s) as response,
+                ):
                     raw = response.read()
                 return self._parse(raw, slot, attempt + 1, params or {})
             except urllib.error.HTTPError as error:

@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Purge a queue around a namespace move
 
 Do these steps in order. First remove /queue/stale-1.job and /queue/stale-2.job. Then move every key

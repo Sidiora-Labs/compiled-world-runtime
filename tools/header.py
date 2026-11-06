@@ -93,6 +93,7 @@ EXEMPT_DIR_PARTS = {
     "node_modules",
     "vendor",  # third-party code keeps its own headers
     ".hyperfide",
+    ".cwr",  # CWR runtime state (Instance homes, campaign Builds, ledgers): recorded data
     "evidence",  # tests/cwr/evidence: immutable attempt records
     "results",  # benchmark/results: campaign ledgers and analyses
     "cassettes",  # benchmark/cassettes: recorded adapter traffic

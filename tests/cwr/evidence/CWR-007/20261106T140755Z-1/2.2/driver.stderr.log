@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/root/audit/tests/cwr/cases/2_2.py", line 1359, in <module>
+    finally:
+             
+  File "/root/audit/tests/cwr/cases/2_2.py", line 1337, in main
+    'def write(state: Any, path: str, content: bytes) -> None:\n    if path == "/defect/mutating":\n'
+^^^^^^^^^^^^^^^^^^^^^
+  File "/root/audit/tests/cwr/cases/2_2.py", line 386, in check_closure
+    "6.1",
+  File "/root/audit/tests/cwr/cases/2_2.py", line 389, in <genexpr>
+    )
+      
+IndexError: list index out of range

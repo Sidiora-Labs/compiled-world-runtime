@@ -69,9 +69,9 @@ fn parse(cmd: &str, args: &[String]) -> Result<Args, String> {
     while let Some(x) = it.next() {
         match x.as_str() {
             "--home" => a.home = PathBuf::from(it.next().ok_or("--home needs a directory")?),
-            "--builds" => a
-                .builds
-                .push(PathBuf::from(it.next().ok_or("--builds needs a directory")?)),
+            "--builds" => a.builds.push(PathBuf::from(
+                it.next().ok_or("--builds needs a directory")?,
+            )),
             "--build" if cmd == "upgrade" => {
                 if a.build.is_some() {
                     return Err("--build given twice".into());
@@ -90,16 +90,15 @@ fn parse(cmd: &str, args: &[String]) -> Result<Args, String> {
 }
 
 fn run_upgrade(a: &Args) -> i32 {
-    let (id, reference) = match (a.positional.as_slice(), &a.build) {
-        ([id], Some(b)) => (id, b),
-        ([id, b], None) => (id, b),
-        _ => {
-            return usage_error(
+    let (id, reference) =
+        match (a.positional.as_slice(), &a.build) {
+            ([id], Some(b)) => (id, b),
+            ([id, b], None) => (id, b),
+            _ => return usage_error(
                 "upgrade",
                 "upgrade takes an <id> and exactly one Build: <build-hash|dir> or --build <dir>",
-            )
-        }
-    };
+            ),
+        };
     let target = match upgrade::resolve_target(reference, &a.builds) {
         Ok(t) => t,
         Err(e) => {

@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Cache entries around a mail merge
 
 Do these steps in order. First store the content of /in/e1.txt in kv namespace cache under e1. Then

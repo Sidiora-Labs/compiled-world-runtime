@@ -328,11 +328,20 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let tmp = out.join(format!(".tmp-{}-{nanos}", std::process::id()));
+    // The Build is assembled one level below a private staging directory, so that no directory
+    // directly under the Build root ever holds a manifest.kvx before it is the finished, sealed
+    // Build: a racing compilation of the same world scans the Build root for its previous Build
+    // (diff stage) and must not pick up a half-written one.
+    let holder = out.join(format!(".tmp-{}-{nanos}", std::process::id()));
+    let tmp = holder.join("build");
+    if let Err(e) = fs::create_dir_all(&tmp) {
+        discard(&holder);
+        return fail(format!("cannot create {}: {e}", tmp.display()));
+    }
     let hex = match package(cx, &tmp) {
         Ok(h) => h,
         Err(m) => {
-            discard(&tmp);
+            discard(&holder);
             return fail(m);
         }
     };
@@ -353,7 +362,7 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
         }
     };
     if let Some(r) = existing(&target) {
-        discard(&tmp);
+        discard(&holder);
         return match r {
             Ok(()) => finalize(cx, true),
             Err(m) => fail(format!(
@@ -363,11 +372,11 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
         };
     }
     if let Err(m) = seal(&tmp) {
-        discard(&tmp);
+        discard(&holder);
         return fail(m);
     }
     if let Err(e) = fs::rename(&tmp, &target) {
-        discard(&tmp);
+        discard(&holder);
         // A racing build of the same source may have renamed first.
         return match existing(&target) {
             Some(Ok(())) => finalize(cx, true),
@@ -381,6 +390,7 @@ pub fn run_stage(cx: &mut Context) -> StageRun {
             )),
         };
     }
+    discard(&holder);
     let _ = fs::File::open(&out).and_then(|d| d.sync_all());
     match verify(&target) {
         Ok(_) if sealed(&target) => finalize(cx, false),

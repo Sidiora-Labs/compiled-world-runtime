@@ -3,82 +3,178 @@
 
 # Releasing CWR
 
-Status: **no release exists and none can be claimed yet.** This document is the procedure a release must follow; it is derived from requirement 14 in [spec/cwr/spec.kvx](spec/cwr/spec.kvx), tasks 6.1 and 6.2 and stage G of [spec/cwr/verification.md](spec/cwr/verification.md). Every step that runs a program is **pending verification**. Some of the programs it names are in the tree (the `cwr` binary from `crates/cwr-cli`, without `cwr instance upgrade` and without working experimental flags as of 2026-11-06), but none has been exercised by a recorded case, and the release drivers `tests/cwr/cases/6_1.py` and `tests/cwr/cases/6_2.py` do not exist yet. Task 6.1 finalises the packaging steps and task 6.2 the closure steps.
+A CWR release is a source bundle from which every Build, ledger and published result can be
+reproduced, together with a release file that pins every input by digest. A release is cut only
+when every qualification case has an accepted attempt and the owner has accepted the result. This
+document states how versions are numbered, what a release contains, how a release is cut and how
+anyone can verify one.
 
-## What a release is
+No version has been released yet. Version 0.1.0 is declared, but its inputs are not pinned, the
+packaging of the CLI and SDK is not yet fixed and 19 of the 20 qualification cases have no
+accepted attempt.
 
-A release is a set of pinned inputs from which every documented result can be reproduced, plus a closure record showing that every qualification case has been executed and the owner has accepted the result. A release is not a version number on its own, and it is not a passing authoring validation.
+## Versions
 
-## Conditions
+A version has the form `MAJOR.MINOR.PATCH`, with an optional pre-release suffix such as `-rc.1`
+and an optional build suffix such as `+linux`.
 
-A release claim requires all of the following. An unresolved required failure blocks the claim; a missing input never lowers a requirement.
+The version is declared in three places, and the three must agree:
 
-1. **Pinned inputs** (clause 14.3): compiler, kernel and SDK revisions, the refworld control and experimental Build hashes, the cassette set digest and the task suite digest are recorded in [benchmark/release.kvx](benchmark/release.kvx). A missing input produces the named diagnostic listed in that file.
-2. **Documentation** (clause 14.2): the guides under [docs/cwr](docs/cwr/world-source.md) and the [README](README.md) describe implemented behaviour with links to source and evidence, and still mark anything proposed or unimplemented as such.
-3. **Traceability** (clause 14.1): the authoring validator passes and the derived views in `spec/cwr/` are current. This is necessary but never sufficient; its PASS is not an input to closure.
-4. **Closure** (clause 14.4): every case CWR-001 to CWR-020 has an executed attempt with an independent checker result, the four hypothesis reports carry their pre-registration, and owner acceptance is recorded against exact Build hashes.
+| File | Field |
+|---|---|
+| [Cargo.toml](Cargo.toml) | `[workspace.package] version`, inherited by every crate |
+| [sdk/python/pyproject.toml](sdk/python/pyproject.toml) | `[project] version` |
+| [benchmark/release.kvx](benchmark/release.kvx) | `[meta] release` |
 
-## Procedure
+The release bundler, [tools/release.py](tools/release.py), refuses to run when they disagree, and
+`cwr release check` reports the disagreement as CWR-R019.
 
-> **Pending verification.** Evidence: CWR-020 (drivers `tests/cwr/cases/6_1.py` and `tests/cwr/cases/6_2.py`, no attempt recorded). The commands below are named in the specification; none has run.
+The size of a version bump follows the rule the World Compiler enforces for world versions
+([decision P15](spec/cwr/decisions.md)). A removal or a stricter rule requires a major bump. An
+addition or a looser rule requires a minor bump. Any other change requires a patch bump.
 
-1. Check the specification pack:
+While the major version is 0, a minor bump satisfies a required major bump and a patch bump
+satisfies a required minor bump. From 1.0.0 the required bump applies literally.
 
-   ```sh
-   python3 spec/cwr/tools/validate_spec.py
-   ```
+The first stable release at 1.0.0 or higher also converts the license to MIT, as
+[LICENSE](LICENSE) states.
 
-2. Build the control world and every experimental Build from the same source, recording each hash:
+## What a release contains
 
-   ```sh
-   cwr build <source>
-   cwr build <source> --x-drift <drift.kvx>
-   cwr build <source> --x-one-primitive
-   cwr build <source> --x-version-only
-   cwr build <source> --x-silent-change
-   ```
+| File | Contents |
+|---|---|
+| `cwr-<version>.tar.gz` | Every tracked or unignored file of the tree under `cwr-<version>/`, the release `cwr` binary as `bin/cwr` when one has been built, and `MANIFEST.sha256` |
+| `cwr-<version>.tar.gz.sha256` | The sha256 of the tarball, in `sha256sum -c` format |
+| `MANIFEST.sha256`, inside the tarball | The sha256 of every other file in the bundle, in `sha256sum -c` format |
+| `benchmark/release.kvx`, inside the tarball | The pins listed under [Diagnostics](#diagnostics), with closure and owner acceptance |
 
-3. Confirm that each experimental Build differs from its control only by flag-attributable entries:
+The tarball includes vendored crate sources under `vendor/cargo` when `make vendor` has run. It
+excludes the top-level output directories (`target`, `build`, `xbuild`, `out`, `artifacts`), ignored
+files, Python caches and hidden
+paths other than the repository dotfiles and `.cargo/config.toml`. The bundler refuses any file
+that looks like a credential: an environment file, a key or a certificate.
 
-   ```sh
-   cwr diff <hash-a> <hash-b>
-   ```
+The release file also names the packaged `cwr` CLI and Python SDK under `[artifact.cli]` and
+`[artifact.sdk]`, and pins their checksums.
 
-4. Record in `benchmark/release.kvx`: the compiler, kernel, SDK and CLI revisions; the control, experimental and upgrade-pair Build hashes; the cassette set digest and task suite digest, each equal to the value frozen in `benchmark/suite.kvx`; the specification digest.
-5. Package the `cwr` CLI and the Python SDK with pinned dependencies and record their checksums under `artifact.cli` and `artifact.sdk`. The packaging format and install instructions are decided by task 6.1.
-6. From the packaged artifacts, exercise the running journey: `cwr build`, `cwr instance create`, `cwr instance turn`, `cwr instance upgrade` and `cwr instance replay`.
-7. Run the documentation and release driver, which checks that every documented command runs against the packaged artifacts, every evidence link resolves, the release file is complete and no document claims a result without an attempt record:
+## Reproducibility
 
-   ```sh
-   python3 tests/cwr/cases/6_1.py
-   ```
+The tarball is byte-reproducible. Entries are sorted, timestamps are zero, owner and group are 0
+and file modes are normalised to 0644 or 0755. Two runs of the bundler over the same tree write
+identical bytes.
 
-8. Assemble closure and record owner acceptance (task 6.2). Closure refuses missing, tampered, stale-Build or zero-assertion evidence and lists every blocking item:
+The bundler refuses to overwrite an existing bundle of the same name with different content. A
+changed tree is published under a new version.
 
-   ```sh
-   python3 tests/cwr/cases/6_2.py
-   ```
+`bin/cwr` is added only when a release binary exists in the cargo target directory. A rebuilt
+bundle matches a published one only when the same binary is present, or both lack it.
 
-9. Only when closure lists no blocking item: move the Unreleased section of [CHANGELOG.md](CHANGELOG.md) under the release version, set `meta.status` in `benchmark/release.kvx` to its final value and fill `evidence.closure` and `evidence.owner_acceptance`.
+Every other input is pinned by content. Crate versions are fixed by `Cargo.lock`, and its digest
+is a pin. A component revision is the sha256 tree digest of its directory, not a version-control
+commit. Builds are content-addressed, so `cwr release check` rebuilds the control, experimental
+and upgrade-pair Builds from the bundled World Sources and compares their hashes with the pins.
+
+## Cutting a release
+
+Run these steps from the repository root.
+
+1. Set the version in the three files listed under [Versions](#versions).
+2. Run the gates: `make check`, then `make test`.
+3. Run every qualification case with `make qualify`, then assemble closure with
+   `python3 tests/cwr/closure.py`. Closure refuses, and lists every blocking item, when a case
+   has no accepted attempt, fails, is tampered, makes no assertion or was recorded against a Build
+   from a compiler, kernel or SDK revision other than the current one.
+4. The owner runs the acceptance journey with `python3 tests/cwr/closure.py --journey` and
+   records acceptance with `python3 tests/cwr/closure.py --accept --owner` followed by the
+   owner's name. Nothing in the repository records acceptance on the owner's behalf.
+5. Place the packaged CLI and SDK at the paths named by `[artifact.cli]` and `[artifact.sdk]` in
+   [benchmark/release.kvx](benchmark/release.kvx).
+6. Record the pins with `cwr release pin --write`, then confirm them with
+   `cwr release check --claim`. The check exits 0 only when every pin equals its recomputation
+   and closure and owner acceptance are recorded.
+7. Move the Unreleased section of [CHANGELOG.md](CHANGELOG.md) under a heading that names the
+   version and the date.
+8. Bundle with `make release`. It runs `check`, `test` and `qualify` again, then the bundler,
+   which writes the tarball and its `.sha256` file into `artifacts/`. `scripts/release.sh` runs
+   the same target and keeps the log in `artifacts/release.log`.
+
+To rehearse, `python3 tools/release.py --dry-run` runs every bundler check and writes nothing.
+`python3 tools/release.py --snapshot` bundles a tree whose `[meta] release` is still null and
+names the bundle `cwr-<version>-snapshot`. A snapshot is never a release.
+
+The bundler exits 0 when it writes a bundle, or when every check passes under `--dry-run`. It
+exits 1 when it refuses and 2 on a usage error. It refuses, listing every reason, when:
+
+- a tool that `make check` needs is missing or fails to run: Python 3.12 or newer, cargo, rustfmt,
+  clippy or ruff
+- a file that `make check` reads is missing
+- the declared versions disagree or are not of the form `MAJOR.MINOR.PATCH[-pre][+build]`
+- `[meta] release` is null and `--snapshot` is not given
+- a file selected for the bundle looks like a credential
+- a bundle of the same name already exists with different content
+
+## Verifying a release
+
+The commands below use version 0.1.0 as the example. Download `cwr-0.1.0.tar.gz` and
+`cwr-0.1.0.tar.gz.sha256` into one directory. Check the tarball
+with `sha256sum -c cwr-0.1.0.tar.gz.sha256`, then unpack it with `tar -xzf cwr-0.1.0.tar.gz`.
+
+Inside the unpacked `cwr-0.1.0` directory, check every file against the manifest, then check every
+pin against the bundled sources:
+
+```sh
+sha256sum -c --quiet MANIFEST.sha256
+cwr release check
+```
+
+`cwr release check` needs the `cwr` binary and Python 3.12 or newer as `python3` on `PATH`; the
+World Compiler runs each world's contract tests with Python. It recomputes every revision, digest,
+Build hash and checksum from the unpacked tree and prints one line per pin. It exits 0 when every
+pin matches, 2 with one named diagnostic for each pin that does not, and 1 on a usage error or an
+unreadable release file. `--claim` also requires closure and owner acceptance. `--json` prints the
+same report as JSON.
+
+To confirm that the tarball itself reproduces, check out the same tree and run
+`python3 tools/release.py --output "$(mktemp -d)"`. The digest it prints must equal the one in
+`cwr-0.1.0.tar.gz.sha256`.
 
 ## Diagnostics
 
-`benchmark/release.kvx` proposes one named diagnostic per pin, CWR-R001 to CWR-R015. Each names the missing key and blocks the release claim. Task 6.1 may renumber them; whatever it settles on is the list its driver emits and this section must match.
+Each pin in [benchmark/release.kvx](benchmark/release.kvx) has one named diagnostic. A diagnostic
+names the release-file key it guards and blocks the release.
 
-| Diagnostic | Missing or failing input |
-|---|---|
-| CWR-R001 to CWR-R004 | Compiler, kernel, SDK and CLI revisions |
-| CWR-R005 | refworld control Build hash |
-| CWR-R006 to CWR-R009 | Drift, one-primitive, version-only and silent-change Build hashes |
-| CWR-R010 | Upgrade pair Build hashes |
-| CWR-R011, CWR-R012 | Cassette set and task suite digests |
-| CWR-R013, CWR-R014 | Packaged CLI and SDK checksums |
-| CWR-R015 | Closure or owner acceptance |
+| Diagnostic | Key | Fails when |
+|---|---|---|
+| CWR-R001 | `pin.compiler.revision` | The compiler revision is not pinned or differs from the tree |
+| CWR-R002 | `pin.kernel.revision` | The kernel revision is not pinned or differs from the tree |
+| CWR-R003 | `pin.sdk.revision` | The SDK revision is not pinned or differs from the tree |
+| CWR-R004 | `pin.cli.revision` | The CLI revision is not pinned or differs from the tree |
+| CWR-R005 | `build.refworld_control.hash` | The refworld control Build hash is missing or fails verification |
+| CWR-R006 | `build.x_drift.hashes` | A drift Build hash is missing or fails verification |
+| CWR-R007 | `build.x_one_primitive.hash` | The one-primitive Build hash is missing or fails verification |
+| CWR-R008 | `build.x_version_only.hashes` | A version-only Build hash is missing or fails verification |
+| CWR-R009 | `build.x_silent_change.hashes` | A silent-change Build hash is missing or fails verification |
+| CWR-R010 | `build.upgrade_pairs.hashes` | An upgrade pair Build hash is missing or fails verification |
+| CWR-R011 | `cassettes.digest` | The cassette set digest is missing or differs from `benchmark/suite.kvx` |
+| CWR-R012 | `suite.digest` | The task suite digest is missing or differs from `benchmark/suite.kvx` |
+| CWR-R013 | `artifact.cli.sha256` | The packaged CLI is missing or its checksum does not match |
+| CWR-R014 | `artifact.sdk.sha256` | The packaged SDK is missing or its checksum does not match |
+| CWR-R015 | `evidence.closure` | Closure or owner acceptance is missing or names blocking items (checked with `--claim`) |
+| CWR-R016 | `pin.contract.revision` | The contract crate revision is not pinned or differs from the tree |
+| CWR-R017 | `dependencies.cargo_lock` | The `Cargo.lock` digest is not pinned or differs from the tree |
+| CWR-R018 | `results.digests` | A campaign result digest is missing or differs from `benchmark/results` |
+| CWR-R019 | `meta.release` | The release version is missing or disagrees with the CLI and SDK versions |
+| CWR-R020 | `meta.spec_sha256` | The specification digest is not pinned or differs from `spec/cwr/spec.kvx` |
+| CWR-R021 | `evidence.preregistration_sha256` | The pre-registration digest is not pinned or differs from the registered file |
 
-## What never counts
+## What a release cannot rest on
 
-- The authoring validator's PASS.
-- A component PASS standing in for its parent case, a hypothesis or the release.
-- A driver's exit code without an attempt record and an independent checker result.
-- Evidence recorded against a different Build hash, cassette digest, suite digest, model identity, K, compiler or kernel revision, or metric definition than the release pins.
-- Any comparison with a system outside CWR; every arm is a CWR Build.
+A release rests on executed qualification cases, each with an attempt record accepted by the
+independent checker, and on owner acceptance. None of the following substitutes for them:
+
+- the specification validator, which checks the structure of the specification only
+- a component case standing in for its parent case, a hypothesis or the release
+- a driver's exit code without an attempt record and a checker result
+- evidence recorded against a Build, cassette set, task suite, model, context tail, compiler,
+  kernel or metric definition other than the ones the release pins
+- any comparison with a system outside CWR: every experimental arm is a CWR Build

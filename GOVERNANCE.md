@@ -3,63 +3,69 @@
 
 # Governance
 
-## Ownership
+CWR is owned by Sidiora Labs Inc. The project is governed by the rule CWR applies to its own
+worlds: nothing changes silently. Every change to behaviour is written into the specification
+first, recorded in the changelog and checked by the specification validator before code follows.
 
-The Compiled World Runtime is a research system owned by Sidiora Labs Inc. Sidiora Labs is the
-owner the specification refers to: it accepts or rejects changes to the specification, approves
-pre-registrations before any campaign runs, records owner acceptance at release closure, and
-decides what is published. Day-to-day work is carried out by the Sidiora Development Team
-([CONTRIBUTORS.md](CONTRIBUTORS.md)).
+## Roles
 
-Each task in the specification names an owning role (`owner = "spec"`, `"qualification"`,
-`"release"` and so on). The role owns the task's `touches` and answers for its driver.
+| Role | Held by | Responsibilities |
+|---|---|---|
+| Owner | Sidiora Labs Inc. | Accepts or rejects changes to the specification, approves pre-registrations before any campaign runs, records owner acceptance at release closure and decides what is published |
+| Maintainers | Sidiora Development Team ([CONTRIBUTORS.md](CONTRIBUTORS.md)) | Carry out day-to-day development and review, and handle security reports as described in [SECURITY.md](SECURITY.md) |
+| Task owner | The role named by a task's `owner` key in the specification | Answers for the paths the task may change and for its driver |
+| Contributor | Anyone who follows [CONTRIBUTING.md](CONTRIBUTING.md) | Proposes changes |
 
-## Spec first
+The task owner roles are `spec`, `contracts`, `compiler`, `kernel`, `surface`, `refworld`,
+`experiments`, `qualification` and `release`.
 
-The normative specification is [spec/cwr/spec.kvx](spec/cwr/spec.kvx) with the contract chapters
-next to it. Behaviour that is not in the specification is not a feature, and a contradiction
-between code and specification is a defect in one of them, resolved by the owner.
+## The specification comes first
 
-A change to requirements, clauses, tasks or cases follows one path:
+The normative specification is [spec/cwr/spec.kvx](spec/cwr/spec.kvx), refined by the contract
+chapters next to it in `spec/cwr/`. Behaviour that the specification does not state is not a
+feature. A contradiction between code and specification is a defect in one of them, and the owner
+decides which.
+
+A change to a requirement, clause, task or case follows one path:
 
 1. Edit `spec/cwr/spec.kvx` and, where the contract changes, the chapter that refines it.
-2. Regenerate the derived views and validate:
+2. Regenerate the derived views, then validate:
 
    ```sh
    python3 spec/cwr/tools/validate_spec.py --render
    python3 spec/cwr/tools/validate_spec.py
    ```
 
-   Both views record a digest of every requirement, clause, task and case, so an edit that skips
-   `--render` fails validation.
-3. Keep task statuses honest. While `[meta] stage` is `"design"`, every task stays `"pending"` and
-   the validator refuses anything else. In the implementation stage a task moves through
-   `in_progress`, `implemented` and `done` only with its driver, and a case leaves `UNRUN` only
-   through a checker-accepted attempt record in `tests/cwr/registry.kvx`.
-4. Record the change in [CHANGELOG.md](CHANGELOG.md). A deviation from a clause (fewer seeds, a
-   deferred check, a renumbered diagnostic) is recorded in the task result and in
-   `spec/cwr/qualification.kvx`; it is never silently absorbed.
+   Each derived view records a digest of every requirement, clause, task and case, so an edit
+   made without `--render` fails validation.
+3. Record the change in [CHANGELOG.md](CHANGELOG.md).
 
-The authoring validator's PASS shows that the pack is consistent. It is not product evidence and
-no closure accepts it.
+A deviation from a clause, such as fewer seeds than registered or a deferred check, is recorded in
+`spec/cwr/qualification.kvx`. It is never absorbed silently.
 
-## No silent change
+## Status changes
 
-CWR's thesis is that a world changes only through a human recompilation that is versioned,
-documented and announced to the model. The repository is governed the same way: no rule, metric,
-threshold, failure code or pre-registered parameter changes without a specification edit, a
-regenerated view and a changelog entry. A metric changed after execution is a new
-pre-registration and a new campaign; earlier results stay under their original registration.
+Task and case statuses are evidence, not opinion. While the specification's stage is `design`,
+every task stays `pending` and the validator refuses any other status. A task advances only with a
+driver that exits 0. A case leaves `UNRUN` only through an attempt record that the independent
+checker has accepted into [tests/cwr/registry.kvx](tests/cwr/registry.kvx).
+
+The validator's PASS shows that the specification is internally consistent. It is not evidence
+that the software behaves as specified, and no release closure accepts it as such.
 
 ## Research rules
 
-- No external baselines: CWR is never compared with, modelled on, or run against any other agent
-  or harness. Every arm is a CWR Build with one pillar ablated.
-- Reported numbers equal an independent recomputation from ledgers by `benchmark/analyse.py`.
-- A hypothesis is supported only by the complete pre-registered arm matrix; component evidence
-  never implies a hypothesis result.
+- CWR is never compared with, modelled on or run against any other system. Every experimental arm
+  is a CWR Build with one pillar removed.
+- A metric, threshold or seed count is fixed by pre-registration before a campaign runs. Changing
+  one after execution creates a new pre-registration and a new campaign. Earlier results stay under
+  their original registration.
+- A reported number must equal an independent recomputation from ledgers by
+  `benchmark/analyse.py`.
+- A hypothesis is supported only by the complete pre-registered arm matrix. Evidence about one
+  component never implies a hypothesis result.
 
 ## Releases
 
-A release is a set of pinned inputs plus a closure record with owner acceptance. The procedure is
-[RELEASE.md](RELEASE.md); the pins live in `benchmark/release.kvx`.
+A release is a set of pinned inputs plus a closure record that carries owner acceptance. The
+procedure is in [RELEASE.md](RELEASE.md), and the pins live in `benchmark/release.kvx`.

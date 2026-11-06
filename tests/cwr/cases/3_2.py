@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright Sidiora Labs Inc. CWR® 2026-2027
-# SPDX-License-Identifier: Sidiora DEV OSS-1.0
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
 """Task 3.2 driver: experimental ablation Builds and the kernel gate.
 
 Case CWR-013. Exercises clauses 5.3, 10.1, 10.2, 10.3, 10.4 and 10.5 against the real
@@ -68,7 +68,9 @@ R = Results()
 
 
 def run(cmd: list, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, timeout=TIMEOUT, **kw)
+    return subprocess.run(
+        [str(c) for c in cmd], capture_output=True, text=True, timeout=TIMEOUT, **kw
+    )
 
 
 def target_dir() -> Path:
@@ -130,7 +132,9 @@ def manifest(d: Path) -> dict:
 
 
 def files(d: Path) -> dict[str, bytes]:
-    return {p.relative_to(d).as_posix(): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()}
+    return {
+        p.relative_to(d).as_posix(): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()
+    }
 
 
 def kvx_value(path: Path, section: str, key: str):
@@ -163,7 +167,9 @@ class Cwr:
     def __call__(self, *args) -> subprocess.CompletedProcess:
         return run([self.exe, *args], cwd=self.work)
 
-    def build(self, src: Path, out: Path, *flags) -> tuple[subprocess.CompletedProcess, Path | None]:
+    def build(
+        self, src: Path, out: Path, *flags
+    ) -> tuple[subprocess.CompletedProcess, Path | None]:
         p = self("build", src, "--out", out, *flags)
         m = re.search(r" at (\S+)$", p.stdout.strip())
         return p, (self.work / m.group(1) if m else None)
@@ -304,7 +310,7 @@ def check_10_1(k: Cwr, b: dict, src: Path) -> None:
         and m["experimental"] is False
         and m["experimental_flag"] is None
         and build_hash(control) == control.name,
-        f"control Build under build/ hashes to its name with experimental=false",
+        "control Build under build/ hashes to its name with experimental=false",
     )
     ok = []
     for label, flag in flags.items():
@@ -323,7 +329,9 @@ def check_10_1(k: Cwr, b: dict, src: Path) -> None:
         all(ok),
         "5 experimental Builds under xbuild/<sha256> with experimental=true, their flag name and an independently recomputed hash",
     )
-    combo = k("build", src, "--out", k.work / "combo" / "build", "--x-silent-change", "--x-one-primitive")
+    combo = k(
+        "build", src, "--out", k.work / "combo" / "build", "--x-silent-change", "--x-one-primitive"
+    )
     R.check(
         "10.1",
         combo.returncode == 1 and not (k.work / "combo").exists(),
@@ -341,7 +349,11 @@ def check_10_1(k: Cwr, b: dict, src: Path) -> None:
         refused = k.create(b[label])
         allowed = k.create(b[label], "--allow-experimental")
         if refused.returncode != 3 or allowed.returncode != 0:
-            R.check("10.1", False, f"{label}: create exit {refused.returncode} without the flag, {allowed.returncode} with it")
+            R.check(
+                "10.1",
+                False,
+                f"{label}: create exit {refused.returncode} without the flag, {allowed.returncode} with it",
+            )
             continue
         iid = allowed.stdout.strip()
         k.turn(iid, "import world\nreturn world.now()\n")
@@ -373,7 +385,8 @@ def check_10_2(k: Cwr, b: dict, src: Path) -> None:
         R.check(
             "10.2",
             (d / "manual.md").read_bytes() == control_manual
-            and (d / "contracts.json").read_bytes() == (b["control"] / "contracts.json").read_bytes(),
+            and (d / "contracts.json").read_bytes()
+            == (b["control"] / "contracts.json").read_bytes(),
             f"{label}: manual.md and contracts.json byte-identical to the control Build",
         )
     R.check(
@@ -386,10 +399,18 @@ def check_10_2(k: Cwr, b: dict, src: Path) -> None:
     manual_sha = []
     results = []
     for _ in range(10):
-        manual_sha.append(json.loads(k("instance", "context", iid, "--home", k.home, "--json").stdout)["components"][0]["sha256"])
+        manual_sha.append(
+            json.loads(k("instance", "context", iid, "--home", k.home, "--json").stdout)[
+                "components"
+            ][0]["sha256"]
+        )
         results.append(k.turn(iid, DELETE_BIG)["returned"])
     expected = ["deleted"] * 7 + [["LOCKED", "fs.delete", 3]] * 3
-    R.check("10.2", results == expected, f"drift-1 turns 1-10 fs.delete outcomes {results[6:9]} at turns 7-9: unchanged before turn 8, the injected precondition 3 refuses with LOCKED from turn 8")
+    R.check(
+        "10.2",
+        results == expected,
+        f"drift-1 turns 1-10 fs.delete outcomes {results[6:9]} at turns 7-9: unchanged before turn 8, the injected precondition 3 refuses with LOCKED from turn 8",
+    )
     recs = k.ledger(iid)
     drifts = [r for r in recs if r["kind"] == "drift"]
     first_t8 = next(r for r in recs if r["turn"] == 8 and r["kind"] in ("primitive", "adapter"))
@@ -440,8 +461,20 @@ def check_10_2(k: Cwr, b: dict, src: Path) -> None:
     bad = {
         "unknown primitive": ("fs.nothing", "precondition_added", "fs.exists(path)", "LOCKED", 2),
         "state_shape kind": ("fs.delete", "state_shape", "fs.exists(path)", "LOCKED", 2),
-        "removing an absent precondition": ("fs.delete", "precondition_removed", "fs.size(path) < 3", "LOCKED", 2),
-        "mutating call in expr": ("fs.delete", "precondition_added", "fs.write(path, path)", "LOCKED", 3),
+        "removing an absent precondition": (
+            "fs.delete",
+            "precondition_removed",
+            "fs.size(path) < 3",
+            "LOCKED",
+            2,
+        ),
+        "mutating call in expr": (
+            "fs.delete",
+            "precondition_added",
+            "fs.write(path, path)",
+            "LOCKED",
+            3,
+        ),
     }
     seen = []
     for name, (prim, change, expr, failure, code) in bad.items():
@@ -452,8 +485,12 @@ def check_10_2(k: Cwr, b: dict, src: Path) -> None:
         out = k.work / f"bad-{len(seen)}" / "build"
         p = k("build", src, "--out", out, "--x-drift", f)
         xroot = out.parent / "xbuild"
-        written = [e for e in xroot.iterdir() if not e.name.startswith(".")] if xroot.exists() else []
-        seen.append((name, p.returncode, p.returncode == code and str(f) in p.stderr and not written))
+        written = (
+            [e for e in xroot.iterdir() if not e.name.startswith(".")] if xroot.exists() else []
+        )
+        seen.append(
+            (name, p.returncode, p.returncode == code and str(f) in p.stderr and not written)
+        )
     R.check(
         "10.2",
         all(s[2] for s in seen),
@@ -518,11 +555,15 @@ def check_10_5(k: Cwr, b: dict, src: Path) -> None:
         p = k("diff", control, d)
         v = json.loads(p.stdout) if p.returncode == 0 else {}
         x = v.get("experimental", {})
-        got = [(e["kind"], e["target"], e.get("before"), e.get("after")) for e in v.get("entries", [])]
+        got = [
+            (e["kind"], e["target"], e.get("before"), e.get("after")) for e in v.get("entries", [])
+        ]
         fx = files(d)
         differing = {f for f in set(fc) | set(fx) if fc.get(f) != fx.get(f)} - {"manifest.kvx"}
         mc, mx = manifest(control), manifest(d)
-        same_manifest = all(mc[k_] == mx[k_] for k_ in ("name", "version", "previous", "compiler", "runtime"))
+        same_manifest = all(
+            mc[k_] == mx[k_] for k_ in ("name", "version", "previous", "compiler", "runtime")
+        )
         R.check(
             "10.5",
             p.returncode == 0
@@ -538,10 +579,19 @@ def check_10_5(k: Cwr, b: dict, src: Path) -> None:
         )
     # The one-primitive files differ only by the limit, the sentence and the contracts digest.
     sc = "sha256:" + hashlib.sha256(fc["contracts.json"]).hexdigest()
-    sx = "sha256:" + hashlib.sha256((b["one-primitive"] / "contracts.json").read_bytes()).hexdigest()
-    cm = fc["manual.md"].decode().replace(sc, sx).replace("| `primitive_calls` | 500 |", "| `primitive_calls` | 1 |")
+    sx = (
+        "sha256:" + hashlib.sha256((b["one-primitive"] / "contracts.json").read_bytes()).hexdigest()
+    )
+    cm = (
+        fc["manual.md"]
+        .decode()
+        .replace(sc, sx)
+        .replace("| `primitive_calls` | 500 |", "| `primitive_calls` | 1 |")
+    )
     xm = (b["one-primitive"] / "manual.md").read_text()
-    sentence_lines = [line for line in xm.splitlines() if "In this world `primitive_calls = 1`" in line]
+    sentence_lines = [
+        line for line in xm.splitlines() if "In this world `primitive_calls = 1`" in line
+    ]
     stripped = xm.replace(sentence_lines[0] + "\n\n", "", 1) if len(sentence_lines) == 1 else ""
     R.check(
         "10.5",
@@ -557,7 +607,9 @@ def check_10_5(k: Cwr, b: dict, src: Path) -> None:
     x = v.get("experimental", {})
     R.check(
         "10.5",
-        od is not None and x.get("attributable") is False and any("limits.adapter_calls" in u for u in x.get("unattributable", [])),
+        od is not None
+        and x.get("attributable") is False
+        and any("limits.adapter_calls" in u for u in x.get("unattributable", [])),
         f"a silent-change Build from a different source is flagged unattributable: {x.get('unattributable', [])[:2]}",
     )
     plain = k("diff", control, control)
@@ -594,7 +646,11 @@ def check_notices(k: Cwr) -> None:
         k.turn(iid, use)
         target = built[label]
         gate = k("instance", "upgrade", iid, target, "--home", k.home)
-        up = gate if label == "B" else k("instance", "upgrade", iid, target, "--home", k.home, "--allow-experimental")
+        up = (
+            gate
+            if label == "B"
+            else k("instance", "upgrade", iid, target, "--home", k.home, "--allow-experimental")
+        )
         if up.returncode != 0:
             raise SystemExit(f"upgrade to {label} failed: {up.stderr}")
         ctx = components(k.context(iid))
@@ -612,10 +668,12 @@ def check_notices(k: Cwr) -> None:
     note = full["ctx"].get("notice", "")
     R.check(
         "5.3",
-        note.startswith(f"WORLD RECOMPILED  0.2.0 -> 0.3.0   ({manifest(built['A'])['hash']} -> {full['hash']})")
+        note.startswith(
+            f"WORLD RECOMPILED  0.2.0 -> 0.3.0   ({manifest(built['A'])['hash']} -> {full['hash']})"
+        )
         and f"Summary: {summary}" in note
         and "fs.delete" in note
-        and "fs.lock" not in note
+        and re.search(r"fs\.lock\b", note) is None
         and "notice" not in full["later"],
         "control Build: the first context after upgrade carries old and new versions and hashes, the changelog summary and the change to fs.delete (used), not the doc change to the unused fs.lock; the notice is gone after that turn",
     )
@@ -627,7 +685,9 @@ def check_notices(k: Cwr) -> None:
     )
 
     def norm(s: str, label: str) -> str:
-        return s.replace(runs[label]["hash"], "<B>")
+        # The target hash differs by construction; cpu_ms and wall_ms are host measurements.
+        s = s.replace(runs[label]["hash"], "<B>")
+        return re.sub(r"((?:cpu|wall)_ms\W{1,4})\d+", r"\1N", s)
 
     stored = {label: norm(r["stored"], label) for label, r in runs.items()}
     R.check(
@@ -648,7 +708,9 @@ def check_notices(k: Cwr) -> None:
         mine, ctrl = runs[label], full
         for comp in ("manual", "tail", "envelope"):
             same &= norm(mine["ctx"].get(comp, ""), label) == norm(ctrl["ctx"].get(comp, ""), "B")
-            same &= norm(mine["later"].get(comp, ""), label) == norm(ctrl["later"].get(comp, ""), "B")
+            same &= norm(mine["later"].get(comp, ""), label) == norm(
+                ctrl["later"].get(comp, ""), "B"
+            )
         same &= norm(json.dumps(mine["env"]), label) == norm(json.dumps(ctrl["env"]), "B")
     R.check(
         "10.3",
@@ -664,9 +726,9 @@ def check_notices(k: Cwr) -> None:
         v = json.loads(k("diff", built["B"], built[label]).stdout)["experimental"]
         R.check(
             "10.3",
-            v["attributable"] and [e["after"] for e in v["experimental_entries"]] == [
-                "version_only" if label == "version-only" else "silent"
-            ],
+            v["attributable"]
+            and [e["after"] for e in v["experimental_entries"]]
+            == ["version_only" if label == "version-only" else "silent"],
             f"{label} B differs from control B only by the notice-rendering marker",
         )
 

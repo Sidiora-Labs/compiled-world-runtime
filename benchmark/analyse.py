@@ -326,7 +326,11 @@ def integrity_errors(ctx: Context, cell: Cell) -> list[str]:
             )
             break
     digest = head.get("cassette_digest", cell.attempt.get("cassette_digest"))
-    registered = ctx.campaign.get("cassette_digest")
+    # A hypothesis whose tasks are outside the suite cassette set (H4's upgrade-pair tasks) registers
+    # its own set digest in [hypothesis.<H>].cassette_digest; every other hypothesis uses the campaign's.
+    registered = ctx.prereg.get(f"hypothesis.{cell.hypothesis}", {}).get(
+        "cassette_digest"
+    ) or ctx.campaign.get("cassette_digest")
     if registered and digest != registered:
         errors.append(f"{where}: cassette digest {digest} is not the registered {registered}")
     return errors
@@ -423,17 +427,19 @@ def analyse(ctx: Context, results: Path, mode: str = "replay") -> dict[str, Any]
                     cells[hypothesis].append(cell)
     if errors:
         raise Refused(4, "integrity failures:\n  " + "\n  ".join(errors))
-    digests = sorted(
-        {
-            str(c.ledger[0].get("cassette_digest", c.attempt.get("cassette_digest")))
-            for cs in cells.values()
-            for c in cs
-        }
-    )
-    if len(digests) > 1:
-        raise Refused(
-            4, f"refusing to pool ledgers recorded under different cassette digests: {digests}"
+    by_hypothesis = {
+        h: sorted(
+            {str(c.ledger[0].get("cassette_digest", c.attempt.get("cassette_digest"))) for c in cs}
         )
+        for h, cs in cells.items()
+    }
+    for h, found in sorted(by_hypothesis.items()):
+        if len(found) > 1:
+            raise Refused(
+                4,
+                f"{h}: refusing to pool ledgers recorded under different cassette digests: {found}",
+            )
+    digests = sorted({d for found in by_hypothesis.values() for d in found})
 
     report_h: dict[str, Any] = {}
     table: dict[tuple[str, str, str], list[Cell]] = {}

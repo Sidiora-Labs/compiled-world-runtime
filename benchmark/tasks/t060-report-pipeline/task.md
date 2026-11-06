@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Quarterly report pipeline
 
 Run four jobs of kind stats with n = 20, 25, 30 and 35. While they run, search for each of the

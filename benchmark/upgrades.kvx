@@ -4,8 +4,11 @@
 # cases CWR-011 and CWR-016) and the H4 pair plan of experiments.md section H4.
 # Sources: examples/refworld-upgrades/UN/A and UN/B, generated from examples/refworld by
 # examples/refworld-upgrades/pairs.py, which also checks this file against the sources.
-# Status: authored and checked by the authoring model only. No Build exists, so every hash is null
-# and the notice texts carry {hash_a} and {hash_b} placeholders. Nothing here is evidence.
+# Status: authored by pairs.py, then exercised on the real compiler and kernel by the task 4.3 driver
+# tests/cwr/cases/4_3.py, which also records build_a, build_b and reference_primitive_count
+# (`--freeze`). The notice texts keep {hash_a} and {hash_b}: the driver substitutes the hashes of
+# the Builds it compiles, because a hash changes with the compiler revision. This file is an
+# expectation, not evidence; evidence is the driver's run.
 # [pair.UN] is read by benchmark/analyse.py (task, changed_primitives, misuse_code, predicate).
 
 [meta]
@@ -15,7 +18,10 @@ world = "refworld"
 base_source = "examples/refworld"
 base_version = "0.2.0"
 pairs = ["U1", "U2", "U3", "U4", "U5", "U6"]
-status = "authored; UNRUN; frozen before any Build hash exists"
+status = "authored; driven on the real compiler and kernel by tests/cwr/cases/4_3.py"
+driver = "tests/cwr/cases/4_3.py"
+hash_rule = "build_a and build_b are the hashes the driver observed at its last --freeze, each pair compiled into its own Build root with B built --previous A; they identify the compiler revision of that run and are recorded, not asserted."
+sandbox_refusals = "On the kernel as built, the U2 pre-upgrade call to the removed fs.move and the U5 pre-upgrade kv.get without ns are refused inside the sandbox before any RPC: the turn ends error INVALID with primitive turn.script and the exception naming the SDK function, and no primitive record names fs.move or kv.get. The driver attributes those failures by the exception text; a misuse rate that needs a ledger record naming the primitive is not computable for U2 and U5 until the SDK reports them as call records (README item 4)."
 generator = "examples/refworld-upgrades/pairs.py"
 diff_layout = "spec/cwr/compiler.md section 5: entries sorted by target then field; kind null marks a params entry, for which world-source.md section 11 has no change kind"
 coverage_rule_params = "A params entry is covered by a state_shape change whose target is the primitive's module in the same release (the convention of examples/refworld 0.2.0 change kv_namespaces). Open for task 1.2."
@@ -38,8 +44,8 @@ a_relation = "examples/refworld 0.2.0 with fs.delete lacking precondition 2 (it 
 b_relation = "examples/refworld 0.2.0 in every rule, file and fixture; version 0.3.0; changelog is A's plus release 0.3.0"
 from_version = "0.2.0"
 to_version = "0.3.0"
-build_a = null
-build_b = null
+build_a = "sha256:a4e291c73bf9c67e3ab2a461602758c480764579d6a4e2318a5c20b3db5a830f"
+build_b = "sha256:39c6e2595f33305b02c4824f10369ac6447c5711eef0d33e92b65880e9045ec0"
 changes = ["fs_delete_refuses_locked", "fs_lock_doc_delete"]
 change_kinds = ["precondition_added", "doc_only"]
 migrations = []
@@ -79,7 +85,7 @@ post_upgrade = ["solutions/post2.py"]
 pre_upgrade = ["solutions/pre2.py"]
 pre_failure = {"primitive": "fs.delete", "code": "LOCKED", "precondition": 2}
 reference_primitive_count = 12
-count_source = "authoring-model"
+count_source = "kernel"
 post_success = true
 pre_success = false
 
@@ -96,8 +102,8 @@ a_relation = "byte-identical to examples/refworld 0.2.0"
 b_relation = "examples/refworld without fs.move (contract, lib function and fixture removed) and with the fs.lock doc no longer mentioning moves; version 0.3.0"
 from_version = "0.2.0"
 to_version = "0.3.0"
-build_a = null
-build_b = null
+build_a = "sha256:b3b9d2f3c8cebfda24216d860af03deb32b865e1a311b36f741a070f27111514"
+build_b = "sha256:1294df5dab1dc51f9c96157e5d6913171a5b400c25c579ace413f679c738cde2"
 changes = ["fs_move_removed", "fs_lock_doc_move"]
 change_kinds = ["primitive_removed", "doc_only"]
 migrations = []
@@ -137,7 +143,7 @@ post_upgrade = ["solutions/post2.py"]
 pre_upgrade = ["solutions/pre2.py"]
 pre_failure = {"primitive": "fs.move", "code": "INVALID", "precondition": null}
 reference_primitive_count = 11
-count_source = "authoring-model"
+count_source = "kernel"
 post_success = true
 pre_success = false
 
@@ -154,8 +160,8 @@ a_relation = "examples/refworld 0.2.0 with jobs.result precondition 2 naming NOT
 b_relation = "examples/refworld 0.2.0 in every rule, file and fixture; version 0.3.0; changelog is A's plus release 0.3.0"
 from_version = "0.2.0"
 to_version = "0.3.0"
-build_a = null
-build_b = null
+build_a = "sha256:93655455af0db2b9e567df225e1032d2eec9f70cb313a8cdfeda2abcb61f98b9"
+build_b = "sha256:321b618371009cb19cf1d82cac2b6a4da973ca4d91567ff63d4c92e6649657d3"
 changes = ["jobs_result_not_done_conflict"]
 change_kinds = ["precondition_changed"]
 migrations = []
@@ -195,7 +201,7 @@ post_upgrade = ["solutions/post_poll.py", "solutions/post_poll.py"]
 pre_upgrade = ["solutions/pre_poll.py", "solutions/pre_poll.py"]
 pre_failure = {"primitive": "jobs.result", "code": "CONFLICT", "precondition": 2}
 reference_primitive_count = 22
-count_source = "authoring-model"
+count_source = "kernel"
 post_success = true
 pre_success = false
 
@@ -212,8 +218,8 @@ a_relation = "byte-identical to examples/refworld 0.2.0"
 b_relation = "examples/refworld with kv.set precondition 1 at 512 bytes, its doc, fixtures and the quota example to match; version 0.3.0"
 from_version = "0.2.0"
 to_version = "0.3.0"
-build_a = null
-build_b = null
+build_a = "sha256:b3b9d2f3c8cebfda24216d860af03deb32b865e1a311b36f741a070f27111514"
+build_b = "sha256:38b81fb62f8621b94c014a1d21ea76d988ebdb95e31ade19778040c4341fd7e0"
 changes = ["kv_set_value_limit_512"]
 change_kinds = ["precondition_changed"]
 migrations = []
@@ -253,7 +259,7 @@ post_upgrade = ["solutions/post2.py"]
 pre_upgrade = ["solutions/pre2.py"]
 pre_failure = {"primitive": "kv.set", "code": "INVALID", "precondition": 1}
 reference_primitive_count = 7
-count_source = "authoring-model"
+count_source = "kernel"
 post_success = true
 pre_success = false
 
@@ -270,8 +276,8 @@ a_relation = "examples/refworld 0.2.0 with a flat kv (no ns parameter, one 64 Ki
 b_relation = "examples/refworld 0.2.0 in every rule; version 0.3.0; the namespace migration is renamed migrations/0_2_0_0_3_0_kv_namespaces.py (same function body) with fixtures/kv/migration_0_3_0.kvx; changelog is A's plus release 0.3.0"
 from_version = "0.2.0"
 to_version = "0.3.0"
-build_a = null
-build_b = null
+build_a = "sha256:c6e2cb893d6b046364965485f0fb51426079ffa419dcc05839c1d09b2425105b"
+build_b = "sha256:9014c7375fd37746d7e84e9f23e7419f4e384cb3f41223d0b21dc4061ed520a2"
 changes = ["kv_namespaces", "kv_get_ns", "kv_set_ns", "kv_set_ns_effects", "kv_del_ns", "kv_del_ns_effects"]
 change_kinds = ["state_shape", "precondition_changed", "precondition_changed", "effect_changed", "precondition_changed", "effect_changed"]
 migrations = ["migrations/0_2_0_0_3_0_kv_namespaces.py"]
@@ -314,7 +320,7 @@ pre_failure = {"primitive": "kv.get", "code": "INVALID", "precondition": null}
 pre_upgrade_adapted = ["solutions/pre2_adapted.py"]
 pre_adapted_failure = {"primitive": "kv.get", "code": "NOT_FOUND", "precondition": 1}
 reference_primitive_count = 6
-count_source = "authoring-model"
+count_source = "kernel"
 post_success = true
 pre_success = false
 
@@ -331,8 +337,8 @@ a_relation = "byte-identical to examples/refworld 0.2.0"
 b_relation = "examples/refworld with only the fs.write doc string reworded; version 0.2.1"
 from_version = "0.2.0"
 to_version = "0.2.1"
-build_a = null
-build_b = null
+build_a = "sha256:b3b9d2f3c8cebfda24216d860af03deb32b865e1a311b36f741a070f27111514"
+build_b = "sha256:673fb6e093c16eb5ad70ebd535226ce8d1a726f2fa3f78c5b9a061893825f1fc"
 changes = ["fs_write_doc_replace"]
 change_kinds = ["doc_only"]
 migrations = []
@@ -372,6 +378,6 @@ post_upgrade = ["solutions/post2.py"]
 pre_upgrade = ["solutions/pre2.py"]
 pre_failure = null
 reference_primitive_count = 5
-count_source = "authoring-model"
+count_source = "kernel"
 post_success = true
 pre_success = true

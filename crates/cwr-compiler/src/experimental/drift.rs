@@ -74,12 +74,14 @@ fn copy_source(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 impl Staged {
-    /// Stages `root` plus the drift file `file` under `xroot`. Refuses a drift file that cannot be
-    /// read and a source that already has a file at [`STAGED_PATH`].
-    pub fn new(root: &Path, file: &Path, xroot: &Path) -> Result<Staged, Diagnostic> {
+    /// Stages `root` plus the drift file `file` under `xroot`. Refuses, with a parse-stage
+    /// diagnostic located at the drift file, a drift file that cannot be read and a source that
+    /// already has a file at [`STAGED_PATH`].
+    pub fn new(root: &Path, file: &Path, xroot: &Path) -> Result<Staged, Box<Diagnostic>> {
         let given = file.display().to_string();
-        let fail = |m: String| diagnostic(Stage::Parse, "drift", &given, m);
-        let schedule = fs::read(file).map_err(|e| fail(format!("cannot read the drift file: {e}")))?;
+        let fail = |m: String| Box::new(diagnostic(Stage::Parse, "drift", &given, m));
+        let schedule =
+            fs::read(file).map_err(|e| fail(format!("cannot read the drift file: {e}")))?;
         if root.join(STAGED_PATH).exists() {
             return Err(fail(format!(
                 "the World Source already has {STAGED_PATH}, which --x-drift reserves"
@@ -95,7 +97,8 @@ impl Staged {
             given: given.clone(),
             schedule,
         };
-        copy_source(root, &staged.dir).map_err(|m| fail(format!("cannot stage the source: {m}")))?;
+        copy_source(root, &staged.dir)
+            .map_err(|m| fail(format!("cannot stage the source: {m}")))?;
         let target = staged.dir.join(STAGED_PATH);
         fs::create_dir_all(staged.dir.join("drift"))
             .and_then(|_| fs::write(&target, &staged.schedule))
@@ -245,7 +248,12 @@ mod tests {
     #[test]
     fn a_schedule_that_applies_is_accepted() {
         let s = check_schedule(
-            &drift("precondition_added", "fs.delete", "fs.size(path) < 4096", "LOCKED"),
+            &drift(
+                "precondition_added",
+                "fs.delete",
+                "fs.size(path) < 4096",
+                "LOCKED",
+            ),
             &contracts(),
         )
         .unwrap();
@@ -256,10 +264,25 @@ mod tests {
     fn unknown_primitives_and_entries_that_do_not_apply_are_refused() {
         let c = contracts();
         for bytes in [
-            drift("precondition_added", "fs.nothing", "fs.size(path) < 1", "LOCKED"),
-            drift("precondition_removed", "fs.delete", "fs.size(path) < 1", "LOCKED"),
+            drift(
+                "precondition_added",
+                "fs.nothing",
+                "fs.size(path) < 1",
+                "LOCKED",
+            ),
+            drift(
+                "precondition_removed",
+                "fs.delete",
+                "fs.size(path) < 1",
+                "LOCKED",
+            ),
             drift("limit_changed", "fs.delete", "fs.size(path) < 1", "LOCKED"),
-            drift("adapter_changed", "fs.delete", "fs.size(path) < 1", "UNAVAILABLE"),
+            drift(
+                "adapter_changed",
+                "fs.delete",
+                "fs.size(path) < 1",
+                "UNAVAILABLE",
+            ),
         ] {
             assert!(check_schedule(&bytes, &c).is_err());
         }

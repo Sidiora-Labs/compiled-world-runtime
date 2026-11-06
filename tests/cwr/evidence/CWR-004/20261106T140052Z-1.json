@@ -1,0 +1,143 @@
+{
+  "arm": null,
+  "assertion_ids": [
+    "CWR-004.a1",
+    "CWR-004.a2",
+    "CWR-004.a3",
+    "CWR-004.a4",
+    "CWR-004.a5",
+    "CWR-004.a6"
+  ],
+  "attempt_sha256": "sha256:29c3d381759ace5776789b9c1b27508c10546a794e83a583e61088ceb1a1420e",
+  "blocked_reason": null,
+  "build_hash": null,
+  "builds": [],
+  "case": "CWR-004",
+  "cassette_digest": null,
+  "checker": {
+    "accepted": true,
+    "errors": [],
+    "program": "tests/cwr/check_evidence.py",
+    "revision": "sha256:5e538228bcc1aaae865a29b9533017084cebad9d62e4db4d7b67ea627c171970"
+  },
+  "clauses": [
+    "3.6",
+    "4.3",
+    "4.4",
+    "5.5"
+  ],
+  "command": "python3 tests/cwr/qualify.py --case CWR-004 --timeout 3600.0",
+  "compiler_revision": "sha256:51732a55d68aab1c5aa56c01769ee670d615da04d6e301ed76641deab377545e",
+  "coverage_gaps": [
+    "CWR-004.a1",
+    "CWR-004.a2",
+    "CWR-004.a3",
+    "CWR-004.a4",
+    "CWR-004.a5",
+    "CWR-004.a6"
+  ],
+  "diagnostics": [
+    "the driver reported no assertions; an exit code alone is never a PASS",
+    "coverage gaps: ['CWR-004.a1', 'CWR-004.a2', 'CWR-004.a3', 'CWR-004.a4', 'CWR-004.a5', 'CWR-004.a6']",
+    "independent checker: no assertions were observed",
+    "independent checker: registered assertion CWR-004.a1 was not observed",
+    "independent checker: registered assertion CWR-004.a2 was not observed",
+    "independent checker: registered assertion CWR-004.a3 was not observed",
+    "independent checker: registered assertion CWR-004.a4 was not observed",
+    "independent checker: registered assertion CWR-004.a5 was not observed",
+    "independent checker: registered assertion CWR-004.a6 was not observed",
+    "independent checker: assertion CWR-004.a1 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+    "independent checker: assertion CWR-004.a2 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+    "independent checker: assertion CWR-004.a3 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+    "independent checker: assertion CWR-004.a4 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+    "independent checker: assertion CWR-004.a5 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS",
+    "independent checker: assertion CWR-004.a6 is UNVERIFIED: no independent oracle (tests/cwr/oracles/CWR_004.py does not exist); a driver observation alone never makes a PASS"
+  ],
+  "duration_ms": 98049,
+  "ended_at": "2026-11-06T14:02:30.671Z",
+  "exit_code": 0,
+  "experimental_flags": [],
+  "final_states": [],
+  "gateway_mode": null,
+  "host": {
+    "hostname": "m16258.contaboserver.net",
+    "machine": "x86_64",
+    "os": "Linux-6.8.0-124-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "sandbox": null
+  },
+  "instance_id": null,
+  "instances": [],
+  "invocations": [
+    {
+      "command": [
+        "python3",
+        "tests/cwr/cases/1_2.py"
+      ],
+      "duration_ms": 98048,
+      "exit_code": 0,
+      "stderr_log": "tests/cwr/evidence/CWR-004/20261106T140052Z-1/1.2/driver.stderr.log",
+      "stderr_sha256": "sha256:cc387e032bcf7a4a06aba65d30b641002e649fd2df63853da94abe34e610dc26",
+      "stdout_log": "tests/cwr/evidence/CWR-004/20261106T140052Z-1/1.2/driver.stdout.log",
+      "stdout_sha256": "sha256:6287839dcee552a31551c8573edd2c948b31c541cfe8e2e7ccdb2a92e24a0e48",
+      "task": "1.2",
+      "timed_out": false
+    }
+  ],
+  "kernel_revision": "sha256:89d3c3a3005f25de34818941051f4e23034a023eee5210e5bdd49da04c8a0910",
+  "ledger_digest": null,
+  "ledgers": [],
+  "log": "tests/cwr/evidence/CWR-004/20261106T140052Z-1/1.2/driver.stdout.log",
+  "log_sha256": "sha256:6287839dcee552a31551c8573edd2c948b31c541cfe8e2e7ccdb2a92e24a0e48",
+  "model": null,
+  "observed": [],
+  "outcome": "FAIL",
+  "preregistration_digest": null,
+  "recomputed": [
+    {
+      "diagnostic": "no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+      "id": "CWR-004.a1",
+      "outcome": "UNVERIFIED"
+    },
+    {
+      "diagnostic": "no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+      "id": "CWR-004.a2",
+      "outcome": "UNVERIFIED"
+    },
+    {
+      "diagnostic": "no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+      "id": "CWR-004.a3",
+      "outcome": "UNVERIFIED"
+    },
+    {
+      "diagnostic": "no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+      "id": "CWR-004.a4",
+      "outcome": "UNVERIFIED"
+    },
+    {
+      "diagnostic": "no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+      "id": "CWR-004.a5",
+      "outcome": "UNVERIFIED"
+    },
+    {
+      "diagnostic": "no independent oracle (tests/cwr/oracles/CWR_004.py does not exist)",
+      "id": "CWR-004.a6",
+      "outcome": "UNVERIFIED"
+    }
+  ],
+  "record_id": "CWR-004/20261106T140052Z-1",
+  "registry_sha256": "sha256:1a3ff3703017708176caf48ad0583cedfed293bafa7c4bc5ca8714e1f0805118",
+  "registry_version": 1,
+  "schema_version": 1,
+  "scope": "case",
+  "sdk_revision": "sha256:b1fbd3cf29b3c4a9c8c26687d431ffa1ca1ae60646a9962140ee615bdfa47d01",
+  "seed": null,
+  "spec_revision": "sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9",
+  "started_at": "2026-11-06T14:00:52.622Z",
+  "tail_size": null,
+  "task": null,
+  "tier": "component",
+  "timestamp": "2026-11-06T14:02:30.683Z",
+  "unexpected_assertions": [],
+  "world": null
+}

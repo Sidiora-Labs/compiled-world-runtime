@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Build and announce a site
 
 For every file /src/pages/NAME.md, write /site/NAME.html consisting of the line <html><body>, then

@@ -37,6 +37,7 @@ import contextlib
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,7 @@ RESEARCH = REPO / "research"
 SUITE = REPO / "benchmark" / "suite.kvx"
 PREREG = REPO / "benchmark" / "preregistration.kvx"
 ARMS = REPO / "benchmark" / "harness" / "arms.kvx"
+METRICS = REPO / "benchmark" / "harness" / "metrics.py"
 SOURCE = REPO / "examples" / "refworld"
 # The campaign compiles into its own Build root so that the control Build takes the first-Build path
 # (previous null) and its hash depends on the World Source and compiler only, never on whatever other
@@ -71,6 +73,8 @@ BUILD_ROOT = Path(
     os.environ.get("CWR_CAMPAIGN_BUILD_ROOT") or REPO / ".cwr" / "campaign-1" / "build"
 )
 XBUILD_ROOT = BUILD_ROOT.parent / "xbuild"
+HOME = BUILD_ROOT.parent / "home"
+CASSETTES = Path(os.environ.get("CWR_CASSETTE_SET") or REPO / "benchmark" / "cassettes" / "suite")
 CAMPAIGN_FILE = {"H1": CAMPAIGNS / "h1.kvx", "H2": CAMPAIGNS / "h2.kvx"}
 ARM_KEYS = {"H1": ("frozen", "drift-1", "drift-3"), "H2": ("script", "one-primitive")}
 CONTROL_ARM = {"H1": "frozen", "H2": "script"}
@@ -80,7 +84,10 @@ RETRY_EXITS = ("model_error", "kernel_error")
 
 # Drift templates per primitive or adapter: (template id, expression, failure code). Each expression
 # references only parameters and read_only primitives of refworld (world-source.md section 5), so a drift
-# Build passes the same lint as a contract. Templates tighten the rule; none relaxes it.
+# Build passes the same lint as a contract. Templates tighten the rule; none relaxes it. Where a
+# primitive has a tightening that a changed procedure can still satisfy (overwrite only after a delete,
+# submit only while fewer than two jobs are active), that one is template A, which drift-1 uses.
+# Some templates cannot be satisfied for some tasks; results are therefore also reported per spec.
 TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
     "fs.write": [
         ("A", "not fs.exists(path)", "CONFLICT"),
@@ -118,8 +125,8 @@ TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
         ("C", "jobs.active() <= 1", "LIMIT"),
     ],
     "jobs.submit": [
-        ("A", "n <= 10", "LIMIT"),
-        ("B", "jobs.active() < 2", "LIMIT"),
+        ("A", "jobs.active() < 2", "LIMIT"),
+        ("B", "n <= 10", "LIMIT"),
         ("C", "len(kind) <= 6", "INVALID"),
     ],
     "jobs.status": [
@@ -138,8 +145,8 @@ TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
         ("C", "len(id) <= 4", "INVALID"),
     ],
     "kv.set": [
-        ("A", "len(value) <= 32", "LIMIT"),
-        ("B", "not kv.has(ns, key)", "CONFLICT"),
+        ("A", "not kv.has(ns, key)", "CONFLICT"),
+        ("B", "len(value) <= 32", "LIMIT"),
         ("C", "len(key) <= 8", "INVALID"),
     ],
     "kv.get": [
@@ -491,6 +498,70 @@ def register(args: argparse.Namespace) -> int:
     return 0
 
 
+def _set_key(text: str, section: str, key: str, value: Any) -> str:
+    """Replace `key = ...` inside [section] of a KVX text, keeping every other byte."""
+    lines = text.split("\n")
+    current = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current = stripped[1:-1]
+        elif current == section and stripped.startswith(f"{key} = "):
+            literal = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(", ", ": "))
+            lines[index] = f"{key} = {literal}"
+            return "\n".join(lines)
+    raise CampaignError(f"[{section}] {key} not found")
+
+
+def complete_registration(args: argparse.Namespace) -> int:
+    """Fill the null campaign inputs of arms.kvx and preregistration.kvx and mark it registered.
+
+    Only null inputs are filled; a non-null input that differs from the value H1 and H2 need is a
+    refusal, never an overwrite. The digests are recomputed last, after arms.kvx is final.
+    """
+    from benchmark.harness.model import GatewayClient
+    from benchmark.harness.run import cassette_set_digest
+
+    for hypothesis in ("H1", "H2"):
+        if any_results(hypothesis):
+            raise CampaignError(f"{hypothesis} results exist; the registration is frozen")
+    h1, h2 = load_campaign("H1"), load_campaign("H2")
+    control = h1["registration"]["control_build"]
+    one = h2["registration"]["builds"]["one-primitive"]
+    arms_text = ARMS.read_text(encoding="utf-8")
+    arms = read_kvx(ARMS)
+    for section, value in (("control", control), ("arm.h2.one-primitive", one)):
+        current = arms[section].get("build")
+        if current not in (None, value):
+            raise CampaignError(f"arms.kvx [{section}] build {current} is not {value}")
+        arms_text = _set_key(arms_text, section, "build", value)
+    parse_kvx(arms_text, str(ARMS))
+    ARMS.write_text(arms_text, encoding="utf-8")
+    if not CASSETTES.is_dir():
+        raise CampaignError(f"cassette set {CASSETTES} does not exist")
+    wanted = {
+        "model": GatewayClient.from_env().model,
+        "sampling": {},
+        "suite_digest": read_kvx(SUITE)["suite"]["suite_digest"],
+        "cassette_digest": cassette_set_digest(CASSETTES),
+        "upgrades_digest": sha256_file(REPO / "benchmark" / "upgrades.kvx"),
+    }
+    text = PREREG.read_text(encoding="utf-8")
+    campaign = read_kvx(PREREG)["campaign"]
+    for key, value in wanted.items():
+        if campaign.get(key) is None:
+            text = _set_key(text, "campaign", key, value)
+        elif campaign[key] != value and key != "upgrades_digest":
+            raise CampaignError(f"preregistration [campaign] {key} is registered as another value")
+    text = _set_key(text, "digests", "metrics_py", sha256_file(METRICS))
+    text = _set_key(text, "digests", "arms_kvx", sha256_file(ARMS))
+    text = _set_key(text, "meta", "status", "registered")
+    parse_kvx(text, str(PREREG))
+    PREREG.write_text(text, encoding="utf-8")
+    print("preregistration complete: status registered")
+    return 0
+
+
 def plan_cmd(args: argparse.Namespace) -> int:
     for task, info in suite_tasks().items():
         plan = drift_plan(task, list(info["rules"]), int(info["turns"]))
@@ -570,10 +641,6 @@ class _Progress:
             )
 
 
-CASSETTES = Path(os.environ.get("CWR_CASSETTE_SET") or REPO / "benchmark" / "cassettes" / "suite")
-HOME = REPO / ".cwr" / "campaign-1" / "home"
-
-
 def run_cell(
     hypothesis: str,
     arm_key: str,
@@ -642,9 +709,12 @@ def run_cell(
         reuse_rule=runner._reuse_rule(info),
         drift_spec=drift_spec,
     )
+    if not hasattr(clients, "home"):
+        # One Instance store per worker: concurrent Instances of one task never share a file.
+        clients.home = HOME / f"worker-{threading.get_ident()}"
     kernel = runner.CwrCliKernel(
         gateway_mode="replay",
-        home=HOME,
+        home=clients.home,
         builds=[BUILD_ROOT, XBUILD_ROOT, REPO / "build", REPO / "xbuild"],
     )
     try:
@@ -682,9 +752,10 @@ def run(args: argparse.Namespace) -> int:
         except CampaignError as error:
             progress.record("/".join(map(str, cell)), f"refused: {error}", 0)
             return
-        progress.record(
-            "/".join(map(str, cell)), str(attempt.get("exit_status")), int(attempt.get("turns", 0))
-        )
+        status = str(attempt.get("exit_status"))
+        if status in RETRY_EXITS:
+            status += f" [{str(attempt.get('detail'))[:200]}]"
+        progress.record("/".join(map(str, cell)), status, int(attempt.get("turns", 0)))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         for future in concurrent.futures.as_completed([pool.submit(job, c) for c in todo]):
@@ -723,9 +794,40 @@ def analyse_hypothesis(hypothesis: str, out: Path, *, check: bool = False) -> in
     return proc.returncode
 
 
+def partial_cells(hypothesis: str) -> list[Path]:
+    """Cell directories without an attempt record: runs interrupted before they wrote one."""
+    root = RESULTS / hypothesis.lower()
+    return sorted(
+        p
+        for arm in ARM_KEYS[hypothesis]
+        for p in (root / arm).glob("*/*")
+        if p.is_dir() and not (p / "attempt.kvx").exists()
+    )
+
+
+def prune(args: argparse.Namespace) -> int:
+    """Move interrupted cells (no attempt record) out of the results tree, listing each one."""
+    graveyard = BUILD_ROOT.parent / "interrupted"
+    moved = 0
+    for hypothesis in args.hypothesis or ["H1", "H2"]:
+        for path in partial_cells(hypothesis):
+            target = graveyard / path.relative_to(RESULTS)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                shutil.rmtree(target)
+            path.rename(target)
+            print(f"moved interrupted cell {path.relative_to(RESULTS)}")
+            moved += 1
+    print(f"{moved} interrupted cells moved to {graveyard}")
+    return 0
+
+
 def analyse(args: argparse.Namespace) -> int:
     worst = 0
     for hypothesis in args.hypothesis or ["H1", "H2"]:
+        partial = partial_cells(hypothesis)
+        if partial:
+            raise CampaignError(f"{len(partial)} interrupted {hypothesis} cells; run `prune` first")
         out = RESULTS / hypothesis.lower() / "analysis.json"
         code = analyse_hypothesis(hypothesis, out, check=args.check)
         worst = worst or code
@@ -923,8 +1025,17 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
         for group in ("short", "medium", "long"):
             t = tokens["cells"][arm][group]
             lines.append(f"| {arm} | {group} | {t['n']} | {fmt(t['mean'])} | {fmt_ci(t['ci'])} |")
+    automatic = []
+    short = {arm: c["seeds_complete"] for arm, c in counts.items() if c["seeds_complete"] < 10}
+    if short or not matrix["complete"]:
+        complete = ", ".join(f"{arm} {counts[arm]['seeds_complete']}" for arm in arms)
+        automatic.append(
+            "Seeds: the registered design is 10 seeds per task per arm. Seeds complete over all 60 "
+            f"tasks: {complete}. The arm matrix is incomplete, so case CWR-018 cannot pass on this "
+            "campaign, and every interval above is over fewer Instances than registered."
+        )
     lines += ["", "## Deviations from pre-registration", ""]
-    lines += [f"- {d}" for d in deviations] or ["- None."]
+    lines += [f"- {d}" for d in [*automatic, *deviations]] or ["- None."]
     lines += [
         "",
         "## Reproduce",
@@ -939,11 +1050,11 @@ def render_report(hypothesis: str, deviations: list[str]) -> str:
 
 
 def deviations_for(hypothesis: str) -> list[str]:
-    path = CAMPAIGNS / "deviations.json"
+    """Deviations from pre-registration recorded after execution in results/h<N>/deviations.json."""
+    path = RESULTS / hypothesis.lower() / "deviations.json"
     if not path.exists():
         return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [*data.get("common", []), *data.get(hypothesis, [])]
+    return list(json.loads(path.read_text(encoding="utf-8"))["deviations"])
 
 
 def report_cmd(args: argparse.Namespace) -> int:
@@ -963,6 +1074,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="CWR H1 and H2 campaigns (task 5.2).")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan", help="print the derived drift schedule")
+    sub.add_parser(
+        "complete-registration",
+        help="fill null campaign inputs in arms.kvx and preregistration.kvx; status registered",
+    )
     p = sub.add_parser("register", help="compile Builds and write h1.kvx and h2.kvx")
     p.add_argument("--cwr-bin", help="pinned cwr binary (default $CWR_BIN or the target dir)")
     p.add_argument("--force", action="store_true", help="re-register although results exist")
@@ -986,14 +1101,18 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report", help="render the research reports")
     p.add_argument("--hypothesis", action="append", choices=["H1", "H2"])
     sub.add_parser("status", help="count cells per arm")
+    p = sub.add_parser("prune", help="move interrupted cells out of the results tree")
+    p.add_argument("--hypothesis", action="append", choices=["H1", "H2"])
     args = parser.parse_args(argv)
     handlers = {
         "plan": plan_cmd,
+        "complete-registration": complete_registration,
         "register": register,
         "run": run,
         "analyse": analyse,
         "report": report_cmd,
         "status": status,
+        "prune": prune,
     }
     try:
         return handlers[args.command](args)

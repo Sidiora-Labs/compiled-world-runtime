@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Publish three notice versions
 
 Three versions of a maintenance notice are in /posts/notice-v1.txt, /posts/notice-v2.txt and

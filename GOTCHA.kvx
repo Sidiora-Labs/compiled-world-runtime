@@ -1,83 +1,78 @@
 # Copyright Sidiora Labs Inc. CWR® 2026-2027
 # SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
 #
-# Verified pitfalls in this repository. Strict KVX: one JSON literal per line.
-# Each [gotcha.<id>] has title, symptom, cause and fix. Add an entry only for a pitfall you reproduced.
+# Known pitfalls in this repository, each reproduced before it was recorded.
+# Every [gotcha.<id>] section has a title, the symptom a contributor sees, the cause and the fix.
+# Strict KVX: one key and one JSON literal per line, comments on their own lines.
 
 [gotcha.cargo-target-lock]
-title = "Concurrent cargo runs stall on the target directory lock"
-symptom = "A build, test or driver prints `Blocking waiting for file lock on build directory` and makes no progress while another cargo command runs."
-cause = "The Makefile exports CARGO_TARGET_DIR (default `target`) to every recipe, and drivers honour the same variable, so parallel builds, drivers and editors all contend for one lock."
-fix = "Give the second job its own directory: `make TARGET_DIR=target-alt <target>` or `CARGO_TARGET_DIR=target-alt python3 tests/cwr/cases/W_N.py`. Do not delete the lock file."
+title = "Concurrent cargo runs wait on the target directory lock"
+symptom = "A build, test or task driver prints `Blocking waiting for file lock on build directory` and makes no progress while another cargo command runs."
+cause = "The Makefile exports CARGO_TARGET_DIR (default `target`) to every recipe, and the task drivers honour the same variable, so parallel builds, drivers and editors share one lock."
+fix = "Give the second job its own directory: `make TARGET_DIR=target-alt test` or `CARGO_TARGET_DIR=target-alt python3 tests/cwr/cases/1_1.py`. Do not delete the lock file."
 
 [gotcha.kvx-inline-comment]
 title = "A trailing comment breaks a KVX value"
-symptom = "The validator or a KVX reader fails with `value must be a single JSON literal: Extra data` on a line such as `key = 1  # note`."
-cause = "KVX treats only a line whose first non-blank character is `#` as a comment. Everything after `=` must be exactly one JSON literal, so the trailing `# note` is parsed as part of the value."
+symptom = "A KVX reader fails with `value must be a single JSON literal: Extra data` on a line such as `key = 1  # note`."
+cause = "KVX treats a line as a comment only when its first non-blank character is `#`. Everything after `=` must be exactly one JSON literal, so `# note` is read as part of the value."
 fix = "Move the comment onto its own line above the key, as benchmark/release.kvx does."
 
 [gotcha.kvx-bare-words]
-title = "Unquoted words and non-JSON numbers are rejected in KVX"
+title = "KVX rejects unquoted words and non-JSON numbers"
 symptom = "`mode = auto`, `date = 2026-11-06` or `x = NaN` fails with `value must be a single JSON literal`."
-cause = "Values are strict JSON: strings need double quotes, and NaN, Infinity and -Infinity are refused explicitly. Single quotes are not JSON either."
-fix = "Quote strings (`mode = \"auto\"`), write dates as strings, and represent missing numbers as `null`."
+cause = "Values are strict JSON. Strings need double quotes, and NaN, Infinity and -Infinity are refused. Single quotes are not JSON either."
+fix = "Quote strings (`mode = \"auto\"`), write dates as strings and represent a missing number as `null`."
 
 [gotcha.kvx-duplicate-json-keys]
-title = "Duplicate keys inside a JSON object value are an error"
-symptom = "`k = {\"a\": 1, \"a\": 2}` fails with `duplicate JSON object key a`, although json.loads alone would keep the last value."
-cause = "The spec validator and cwr_core.kvx parse values with an object_pairs_hook that rejects repeated keys, so a value has exactly one meaning."
+title = "KVX rejects a repeated key inside a JSON object value"
+symptom = "`k = {\"a\": 1, \"a\": 2}` fails with `duplicate JSON object key a`, although Python's json.loads alone would keep the last value."
+cause = "The KVX readers parse values with a hook that refuses repeated keys, so every value has exactly one meaning."
 fix = "Remove the repeated key. When generating KVX, serialise with cwr_core.kvx.dump, which cannot emit duplicates."
 
 [gotcha.kvx-key-grammar]
-title = "KVX keys cannot contain dots or start with a digit"
+title = "A KVX key cannot contain a dot or start with a digit"
 symptom = "`pin.revision = null` or `1st = true` fails with `unsupported or out-of-section syntax`."
-cause = "Keys match `[A-Za-z_][A-Za-z0-9_-]*`; only section names admit dots and hyphens (`[A-Za-z0-9_.-]+`), which is how `[pin.compiler]` and `[diagnostic.CWR-R001]` are written."
+cause = "Keys match `[A-Za-z_][A-Za-z0-9_-]*`. Only section names admit dots and hyphens, which is how `[pin.compiler]` and `[diagnostic.CWR-R001]` are written."
 fix = "Put the dotted path in the section header and keep the key a single identifier."
 
 [gotcha.hyperfide-kvx-is-not-cwr-kvx]
 title = "hyperfide.kvx is not strict CWR KVX"
-symptom = "Pointing the spec validator or cwr_core.kvx at hyperfide.kvx fails on `workers = auto`."
-cause = "hyperfide.kvx is configuration for the Hyperfide tool and follows its looser syntax (bare words, trailing spaces). It is not a CWR source and nothing in CWR reads it."
-fix = "Leave it out of CWR KVX tooling and do not reformat it to CWR rules; only its header lines follow the repository standard."
+symptom = "Pointing a CWR KVX reader at hyperfide.kvx fails on `workers = auto`."
+cause = "hyperfide.kvx configures the Hyperfide tool and follows that tool's looser syntax. CWR never reads it."
+fix = "Keep it out of CWR KVX tooling and do not reformat it to CWR rules. Only its header lines follow the repository standard."
 
 [gotcha.validator-design-stage-pending]
-title = "The validator refuses task status changes during the design stage"
-symptom = "`python3 spec/cwr/tools/validate_spec.py` reports `task W.N: design-stage tasks must remain pending` after a status edit in spec.kvx."
-cause = "While `[meta] stage = \"design\"` every task must stay `pending` and every case `UNRUN`; statuses can move only in the implementation stage, and case outcomes must then be backed by checker-accepted attempts in tests/cwr/registry.kvx."
-fix = "Leave statuses alone until the owner moves the pack to the implementation stage (`status = \"in_progress\"`, `stage = \"implementation\"`). Record progress in task results, not in status fields."
+title = "The specification validator refuses status changes in the design stage"
+symptom = "`python3 spec/cwr/tools/validate_spec.py` reports `task W.N: design-stage tasks must remain pending` after a status edit in spec/cwr/spec.kvx."
+cause = "While `[meta] stage` is `design`, every task must stay `pending` and every case `UNRUN`. Statuses move only in the implementation stage, and case outcomes must then be backed by attempts the checker accepts in tests/cwr/registry.kvx."
+fix = "Leave statuses alone until the owner moves the specification to the implementation stage. Record progress in task results, not in status fields."
 
 [gotcha.derived-views-stale]
-title = "Editing spec.kvx makes validation fail until views are re-rendered"
-symptom = "The validator reports `implementation-plan.md: derived view is missing/stale; run --render` (or the same for traceability.md) after any edit to a requirement, clause, task or case."
-cause = "Both derived views embed a sha256 source digest over every requirement, clause, task and case; any edit changes the digest."
-fix = "Run `python3 spec/cwr/tools/validate_spec.py --render`, then validate again. Never hand-edit the two views."
+title = "Editing spec.kvx fails validation until the derived views are rendered"
+symptom = "The validator reports `implementation-plan.md: derived view is missing/stale; run --render`, or the same for traceability.md, after an edit to a requirement, clause, task or case."
+cause = "Both derived views embed a sha256 digest over every requirement, clause, task and case, so any such edit changes the digest."
+fix = "Run `python3 spec/cwr/tools/validate_spec.py --render`, then validate again. Never edit the two views by hand."
 
-[gotcha.env-never-printed]
+[gotcha.credentials-never-printed]
 title = "Credentials must never be printed, even to check them"
-symptom = "A credential value appears in a terminal transcript, a log, an evidence record or a CI artifact."
-cause = "The harness reads service credentials from the environment. Commands that dump the environment, or exception messages that echo request headers, copy the values into places that are published or retained."
-fix = "Check presence only, as scripts/bootstrap.sh does. Code reads credentials at runtime and never logs values. If a value leaks, rotate it."
+symptom = "A credential value appears in a terminal transcript, a log, an evidence record or a build artifact."
+cause = "Credentials are read from the environment at runtime. Dumping the environment, printing a configuration file or an error message that echoes request headers copies the value into places that are kept or published."
+fix = "Check that a credential is present, never what it is. Code reads credentials at runtime and never logs them. If a value leaks, treat it as compromised and rotate it."
 
 [gotcha.header-exempt-data-files]
 title = "Do not add the source header to bin, rules or JSON files"
-symptom = "A task's success predicate or bin assignment stops matching, or a JSON or lock file no longer parses, after a header was inserted into it by hand."
-cause = "tools/header.py exempts files named `bin` and `rules` (bare-value records under benchmark/tasks/*/, read verbatim), credential files, `.gitkeep`, every .json, .jsonl and .lock file, and recorded data directories. A comment line in them would be read as data or is not legal syntax."
-fix = "Trust the exemption list in tools/header.py; when a new data format appears, add it there instead of hand-inserting a header."
+symptom = "A task's success predicate or bin assignment stops matching, or a JSON or lock file no longer parses, after a header was inserted by hand."
+cause = "tools/header.py exempts files named `bin` and `rules` (bare-value records under benchmark/tasks/*/, read verbatim), `.gitkeep`, every .json, .jsonl and .lock file, and recorded data directories. A comment line in them would be read as data or is not legal syntax."
+fix = "Rely on the exemption list in tools/header.py. When a new data format appears, add it there instead of inserting a header by hand."
 
 [gotcha.header-pruned-directories]
 title = "Directories with recorded-data names are skipped at any depth"
 symptom = "`make headers` passes although a source file under a directory named `build`, `out`, `results`, `evidence`, `cassettes` or `vendor` has no header."
-cause = "tools/header.py prunes every directory whose name is in EXEMPT_DIR_PARTS wherever it occurs, because those names hold compiled Builds, ledgers, evidence, cassettes and third-party code."
+cause = "tools/header.py skips every directory whose name is in EXEMPT_DIR_PARTS wherever it occurs, because those names hold compiled Builds, ledgers, evidence, cassettes and third-party code."
 fix = "Do not give source directories those names. If one is unavoidable, narrow the exemption in tools/header.py in the same change."
 
 [gotcha.python-isolated-mode]
 title = "Scripts must work under python3 -I"
-symptom = "`python3 -I tool.py` fails with ModuleNotFoundError for a sibling or repository package that imports fine without -I."
-cause = "Isolated mode puts neither the script directory nor the current directory on sys.path and ignores PYTHON* variables; the engineering standard requires every script to be -I safe."
-fix = "Insert the needed root explicitly from __file__, as benchmark/harness/run.py does for the repository root and as core/README.md shows for cwr_core."
-
-[gotcha.agents-md-mirror]
-title = "AGENTS.md and CLAUDE.md must stay identical"
-symptom = "Two contributors follow different rules because one copy of the engineering standard was edited and the other was not."
-cause = "AGENTS.md is a byte-for-byte copy of CLAUDE.md so that every editor integration reads the same standard."
-fix = "Edit CLAUDE.md, copy it over AGENTS.md in the same change, and confirm with `cmp CLAUDE.md AGENTS.md`."
+symptom = "`python3 -I tool.py` fails with ModuleNotFoundError for a sibling or repository package that imports without -I."
+cause = "Isolated mode puts neither the script directory nor the current directory on sys.path and ignores PYTHON* variables. The engineering standard requires every script to run under it."
+fix = "Insert the needed root explicitly from __file__, as benchmark/harness/run.py does for the repository root and core/README.md shows for cwr_core."

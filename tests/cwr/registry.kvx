@@ -40,8 +40,8 @@ evidence_root = "tests/cwr/evidence"
 tiers = ["component", "integration", "campaign", "release"]
 outcomes = ["UNRUN", "PASS", "FAIL", "BLOCKED"]
 index = "tests/cwr/evidence/index.jsonl"
-index_length = 5
-index_head = "sha256:70b751dee32b1bb832c18c67da4078b766427d17cf18cfb2a3f9a0f011fcfafb"
+index_length = 10
+index_head = "sha256:7677c359eac09f9b1d3723f1b2a101877541e3eb7d403e1caf9bfa3778a55942"
 
 [case.CWR-001]
 title = "Contract grammar and closed failure envelope"
@@ -94,8 +94,8 @@ requires_build = false
 registered_builds = []
 registered_seeds = []
 cassette_digest = null
-status = "UNRUN"
-evidence = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-003/20261106T135924Z-1.json"
 
 [case.CWR-004]
 title = "ContractDiff, changelog gate and version derivation"
@@ -113,8 +113,8 @@ requires_build = false
 registered_builds = []
 registered_seeds = []
 cassette_digest = null
-status = "UNRUN"
-evidence = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-004/20261106T140052Z-1.json"
 
 [case.CWR-005]
 title = "Immutable, deterministic Build artifacts and generated manual"
@@ -130,8 +130,8 @@ requires_build = true
 registered_builds = []
 registered_seeds = []
 cassette_digest = null
-status = "UNRUN"
-evidence = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-005/20261106T140231Z-1.json"
 
 [case.CWR-006]
 title = "Ledger, snapshot, world clock and RNG"
@@ -148,8 +148,8 @@ requires_build = true
 registered_builds = []
 registered_seeds = []
 cassette_digest = null
-status = "UNRUN"
-evidence = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-006/20261106T140407Z-1.json"
 
 [case.CWR-007]
 title = "Sandbox closure and resource limits"
@@ -168,8 +168,8 @@ requires_build = true
 registered_builds = []
 registered_seeds = []
 cassette_digest = null
-status = "UNRUN"
-evidence = null
+status = "FAIL"
+evidence = "tests/cwr/evidence/CWR-007/20261106T140755Z-1.json"
 
 [case.CWR-008]
 title = "Atomic primitives, ordered preconditions and partial scripts"

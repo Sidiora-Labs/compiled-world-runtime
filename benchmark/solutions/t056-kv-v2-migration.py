@@ -11,7 +11,7 @@ with `cwr instance turn`. The helpers below run on the driver side only.
 import textwrap
 
 TASK = "t056-kv-v2-migration"
-PRIMITIVES = 47  # recorded by the authoring model; CWR-015 recounts on the kernel
+PRIMITIVES = 47  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
 TURNS = 1
 
 

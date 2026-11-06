@@ -516,14 +516,47 @@ def table_rows(text: str) -> list[list[str]]:
     return rows
 
 
+def cell_counts(hypothesis: str) -> dict[str, list[int]]:
+    """Per arm: cells done, to retry (model or kernel error), missing, and seeds complete."""
+    tasks = list(suite_tasks())
+    out = {}
+    for arm in ARMS[hypothesis]:
+        done = retry = missing = 0
+        seeds_done = {seed: True for seed in SEEDS}
+        for task in tasks:
+            for seed in SEEDS:
+                cell = RESULTS / hypothesis.lower() / arm / task / str(seed)
+                state = "missing"
+                if (cell / "attempt.kvx").exists() and (cell / "ledger.jsonl").exists():
+                    status = read_kvx(cell / "attempt.kvx")["attempt"].get("exit_status")
+                    state = "retry" if status in ("model_error", "kernel_error") else "done"
+                done += state == "done"
+                retry += state == "retry"
+                missing += state == "missing"
+                seeds_done[seed] = seeds_done[seed] and state == "done"
+        out[arm] = [done, retry, missing, sum(seeds_done.values())]
+    return out
+
+
 def check_report(c: Clauses, hypothesis: str, fresh: dict) -> None:
     path = REPORT[hypothesis]
     if not c.check("12.5", path.exists(), f"{path.relative_to(REPO)} exists"):
         return
     text = path.read_text(encoding="utf-8")
     body = fresh["hypotheses"][hypothesis]
+    counts = cell_counts(hypothesis)
     compared = mismatched = 0
     problems: list[str] = []
+    matrix = body["matrix"]
+    summary = (
+        f"Expected cells {matrix['expected']}; present {matrix['present']}; missing "
+        f"{matrix['missing_count']}; complete {fmt(matrix['complete'])}. Excluded from analysis: "
+        f"{len(fresh['excluded'])}."
+    )
+    compared += 1
+    if summary not in text:
+        mismatched += 1
+        problems.append(f"matrix summary line differs from the fresh {summary!r}")
     for row in table_rows(text):
         if len(row) == 8 and row[0] in ARMS[hypothesis] and row[1] in BINS:
             arm, group, metric = row[0], row[1], row[2]
@@ -544,6 +577,34 @@ def check_report(c: Clauses, hypothesis: str, fresh: dict) -> None:
             if row[3:] != want:
                 mismatched += 1
                 problems.append(f"{arm}/{group}/{metric}: report {row[3:]} fresh {want}")
+        elif len(row) == 5 and row[0] in ARMS[hypothesis] and row[1] in BINS:
+            t = body["harness_recorded_tokens"]["cells"][row[0]][row[1]]
+            want = [str(t["n"]), fmt(t["mean"]), fmt_ci(t["ci"])]
+            compared += 1
+            if row[2:] != want:
+                mismatched += 1
+                problems.append(f"tokens {row[0]}/{row[1]}: report {row[2:]} fresh {want}")
+        elif len(row) == 5 and row[0] in ARMS[hypothesis] and row[1].isdigit():
+            want = [str(v) for v in counts[row[0]]]
+            compared += 1
+            if row[1:] != want:
+                mismatched += 1
+                problems.append(f"matrix {row[0]}: report {row[1:]} recomputed {want}")
+        elif len(row) == 5 and row[0] in body["per_drift_spec"]:
+            entry = body["per_drift_spec"][row[0]].get(row[1])
+            want = (
+                [
+                    str(entry["instances"]),
+                    fmt(entry["metrics"]["task_success"]["mean"]),
+                    fmt(entry["metrics"]["repeated_failure_rate"]["mean"]),
+                ]
+                if entry
+                else None
+            )
+            compared += 1
+            if row[2:] != want:
+                mismatched += 1
+                problems.append(f"spec {row[0]}/{row[1]}: report {row[2:]} fresh {want}")
         elif len(row) == 6 and any(row[0] == d["id"] for d in body["directions"]):
             match = [d for d in body["directions"] if d["id"] == row[0] and d["group"] == row[1]]
             if not match:

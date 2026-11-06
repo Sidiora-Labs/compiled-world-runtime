@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Sidiora Labs Inc. CWR® 2026-2027
 # SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
-"""Record, replay and freeze the refworld cassette sets through the real kernel gateway (task 4.1).
+"""Record, replay and freeze the refworld cassette sets through the real kernel gateway (CWR-014).
 
 Python 3.12 standard library only. Every adapter call goes through `cwr instance turn --gateway
 record|replay`, i.e. the Rust gateway of task 2.3 running the compiled refworld Build; nothing here
@@ -69,6 +69,9 @@ REFWORLD = REPO / "examples/refworld"
 MANIFEST = "refworld.kvx"
 SUITE_SEEDS = list(range(1, 11))
 TURN_LIMIT = 200
+RECORD_ATTEMPTS = 3
+HOST_LIMITS = ("cpu_ms", "wall_ms")
+HOST_LIMIT_ERROR = "host-time limit ended a turn during recording"
 ENVELOPE_HOST_FIELDS = ("cpu_ms", "wall_ms")
 LEDGER_HOST_FIELDS = ("host_ts", "duration_us", "instance", "chain", "build")
 
@@ -304,10 +307,12 @@ def call(label, f, **kw):
     except cwr.errors.WorldError as e:
         r[label] = {"code": e.code, "retry_after": e.retry_after}
     return r[label]
-def wait_until(tick):
-    while world.now() < tick:
-        pass
 """
+
+# Waiting for a rate-limit window to reopen: empty turns advance world_time by tick_per_turn (10)
+# each without any host-time cost, so ten of them outlast every retry_after the stubs can give
+# (at most 50 ticks for search, 100 for publish).
+WAIT_TURNS = ["pass\n"] * 10
 
 SEARCH_FAULTS = [
     {"adapter": "search.query", "index": 1, "fault": "UNAVAILABLE"},
@@ -335,9 +340,12 @@ return r
     o = call("window_" + str(i), search.query, q="topic " + str(i), limit=1)
     if o.get("code") == "RATE_LIMITED":
         r["rate_limited_at"] = world.now() - 1
-        wait_until(r["rate_limited_at"] + o["retry_after"])
-        call("retry_after_window", search.query, q="topic " + str(i), limit=1)
         break
+return r
+""",
+    *WAIT_TURNS,
+    PRELUDE
+    + """call("retry_after_window", search.query, q="topic after the window", limit=1)
 return r
 """,
 ]
@@ -369,10 +377,13 @@ return r
 o = call("window_rate_limited", publish.post, key="k7", title="Title", body="b")
 if o.get("code") == "RATE_LIMITED":
     r["rate_limited_at"] = world.now() - 1
-    wait_until(r["rate_limited_at"] + o["retry_after"])
-    call("retry_after_window", publish.post, key="k7", title="Title", body="b")
 receipt = r["retry_after_scheduled"]["ok"]
 call("status_of_retried", publish.status, post_id=receipt["id"])
+return r
+""",
+    *WAIT_TURNS,
+    PRELUDE
+    + """call("retry_after_window", publish.post, key="k7", title="Title", body="b")
 return r
 """,
 ]
@@ -507,8 +518,9 @@ def record_one(
     scripts: list[str] | None,
     solution_task: str | None,
     stubs: StubPair,
+    attempt: int = 0,
 ) -> dict:
-    home = work / f"{set_name}-{name}-{seed}" / "home"
+    home = work / f"{set_name}-{name}-{seed}-{attempt}" / "home"
     home.mkdir(parents=True)
     dest = out / set_name / name
     dest.mkdir(parents=True, exist_ok=True)
@@ -552,6 +564,17 @@ def record_one(
         )
     if not stubs.alive():
         error = error or "a stub server exited during recording"
+    host_limits = sorted(
+        {
+            str(t["envelope"]["error"].get("limit"))
+            for t in run.turns
+            if (t["envelope"].get("error") or {}).get("limit") in HOST_LIMITS
+        }
+    )
+    if host_limits:
+        # cpu_ms and wall_ms are measured on the host: a turn they ended under host load is not a
+        # recording of the world and would not replay identically on another host.
+        error = error or f"{HOST_LIMIT_ERROR} ({', '.join(host_limits)})"
     expect = {
         "format": "cwr.cassette-expect",
         "schema_version": 1,
@@ -571,7 +594,23 @@ def record_one(
         "turns": len(run.turns),
         "error": error or solution_error,
         "kernel_error": error,
+        "instance": run.iid,
     }
+
+
+def record_retrying(*args: Any) -> dict:
+    """record_one, re-run from a fresh Instance when the host (not the world) spoiled the run: a
+    stub that was unreachable or a host-time limit. Never more than RECORD_ATTEMPTS runs."""
+    result: dict = {}
+    for attempt in range(RECORD_ATTEMPTS):
+        result = record_one(*args, attempt=attempt)
+        transient = result["kernel_error"] and (
+            result["kernel_error"].startswith(HOST_LIMIT_ERROR)
+            or result["kernel_error"].startswith("stub unreachable")
+        )
+        if not transient:
+            break
+    return result
 
 
 def record(args) -> int:
@@ -596,7 +635,7 @@ def record(args) -> int:
                         pair.schedule(faults)
                         seen = {k: len(v) for k, v in pair.log().items()}
                         results.append(
-                            record_one(
+                            record_retrying(
                                 cwr,
                                 build,
                                 work,
@@ -612,7 +651,11 @@ def record(args) -> int:
                         )
                         pair.schedule([])
                         if args.stub_logs:
-                            logs = {k: v[seen[k] :] for k, v in pair.log().items()}
+                            iid = results[-1]["instance"]
+                            logs = {
+                                k: [e for e in v[seen[k] :] if e["instance"] == iid]
+                                for k, v in pair.log().items()
+                            }
                             Path(args.stub_logs).mkdir(parents=True, exist_ok=True)
                             write_json(Path(args.stub_logs) / f"{name}-seed-{seed}.json", logs)
                 finally:
@@ -624,7 +667,7 @@ def record(args) -> int:
                     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
                         futs = [
                             pool.submit(
-                                record_one,
+                                record_retrying,
                                 cwr,
                                 build,
                                 work,
@@ -823,7 +866,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--build")
         if name != "digest":
             p.add_argument("--set", choices=["adapters", "suite", "all"], default="all")
-            p.add_argument("--jobs", type=int, default=8)
+            p.add_argument("--jobs", type=int, default=4)
         if name == "record":
             p.add_argument("--out", default=str(CASSETTES))
             p.add_argument(

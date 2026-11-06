@@ -9,7 +9,8 @@
 //!
 //! * [`scan`] lists every `import a.b`, `from a.b import c` and relative import, wherever it
 //!   appears (top level, inside `if TYPE_CHECKING:`, inside functions), plus every use of
-//!   the `__import__` builtin, which is a dynamic import;
+//!   the `__import__` builtin, which is a dynamic import, plus every reflective or dynamic
+//!   route around the import list (see "Dynamic and reflective access" below);
 //! * [`top_level_defs`] lists every top-level `def` / `async def` with its parameter list.
 //!
 //! The permitted modules are a closed list (world-source.md section 8; compiler.md CWR-L001):
@@ -24,6 +25,30 @@
 //! `sys`, `socket`, `http`, `urllib`, `time`, `datetime`, `random`, `secrets`, `subprocess`,
 //! `pathlib`, `shutil`, `tempfile`, `threading`, `multiprocessing`, `ctypes`, `importlib`),
 //! any other standard-library module, any third-party package and any relative import.
+//!
+//! ## Dynamic and reflective access
+//!
+//! An import list alone can be walked around: `exec("import os")`, `getattr(__builtins__,
+//! "__imp" + "ort__")("socket")`, `open("/etc/passwd")`, `typing.sys.modules["os"]` or
+//! `json.codecs.open(...)`. The scanner therefore also refuses, as CWR-L001, three closed
+//! lists (all checked on code tokens, including the `{...}` expressions of f-strings):
+//!
+//! * [`BANNED_BUILTINS`]: builtins that run code, touch the host or reflect on names
+//!   (`exec`, `eval`, `compile`, `open`, `input`, `breakpoint`, `help`, `exit`, `quit`,
+//!   `globals`, `locals`, `vars`, `getattr`, `setattr`, `delattr`), used as a bare name;
+//! * every dunder name outside [`DUNDER_ALLOWED`] (the special-method names a world's own
+//!   classes use), bare or as an attribute: `__builtins__`, `__globals__`, `__class__`,
+//!   `__subclasses__`, `__dict__`, `__self__`, `__code__`, `__loader__`, ...;
+//! * [`BANNED_ATTRS`]: attribute names (and `from X import <name>` names) through which a
+//!   permitted module re-exports a module outside the list (`typing.sys`, `json.codecs`,
+//!   `dataclasses.inspect`, `re.enum.bltns`, ...), host-facility names, CPython frame
+//!   attributes and the generated SDK's private transport modules.
+//!
+//! Imports of a private submodule (`re._parser`, `cwr._rpc`) are refused as well. The
+//! attribute list was derived by walking every module and class reachable from the permitted
+//! modules under Python 3.12 without passing a banned name or a non-allowed dunder: what
+//! remains reachable is only `typing`, `dataclasses`, `json` (and its decoder, encoder and
+//! scanner), `re`, `math`, `collections` (and `abc`), `itertools`, `abc`, `copy` and `cwr`.
 
 /// The standard-library modules every World Source Python file may import.
 pub const STDLIB_ALLOWED: [&str; 7] = [
@@ -64,6 +89,140 @@ pub const FORBIDDEN_HOST: [&str; 17] = [
     "importlib",
 ];
 
+/// Builtins refused as bare names: they run code, reach the host, or look up names
+/// dynamically (and so can reach `__import__` or any re-exported host module).
+pub const BANNED_BUILTINS: [&str; 15] = [
+    "exec",
+    "eval",
+    "compile",
+    "open",
+    "input",
+    "breakpoint",
+    "help",
+    "exit",
+    "quit",
+    "globals",
+    "locals",
+    "vars",
+    "getattr",
+    "setattr",
+    "delattr",
+];
+
+/// The dunder names World Source Python may use: special methods of its own classes and
+/// module metadata. Every other dunder (`__builtins__`, `__globals__`, `__class__`, ...) is
+/// interpreter introspection and is refused.
+pub const DUNDER_ALLOWED: [&str; 27] = [
+    "__init__",
+    "__name__",
+    "__doc__",
+    "__all__",
+    "__slots__",
+    "__post_init__",
+    "__eq__",
+    "__ne__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__hash__",
+    "__repr__",
+    "__str__",
+    "__len__",
+    "__iter__",
+    "__next__",
+    "__contains__",
+    "__getitem__",
+    "__setitem__",
+    "__delitem__",
+    "__bool__",
+    "__enter__",
+    "__exit__",
+    "__call__",
+    "__future__",
+];
+
+/// Attribute names (and `from X import` names) refused anywhere: modules outside the list
+/// that a permitted module re-exports (`typing.sys`, `json.codecs`, `dataclasses.inspect`,
+/// `re.enum.bltns`, `collections._sys`, `typing.operator.attrgetter`, ...), the host
+/// facilities by name, CPython frame and generator attributes, and the generated SDK's
+/// private transport modules (`cwr._rpc`, `cwr._runner`).
+pub const BANNED_ATTRS: [&str; 59] = [
+    // host facilities and interpreter modules
+    "sys",
+    "_sys",
+    "os",
+    "_os",
+    "io",
+    "_io",
+    "codecs",
+    "_codecs",
+    "builtins",
+    "bltns",
+    "inspect",
+    "types",
+    "_thread",
+    "threading",
+    "subprocess",
+    "socket",
+    "importlib",
+    "_imp",
+    "ctypes",
+    "shutil",
+    "tempfile",
+    "pathlib",
+    "multiprocessing",
+    "posix",
+    "nt",
+    "signal",
+    "_signal",
+    "marshal",
+    "gc",
+    // modules re-exported by permitted modules that lead onward
+    "operator",
+    "warnings",
+    "contextlib",
+    "copyreg",
+    "enum",
+    "functools",
+    "keyword",
+    "_sre",
+    "_parser",
+    "_compiler",
+    "_constants",
+    "_casefix",
+    "_collections_abc",
+    "attrgetter",
+    "methodcaller",
+    // CPython frame, generator and traceback attributes
+    "gi_frame",
+    "gi_code",
+    "cr_frame",
+    "cr_code",
+    "ag_frame",
+    "ag_code",
+    "tb_frame",
+    "tb_next",
+    "f_globals",
+    "f_builtins",
+    "f_locals",
+    "f_back",
+    "f_code",
+    // the generated SDK's private transport
+    "_rpc",
+    "_runner",
+];
+
+/// Marker prefix of an [`Import`] that records a banned builtin used as a bare name.
+pub const BUILTIN_MARK: &str = "builtin:";
+
+/// Marker prefix of an [`Import`] that records a banned attribute, imported name or dunder.
+pub const ATTR_MARK: &str = "attr:";
+
+fn is_dunder(name: &str) -> bool {
+    name.len() > 4 && name.starts_with("__") && name.ends_with("__")
+}
+
 /// Which import policy applies to a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
@@ -78,7 +237,9 @@ pub enum Policy {
 /// One import found in a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
-    /// The module as written: `a.b.c`, `.`, `..pkg`, or `__import__` for the builtin.
+    /// The module as written: `a.b.c`, `.`, `..pkg`, `__import__` for the builtin,
+    /// `builtin:<name>` for a [`BANNED_BUILTINS`] name, or `attr:<name>` for a
+    /// [`BANNED_ATTRS`] name or a dunder outside [`DUNDER_ALLOWED`].
     pub module: String,
     /// One-based line of the module name (or of `__import__`).
     pub line: usize,
@@ -119,6 +280,18 @@ pub fn refusal(policy: Policy, import: &Import) -> Option<String> {
             "dynamic import through __import__ is outside the closed import list".to_string(),
         );
     }
+    if let Some(name) = import.module.strip_prefix(BUILTIN_MARK) {
+        return Some(format!(
+            "the builtin {name} runs code, reaches the host or looks names up dynamically; it is outside the closed import list"
+        ));
+    }
+    if let Some(name) = import.module.strip_prefix(ATTR_MARK) {
+        return Some(if is_dunder(name) {
+            format!("interpreter introspection through {name} is outside the closed import list")
+        } else {
+            format!("{name} reaches a module or interpreter frame outside the closed import list")
+        });
+    }
     if import.module.starts_with('.') {
         return Some(format!(
             "relative import {:?} is outside the closed import list",
@@ -126,6 +299,16 @@ pub fn refusal(policy: Policy, import: &Import) -> Option<String> {
         ));
     }
     let top = import.top();
+    if let Some(private) = import
+        .module
+        .split('.')
+        .skip(1)
+        .find(|p| p.starts_with('_'))
+    {
+        return Some(format!(
+            "import of the private submodule {private} of {top} is outside the closed import list"
+        ));
+    }
     if STDLIB_ALLOWED.contains(&top) || top == SDK {
         return None;
     }
@@ -186,7 +369,7 @@ fn logical_lines(src: &str) -> Vec<Logical> {
     let mut depth = 0usize;
     let (mut line, mut col) = (1usize, 1usize);
     let mut i = 0usize;
-    let mut fstring_imports: Vec<Tok> = Vec::new();
+    let mut fstring_code: Vec<Logical> = Vec::new();
     macro_rules! advance {
         ($n:expr) => {{
             for _ in 0..$n {
@@ -241,13 +424,17 @@ fn logical_lines(src: &str) -> Vec<Logical> {
                 let is_f = word.to_ascii_lowercase().contains('f');
                 advance!(j - i);
                 let body = lex_string(&chars, &mut i, &mut line, &mut col);
-                if is_f && body.contains("__import__") {
-                    fstring_imports.push(Tok {
-                        kind: Kind::Name,
-                        text: "__import__".into(),
-                        line: tl,
-                        col: tc,
-                    });
+                if is_f {
+                    // The `{...}` expressions of an f-string are code: lex them as such, every
+                    // token located at the string's start.
+                    for mut l in logical_lines(&fstring_exprs(&body)) {
+                        for t in &mut l.toks {
+                            t.line = tl;
+                            t.col = tc;
+                        }
+                        l.indent = 0;
+                        fstring_code.push(l);
+                    }
                 }
                 cur.push(Tok {
                     kind: Kind::Str,
@@ -318,11 +505,40 @@ fn logical_lines(src: &str) -> Vec<Logical> {
         let indent = cur[0].col;
         out.push(Logical { indent, toks: cur });
     }
-    if !fstring_imports.is_empty() {
-        out.push(Logical {
-            indent: 0,
-            toks: fstring_imports,
-        });
+    out.extend(fstring_code);
+    out
+}
+
+/// The `{...}` replacement-field expressions of an f-string body (`{{` and `}}` are literal
+/// braces), one per line; a format spec after a top-level `:` or `!` is kept, since it can
+/// itself hold nested `{...}` expressions and is otherwise harmless text.
+fn fstring_exprs(body: &str) -> String {
+    let chars: Vec<char> = body.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' {
+            if chars.get(i + 1) == Some(&'{') {
+                i += 2;
+                continue;
+            }
+            let mut depth = 1usize;
+            let mut j = i + 1;
+            while j < chars.len() && depth > 0 {
+                match chars[j] {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            let end = if depth == 0 { j - 1 } else { j };
+            out.extend(&chars[i + 1..end]);
+            out.push('\n');
+            i = j;
+            continue;
+        }
+        i += 1;
     }
     out
 }
@@ -382,6 +598,48 @@ fn is_op(t: &Tok, text: &str) -> bool {
     t.kind == Kind::Op && t.text == text
 }
 
+/// The marker module for a banned dynamic or reflective use at token `k`, if any.
+fn reflective(toks: &[Tok], k: usize) -> Option<String> {
+    let t = &toks[k];
+    if t.kind != Kind::Name {
+        return None;
+    }
+    let prev = k.checked_sub(1).map(|p| &toks[p]);
+    let after_dot = prev.is_some_and(|p| is_op(p, "."));
+    let after_def = prev.is_some_and(|p| is_name(p, "def") || is_name(p, "class"));
+    let name = t.text.as_str();
+    if is_dunder(name) {
+        if name == "__import__" || after_def || DUNDER_ALLOWED.contains(&name) {
+            return None;
+        }
+        return Some(format!("{ATTR_MARK}{name}"));
+    }
+    // An attribute, or a name imported by `from X import name`: the import statement's own
+    // module path (`from a.b import`, `import a.b`) is judged by `refusal`, not here.
+    let in_import = toks[..k]
+        .iter()
+        .rev()
+        .take_while(|p| !is_op(p, ";"))
+        .any(|p| is_name(p, "import") || is_name(p, "from"));
+    if BANNED_ATTRS.contains(&name) {
+        let imported_name = in_import
+            && toks[..k].iter().any(|p| is_name(p, "import"))
+            && toks[..k].iter().any(|p| is_name(p, "from"));
+        if (after_dot && !in_import) || imported_name {
+            return Some(format!("{ATTR_MARK}{name}"));
+        }
+    }
+    if BANNED_BUILTINS.contains(&name) && !after_dot && !after_def && !in_import {
+        // `name = ...` and keyword arguments `f(name=...)` bind or label, they do not use.
+        let binds = toks.get(k + 1).is_some_and(|n| is_op(n, "="))
+            && !toks.get(k + 2).is_some_and(|n| is_op(n, "="));
+        if !binds {
+            return Some(format!("{BUILTIN_MARK}{name}"));
+        }
+    }
+    None
+}
+
 /// Every import in a Python source text, in source order.
 pub fn scan(src: &str) -> Vec<Import> {
     let mut out = Vec::new();
@@ -391,6 +649,14 @@ pub fn scan(src: &str) -> Vec<Import> {
             if is_name(t, "__import__") {
                 out.push(Import {
                     module: "__import__".into(),
+                    line: t.line,
+                    col: t.col,
+                });
+                continue;
+            }
+            if let Some(module) = reflective(toks, k) {
+                out.push(Import {
+                    module,
                     line: t.line,
                     col: t.col,
                 });
@@ -569,6 +835,58 @@ mod tests {
                 ("__import__".into(), 12),
             ]
         );
+    }
+
+    #[test]
+    fn dynamic_and_reflective_access() {
+        let src = concat!(
+            "_x = exec(\"import os\")\n",                                       // 1
+            "_y = getattr(__builtins__, \"__imp\" + \"ort__\")(\"socket\")\n",  // 2
+            "_z = open(\"/etc/passwd\").read\n",                                // 3
+            "import typing\nm = typing.sys.modules\n",                          // 4, 5
+            "from json import codecs\n",                                        // 6
+            "f = ().__class__.__bases__[0].__subclasses__()\n",                 // 7
+            "g = f\"{eval('1')}\"\n",                                           // 8
+            "import cwr._rpc\n",                                                // 9
+            "p = re.compile('x'); q = self.open; r = dict(open=1); eval = 2\n", // 10
+            "class C:\n    def __init__(self):\n        self.n = __name__\n",   // 11-13
+            "s = f\"cannot open {path}\"\n",                                    // 14
+        );
+        let got: Vec<(String, usize)> = scan(src).into_iter().map(|i| (i.module, i.line)).collect();
+        let want: Vec<(String, usize)> = [
+            ("builtin:exec", 1),
+            ("builtin:getattr", 2),
+            ("attr:__builtins__", 2),
+            ("builtin:open", 3),
+            ("typing", 4),
+            ("attr:sys", 5),
+            ("json", 6),
+            ("attr:codecs", 6),
+            ("attr:__class__", 7),
+            ("attr:__bases__", 7),
+            ("attr:__subclasses__", 7),
+            ("builtin:eval", 8),
+            ("cwr._rpc", 9),
+        ]
+        .iter()
+        .map(|(m, l)| (m.to_string(), *l))
+        .collect();
+        assert_eq!(got, want);
+        let lib = |m: &str| {
+            refusal(
+                Policy::Lib,
+                &Import {
+                    module: m.into(),
+                    line: 1,
+                    col: 1,
+                },
+            )
+        };
+        for (m, _) in &want {
+            if !matches!(m.as_str(), "typing" | "json") {
+                assert!(lib(m).is_some(), "{m}");
+            }
+        }
     }
 
     #[test]

@@ -36,6 +36,16 @@ class ParserTests(unittest.TestCase):
             Path(tmp, "README.md").write_text("<!-- c -->\n\n# The `cwr` [tool](x.md) | a\n")
             self.assertEqual(codemap.readme_heading(Path(tmp)), "The cwr tool \\| a")
 
+    def test_purpose_line_drops_labels_and_task_references(self):
+        self.assertEqual(
+            codemap.purpose_line("artifacts", "artifacts: release bundles"), "Release bundles"
+        )
+        self.assertEqual(codemap.purpose_line("docs/cwr", "docs/cwr: user guides"), "User guides")
+        self.assertEqual(
+            codemap.purpose_line("benchmark/tasks", "CWR task suite (task 4.2)"), "CWR task suite"
+        )
+        self.assertEqual(codemap.purpose_line("examples", "refworld pairs"), "refworld pairs")
+
     def test_line_count(self):
         self.assertEqual(codemap.count_lines(b""), 0)
         self.assertEqual(codemap.count_lines(b"a\nb\n"), 2)

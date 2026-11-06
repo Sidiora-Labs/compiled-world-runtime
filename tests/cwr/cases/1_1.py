@@ -319,6 +319,7 @@ def clean_sources() -> None:
     order = [s["stage"] for s in rep.get("stages", [])]
     R.check("4.1", order == STAGES, f"report stage identities in order: {order}")
     built = (rep.get("build") or {}).get("hash", "")
+    clean_build_rep = rep
     written = sorted(p.name for p in BUILD_OUT.iterdir()) if BUILD_OUT.is_dir() else []
     ok = (
         rc == 0
@@ -356,46 +357,189 @@ def clean_sources() -> None:
         f"cwr build, fs.delete no longer deletes (effect unmet): exit {rc}, stopped_at "
         f"{rep.get('stopped_at')}, later stages {[st.get(s) for s in STAGES[4:]]}, written {leftover}",
     )
-    # Every precondition of the clean source is over parameters and read_only primitives (2.1).
-    n_pre = sum(
-        len(re.findall(r'\["', line.split("=", 1)[1]))
-        for f in sorted((CLEAN / "contracts").glob("*.kvx"))
-        for line in f.read_text().splitlines()
-        if line.startswith("preconditions =")
-    )
-    n_pre += sum(
-        len(re.findall(r'\["', line.split("=", 1)[1]))
-        for f in sorted((CLEAN / "adapters").glob("*.kvx"))
-        for line in f.read_text().splitlines()
-        if line.startswith("preconditions =")
-    )
-    R.check("2.1", n_pre > 0, f"clean source: {n_pre} preconditions accepted, none flagged")
+    # 2.1 positive side, tied to the compiler's output: every precondition the clean source
+    # declares reaches the compiled contracts.json unchanged, and each one, checked here
+    # independently of the compiler, uses only the entry's parameters, literals, len() and
+    # calls to read_only primitives of the same Build. Then 2.1 negative side for every one
+    # of them: retargeting its first call to a mutating primitive is refused as CWR-V001 at
+    # that precondition's file, line and index.
+    precondition_clauses(clean_build_rep, built)
 
-    # The pack's illustrative source.
+
+EXPR_KEYWORDS = {"and", "or", "not", "True", "False", "None", "in", "is"}
+
+
+def source_preconditions(root: Path) -> list[tuple[str, str, int, int, str, str]]:
+    """(file, entry, line, index, expression, code) for every precondition of every contract
+    and adapter file of a source, read from the KVX text."""
+    out = []
+    for f in sorted([*(root / "contracts").glob("*.kvx"), *(root / "adapters").glob("*.kvx")]):
+        rel = f.relative_to(root).as_posix()
+        section = None
+        for n, line in enumerate(f.read_text().split("\n"), 1):
+            m = re.match(r"^\[(?:primitive|adapter)\.(.+)\]$", line)
+            if m:
+                section = m.group(1)
+            elif line.startswith("[") and line.endswith("]"):
+                section = None
+            elif section and line.startswith("preconditions ="):
+                for i, (expr, code) in enumerate(json.loads(line.split("=", 1)[1]), 1):
+                    out.append((rel, section, n, i, expr, code))
+    return out
+
+
+def expr_problems(expr: str, params: set[str], read_only: set[str]) -> list[str]:
+    """Independent check of one precondition against world-source.md section 5."""
+    bare = re.sub(r'"(?:[^"\\]|\\.)*"', '""', expr)
+    problems = []
+    for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(\()?", bare):
+        name, call = m.group(1), m.group(2)
+        if call and "." in name:
+            if name not in read_only:
+                problems.append(f"call {name} is not a read_only primitive")
+        elif call:
+            if name != "len":
+                problems.append(f"call {name}")
+        elif "." in name:
+            problems.append(f"attribute {name}")
+        elif name not in params and name not in EXPR_KEYWORDS:
+            problems.append(f"name {name}")
+    if re.search(r"\[", bare):
+        problems.append("indexing")
+    return problems
+
+
+def precondition_clauses(build_rep: dict, built: str) -> None:
+    src = source_preconditions(CLEAN)
+    contracts_json = (
+        next(
+            (p / "contracts.json" for p in BUILD_OUT.iterdir() if built and built.endswith(p.name)),
+            None,
+        )
+        if BUILD_OUT.is_dir()
+        else None
+    )
+    if contracts_json is None or not contracts_json.is_file():
+        R.check(
+            "2.1", False, f"clean Build's contracts.json not found under --out (build {built[:19]})"
+        )
+        return
+    cj = json.loads(contracts_json.read_text())
+    entries = {e["name"]: e for e in cj["primitives"] + cj["adapters"]}
+    read_only = {n for n, e in entries.items() if e["side_effect"] == "read_only"}
+    compiled = sorted(
+        (n, i, expr, code)
+        for n, e in entries.items()
+        for i, (expr, code) in enumerate(e["preconditions"], 1)
+    )
+    declared = sorted((sec, i, expr, code) for _, sec, _, i, expr, code in src)
+    bad = []
+    for name, i, expr, _code in compiled:
+        params = {p[0] for p in entries[name]["params"]}
+        for why in expr_problems(expr, params, read_only):
+            bad.append(f"{name}#{i} {expr!r}: {why}")
+    calls = sum(len(re.findall(r"[a-z_]+\.[a-z_]+\(", e)) for _, _, e, _ in compiled)
+    R.check(
+        "2.1",
+        build_rep.get("stopped_at") is None and bool(compiled) and compiled == declared and not bad,
+        f"clean source: all {len(declared)} declared preconditions compiled unchanged into contracts.json "
+        f"({len(compiled)}); each uses only its parameters, literals, len() and {calls} calls to read_only "
+        f"primitives of the Build (checked independently)"
+        + (f" PROBLEMS {bad}" if bad else "")
+        + ("" if compiled == declared else " MISMATCH between source and contracts.json"),
+    )
+    # Negative side for every precondition that calls a primitive: retarget the first call to
+    # a mutating primitive of equal arity; the compiler must refuse each with CWR-V001.
+    mutating = sorted(
+        (n for n, e in entries.items() if e["side_effect"] == "mutating"),
+        key=lambda n: (len(entries[n]["params"]), n),
+    )
+    tried, refused, misses = 0, 0, []
+    for rel, sec, _line, idx, expr, _code in src:
+        m = re.search(r"([a-z_]+\.[a-z_]+)\(", expr)
+        if not m:
+            continue
+        target = m.group(1)
+        arity = len(entries[target]["params"])
+        swap = next(
+            (
+                n
+                for n in mutating
+                if len(entries[n]["params"]) == arity and n.split(".")[0] == target.split(".")[0]
+            ),
+            None,
+        ) or next((n for n in mutating if len(entries[n]["params"]) == arity), None)
+        if swap is None:
+            misses.append(f"{sec}#{idx}: no mutating primitive of arity {arity}")
+            continue
+        tried += 1
+        root = fresh(f"v001_{sec}_{idx}")
+        new_expr = expr[: m.start(1)] + swap + expr[m.end(1) :]
+        pres = [list(p) for p in [(e, c) for r2, s2, _, _, e, c in src if r2 == rel and s2 == sec]]
+        pres[idx - 1][0] = new_expr
+        got_line = set_key(
+            root,
+            rel,
+            ("adapter." if rel.startswith("adapters/") else "primitive.") + sec,
+            "preconditions",
+            json.dumps(pres),
+        )
+        rc, rep, _ = cwr("lint", root)
+        ds = stage_diags(rep, "lint")
+        hit = any(
+            d["code"] == "CWR-V001"
+            and d["file"] == rel
+            and d["line"] == got_line
+            and d["index"] == idx
+            for d in ds
+        )
+        if rc == 3 and rep.get("stopped_at") == "lint" and hit:
+            refused += 1
+            TRIGGERED.setdefault("CWR-V001", []).append(f"retarget {sec}#{idx}")
+        else:
+            misses.append(
+                f"{sec}#{idx} {new_expr!r}: exit {rc} at {rep.get('stopped_at')} [{brief(rep)}]"
+            )
+    R.check(
+        "2.1",
+        tried > 0 and refused == tried and not misses,
+        f"every precondition with a primitive call ({tried}) retargeted to a mutating primitive: "
+        f"{refused} refused as CWR-V001 at file, line and index"
+        + (f" MISSES {misses}" if misses else ""),
+    )
+
+
+def pack_example() -> None:
+    # The pack's illustrative source: an excerpt (world.kvx, contracts, adapters, CHANGELOG,
+    # one migration) without lib/, fixtures/ or manual/. It is refused at parse: without
+    # --allow-example for meta.example and the incomplete layout, with it for the layout only.
+    missing_dirs = sorted(
+        f"{x}/" for x in ("lib", "fixtures", "manual") if not (PACK_EXAMPLE / x).exists()
+    )
     rc, rep, _ = cwr("lint", PACK_EXAMPLE)
     d = all_diags(rep)
+    kinds = sorted((x["kind"], x["file"]) for x in d)
+    want = sorted([("example", "world.kvx")] + [("layout", m) for m in missing_dirs])
+    ex = [x for x in d if x["kind"] == "example"]
     R.check(
         "4.1",
         rc == 2
         and rep.get("stopped_at") == "parse"
-        and len(d) == 1
-        and d[0]["kind"] == "example"
-        and d[0]["file"] == "world.kvx"
-        and d[0]["key"] == "example",
-        f"spec example without --allow-example: exit {rc}, parse refusal at world.kvx:{d[0]['line'] if d else '?'} [meta] example",
+        and kinds == want
+        and ex[0]["key"] == "example",
+        f"spec example without --allow-example: exit {rc}, parse refusal {kinds}",
     )
     rc, rep, _ = cwr("lint", PACK_EXAMPLE, "--allow-example")
-    d = stage_diags(rep, "resolve")
-    st = statuses(rep)
+    d = stage_diags(rep, "parse")
+    kinds = sorted((x["kind"], x["file"]) for x in d)
     R.check(
-        "4.1",
-        st.get("parse") == "passed"
-        and rep.get("stopped_at") == "resolve"
-        and rc == 2
-        and d
-        and all(x["code"] == "CWR-L002" for x in d),
-        f"spec example with --allow-example: parse passed; stops at resolve with {len(d)} CWR-L002 "
-        f"(the illustrative source ships contracts but no lib/)",
+        "3.1",
+        rc == 2
+        and rep.get("stopped_at") == "parse"
+        and bool(missing_dirs)
+        and kinds == [("layout", m) for m in missing_dirs],
+        f"spec example with --allow-example: exit {rc}, refused at parse for its incomplete layout "
+        f"only: {kinds}",
     )
 
 
@@ -760,6 +904,56 @@ def closure_layout() -> None:
             codes={"CWR-C001"},
             where=[("CWR-C001", rel, 1)],
         )
+    # Every required part of the layout (clause 3.1; world-source.md sections 2, 9, 10).
+    layout_cases = (
+        [
+            ("manual/", lambda r: shutil.rmtree(r / "manual"), [("manual/", 1)]),
+            ("fixtures/", lambda r: shutil.rmtree(r / "fixtures"), [("fixtures/", 1)]),
+            ("lib/", lambda r: shutil.rmtree(r / "lib"), [("lib/", 1)]),
+            ("contracts/", lambda r: shutil.rmtree(r / "contracts"), [("contracts/", 1)]),
+            ("world.kvx", lambda r: (r / "world.kvx").unlink(), [("world.kvx", 1)]),
+            ("CHANGELOG.kvx", lambda r: (r / "CHANGELOG.kvx").unlink(), [("CHANGELOG.kvx", 1)]),
+        ]
+        + [
+            (f"manual/{m}", lambda r, m=m: (r / "manual" / m).unlink(), [(f"manual/{m}", 1)])
+            for m in ("intro.md", "conventions.md", "types.md", "examples.md")
+        ]
+        + [
+            (
+                "fixtures/kv/",
+                lambda r: shutil.rmtree(r / "fixtures" / "kv"),
+                [("world.kvx", line_of(CLEAN, "world.kvx", "modules = "))],
+            )
+        ]
+    )
+    for what, mutate, where in layout_cases:
+        root = fresh("missing_" + re.sub(r"[^a-z]", "_", what.lower()))
+        mutate(root)
+        rc, rep, _ = cwr("lint", root)
+        ds = stage_diags(rep, "parse")
+        st = statuses(rep)
+        hit = all(any(d["file"] == f and d["line"] == ln for d in ds) for f, ln in where)
+        ok = (
+            rc == 2
+            and rep.get("stopped_at") == "parse"
+            and hit
+            and all(st.get(s) == "not_run" for s in STAGES[1:])
+        )
+        # A missing directory stops the full build as well: nothing is written.
+        if what in ("manual/", "fixtures/", "manual/intro.md"):
+            out = SCRATCH / f"build-out-missing-{_counter[0]}"
+            brc, brep, _ = cwr("build", root, "--out", str(out))
+            leftover = sorted(p.name for p in out.iterdir()) if out.is_dir() else []
+            ok = ok and brc == 2 and brep.get("stopped_at") == "parse" and not leftover
+            build_note = f"; cwr build exit {brc} at {brep.get('stopped_at')}, written {leftover}"
+        else:
+            build_note = ""
+        R.check(
+            "3.1",
+            ok,
+            f"source without {what}: cwr lint exit {rc}, refused at {rep.get('stopped_at')} "
+            f"[{', '.join(f'{d["kind"]}@{d["file"]}:{d["line"]}' for d in ds[:3])}]{build_note}",
+        )
     root = fresh("unknown_section")
     with (root / "world.kvx").open("a") as f:
         f.write("\n[network]\nallow = true\n")
@@ -840,6 +1034,76 @@ def imports() -> None:
         f"{len(lines)} forbidden imports in lib/fs.py ({', '.join(FORBIDDEN)}, os.path, requests, functools, "
         f"relative, __import__, after ';', one-line if): {len(flagged)} CWR-L001 at their lines"
         + (f" MISSING lines {missing}" if missing else ""),
+    )
+    # Dynamic and reflective routes around the import list (pyimports.rs, "Dynamic and
+    # reflective access"): each line must be refused as CWR-L001 at its own line.
+    evasions = [
+        '_e1 = exec("import os")',
+        "_e2 = eval(\"__import__('os')\")",
+        '_e3 = compile("import os", "x", "exec")',
+        '_e4 = getattr(__builtins__, "__imp" + "ort__")("socket")',
+        '_e5 = open("/etc/passwd").read',
+        '_e6 = globals()["__builtins__"]',
+        "_e7 = vars()",
+        "_e8 = typing.sys.modules",
+        "from json import codecs as _e9",
+        "_e10 = ().__class__.__bases__[0].__subclasses__()",
+        "_e11 = f\"{eval('1')}\"",
+        "import cwr._rpc as _e12",
+        "_e13 = (lambda: 0).__globals__",
+        "_e14 = (x for x in ()).gi_frame.f_globals",
+        "_e15 = dataclasses.inspect.stack()",
+        "_e16 = re._parser",
+        '_e17 = setattr(_m, "x", 1)',
+        "_e18 = breakpoint",
+        "_e19 = __loader__",
+    ]
+    root = fresh("evasions")
+    first = (
+        insert_after(
+            root,
+            "lib/kv.py",
+            "from typing import TYPE_CHECKING, Any, TypedDict",
+            "import typing\nimport dataclasses\nimport re\n" + "\n".join(evasions),
+        )
+        + 3
+    )
+    rc, rep, _ = cwr("lint", root)
+    d = [x for x in stage_diags(rep, "lint") if x["file"] == "lib/kv.py"]
+    flagged = {x["line"] for x in d if x["code"] == "CWR-L001"}
+    want = set(range(first, first + len(evasions)))
+    missing = sorted(want - flagged)
+    for x in d:
+        TRIGGERED.setdefault(x["code"], []).append("dynamic import evasions")
+    R.check(
+        "3.5",
+        rc == 3
+        and rep.get("stopped_at") == "lint"
+        and not missing
+        and flagged == want
+        and all(x["code"] == "CWR-L001" for x in stage_diags(rep, "lint")),
+        f"{len(evasions)} dynamic or reflective routes around the import list in lib/kv.py (exec, eval, "
+        f"compile, getattr on __builtins__, open, globals, vars, typing.sys, from json import codecs, "
+        f"__class__/__subclasses__ chain, f-string eval, cwr._rpc, __globals__, gi_frame.f_globals, "
+        f"dataclasses.inspect, re._parser, setattr, breakpoint, __loader__): {len(flagged)} lines refused "
+        f"as CWR-L001"
+        + (f" MISSING lines {[evasions[i - first] for i in missing]}" if missing else ""),
+    )
+    root = fresh("lookalikes")
+    insert_after(
+        root,
+        "lib/kv.py",
+        "from typing import TYPE_CHECKING, Any, TypedDict",
+        "import re\n_L1 = re.compile('a+')\n_L2 = dict(open=1, eval=2)\n_L3 = f\"cannot open {len('x')}\"\n"
+        "_L4 = __name__\n\n\nclass _Box:\n    def __init__(self, v):\n        self.v = v\n\n"
+        "    def __eq__(self, o):\n        return self.v == o.v\n",
+    )
+    rc, rep, _ = cwr("lint", root)
+    R.check(
+        "3.5",
+        rc == 0,
+        f"look-alikes that are not dynamic access (re.compile, keyword arguments open= and eval=, 'open' "
+        f"in f-string text, __name__, __init__/__eq__ definitions): exit {rc} [{brief(rep)}]",
     )
     root = fresh("permitted_imports")
     insert_after(
@@ -1075,6 +1339,7 @@ def main() -> int:
     R.check("4.1", tests_ok, f"cargo test -p cwr-compiler: {tests_evidence}")
     try:
         clean_sources()
+        pack_example()
         five_seeded_defects()
         visibility()
         failure_codes()

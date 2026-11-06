@@ -348,7 +348,14 @@ def predicate_state(
             },
             "locks": (modules.get("fs") or {}).get("locks") or [],
         },
-        "kv": {"namespaces": (modules.get("kv") or {}).get("namespaces") or {}},
+        "kv": {
+            "namespaces": {
+                ns: {key: _view_bytes(value) for key, value in sorted(entries.items())}
+                for ns, entries in sorted(
+                    ((modules.get("kv") or {}).get("namespaces") or {}).items()
+                )
+            }
+        },
         "jobs": {"jobs": jobs},
         "world": {"time": now, "turn": int(world["turn"])},
         "gateway": {"idempotency": {a: dict(sorted(k.items())) for a, k in sorted(store.items())}},

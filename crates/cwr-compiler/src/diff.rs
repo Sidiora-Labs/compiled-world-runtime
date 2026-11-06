@@ -27,6 +27,21 @@
 //! | a module's typed state record differs | `state_shape` | major |
 //! | `params` differ | kind `null`: world-source.md section 11 has no change kind for a parameter list; see [`crate::changelog_gate`] for how it is covered | major |
 //! | `doc` differs | `doc_only` (in `doc_entries`) | patch |
+//! | a `manual/` prose region differs | `doc_only` (in `prose_entries`) | patch |
+//!
+//! `manual/` prose (world-source.md section 11: `doc_only` is "only `doc` strings or `manual/`
+//! prose changed") is compared as the four regions the manual generator merges it into
+//! ([`PROSE_REGIONS`]): `manual/intro.md`, `manual/conventions.md`, `manual/examples.md` (with
+//! any additional prose file, which the generator renders after it in the same section) and
+//! `manual/types.md`. A region is the prose exactly as rendered into `manual.md` (headings
+//! demoted). For a source it is rendered from `manual/`; for a Build it is cut out of the
+//! hash-verified `manual.md` by rendering the Build's own `contracts.json` with a marker in place
+//! of each region and matching the fixed text between the markers, so a source and a Build of
+//! the same prose give identical regions. A `manual.md` that does not have the generator's layout
+//! (a hand-written fixture or another generator revision) yields no prose surface, and prose is
+//! then not compared. Prose entries are reported under their own key, `prose_entries`, so the
+//! entry lists of compiler.md section 5 (`entries`, `doc_entries`, `doc_only_entries`) keep
+//! their meaning; they count towards the derived bump and are gated like doc entries.
 //!
 //! Entries are sorted bytewise by target, then field, then kind, and serialised as canonical
 //! JSON (sorted keys, two-space indentation, `\n` line ends, one final newline), so two hosts
@@ -138,6 +153,9 @@ pub struct Surface {
     pub settings: BTreeMap<String, Value>,
     /// Module name to canonical state shape, for every module with a `lib/` file.
     pub state: BTreeMap<String, String>,
+    /// `manual/` prose by region target (`manual/intro.md`, ...), as rendered into `manual.md`;
+    /// `None` when a Build's `manual.md` does not have the generator's layout.
+    pub prose: Option<BTreeMap<String, String>>,
     /// Whether parameter order is known (true for sources; false when a Build's
     /// `contracts.json` stores parameters as a JSON object, whose key order is not normative).
     pub params_ordered: bool,
@@ -256,12 +274,14 @@ impl Surface {
                 state.insert(m.clone(), state_shape(&file.text));
             }
         }
+        let prose = source_prose(&crate::manifest::prose(parsed));
         let mut s = Surface {
             name: w.world.name.clone(),
             version: w.world.version,
             contracts,
             settings,
             state,
+            prose,
             params_ordered: true,
             identity: String::new(),
             origin: origin.to_string(),
@@ -392,12 +412,19 @@ impl Surface {
                 }
             }
         }
+        let flag = match mkey("experimental") {
+            Some(Value::Bool(true)) => mkey("experimental_flag")
+                .and_then(|v| v.as_str().map(str::to_string)),
+            _ => None,
+        };
+        let prose = build_prose(dir, flag.as_deref());
         Ok(Surface {
             name,
             version,
             contracts,
             settings,
             state,
+            prose,
             params_ordered,
             identity: format!("sha256:{computed}"),
             origin: dir.display().to_string(),
@@ -415,6 +442,88 @@ impl Surface {
             .map(|e| e.value.value.to_value())?;
         v.as_str().map(str::to_string)
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// manual/ prose regions
+// ---------------------------------------------------------------------------------------------
+
+/// The prose regions of the manual, as `(prose file, target)` in manual order. Additional prose
+/// files are rendered after `examples.md` in section 2 and belong to its region.
+pub const PROSE_REGIONS: [(&str, &str); 4] = [
+    ("intro.md", "manual/intro.md"),
+    ("conventions.md", "manual/conventions.md"),
+    ("examples.md", "manual/examples.md"),
+    ("types.md", "manual/types.md"),
+];
+
+fn prose_marker(file: &str) -> String {
+    format!("\u{1}CWR-PROSE-REGION {file}\u{1}")
+}
+
+/// Cuts the prose regions out of `manual`, given `probe`: the same manual rendered with a marker
+/// in place of every region. `None` when `manual` does not have the probe's layout.
+fn cut_regions(manual: &str, probe: &str) -> Option<BTreeMap<String, String>> {
+    let mut fixed: Vec<&str> = Vec::new();
+    let mut rest = probe;
+    for (file, _) in PROSE_REGIONS {
+        let m = prose_marker(file);
+        let i = rest.find(&m)?;
+        fixed.push(&rest[..i]);
+        rest = &rest[i + m.len()..];
+    }
+    fixed.push(rest);
+    let mut cursor = manual.strip_prefix(fixed[0]).map(|_| fixed[0].len())?;
+    let mut out = BTreeMap::new();
+    for (i, (_, target)) in PROSE_REGIONS.iter().enumerate() {
+        // The fixed text after a region starts with the newlines that close the region; prose
+        // may be empty, so those newlines are matched as part of the region.
+        let after = fixed[i + 1].trim_start_matches('\n');
+        let end = if i + 1 == PROSE_REGIONS.len() {
+            let e = manual.len().checked_sub(after.len())?;
+            if e < cursor || !manual.ends_with(after) {
+                return None;
+            }
+            e
+        } else {
+            cursor + manual[cursor..].find(after)?
+        };
+        out.insert(
+            target.to_string(),
+            manual[cursor..end].trim_end_matches('\n').to_string(),
+        );
+        cursor = end + after.len();
+    }
+    Some(out)
+}
+
+fn probe_prose() -> BTreeMap<String, String> {
+    PROSE_REGIONS
+        .iter()
+        .map(|(f, _)| (f.to_string(), prose_marker(f)))
+        .collect()
+}
+
+/// The prose regions of a World Source's `manual/` files. The regions do not depend on the
+/// contracts, so the manual is rendered over an empty surface.
+pub fn source_prose(prose: &BTreeMap<String, String>) -> Option<BTreeMap<String, String>> {
+    let empty = json!({"world": {"name": "", "version": "", "modules": []}});
+    let render = crate::generate::manual::render;
+    cut_regions(&render(&empty, "", prose), &render(&empty, "", &probe_prose()))
+}
+
+/// The prose regions of a Build's `manual.md`, cut out with the Build's own `contracts.json`.
+/// `flag` is the experimental flag of the Build, whose manual transform the probe repeats.
+fn build_prose(dir: &Path, flag: Option<&str>) -> Option<BTreeMap<String, String>> {
+    let bytes = fs::read(dir.join("contracts.json")).ok()?;
+    let contracts: Value = serde_json::from_slice(&bytes).ok()?;
+    let manual = fs::read_to_string(dir.join("manual.md")).ok()?;
+    let sha = cwr_kernel::sha256_hex(&bytes);
+    let mut probe = crate::generate::manual::render(&contracts, &sha, &probe_prose());
+    if flag == Some(crate::experimental::one_primitive::FLAG) {
+        probe = crate::experimental::one_primitive::with_sentence(&probe).ok()?;
+    }
+    cut_regions(&manual, &probe)
 }
 
 fn is_hex64(s: &str) -> bool {
@@ -765,6 +874,9 @@ impl Entry {
 
     /// The module (or settings section) the target belongs to.
     pub fn module(&self) -> &str {
+        if self.target.starts_with("manual/") {
+            return "manual";
+        }
         self.target.split('.').next().unwrap_or(&self.target)
     }
 
@@ -814,6 +926,8 @@ pub struct ContractDiff {
     pub entries: Vec<Entry>,
     /// Documentation-only entries, sorted by target then field.
     pub doc_entries: Vec<Entry>,
+    /// `manual/` prose entries (kind `doc_only`, field `prose`), sorted by target.
+    pub prose_entries: Vec<Entry>,
     /// Maximum bump over all entries.
     pub derived_bump: Bump,
     /// `None` on the first-Build path.
@@ -829,6 +943,7 @@ impl ContractDiff {
             version,
             entries: Vec::new(),
             doc_entries: Vec::new(),
+            prose_entries: Vec::new(),
             derived_bump: Bump::None,
             verdict: None,
         }
@@ -847,6 +962,7 @@ impl ContractDiff {
             "entries": self.entries.iter().map(Entry::to_value).collect::<Vec<_>>(),
             "doc_entries": self.doc_entries.iter().map(Entry::to_value).collect::<Vec<_>>(),
             "doc_only_entries": self.doc_entries.len(),
+            "prose_entries": self.prose_entries.iter().map(Entry::to_value).collect::<Vec<_>>(),
             "derived_bump": bump_str(self.derived_bump),
             "declared_bump": declared,
             "pre_1_0_rule_applied": pre,
@@ -1151,12 +1267,31 @@ pub fn compute(prev: &Surface, cur: &Surface, changelog: Option<&Changelog>) -> 
             entries.push(e);
         }
     }
+    let mut prose = Vec::new();
+    if let (Some(b), Some(a)) = (&prev.prose, &cur.prose) {
+        let targets: BTreeSet<&String> = b.keys().chain(a.keys()).collect();
+        for t in targets {
+            let (x, y) = (b.get(t), a.get(t));
+            if x != y {
+                prose.push(Entry::new(
+                    Some(ChangeKind::DocOnly),
+                    t,
+                    "prose",
+                    Some(json!(x)),
+                    Some(json!(y)),
+                    Bump::Patch,
+                ));
+            }
+        }
+    }
     let key = |e: &Entry| (e.target.clone(), e.field.clone(), e.kind_str());
     entries.sort_by_key(key);
     docs.sort_by_key(key);
+    prose.sort_by_key(key);
     let derived = entries
         .iter()
         .chain(docs.iter())
+        .chain(prose.iter())
         .map(|e| e.bump)
         .max()
         .unwrap_or(Bump::None);
@@ -1167,6 +1302,7 @@ pub fn compute(prev: &Surface, cur: &Surface, changelog: Option<&Changelog>) -> 
         version: cur.version,
         entries,
         doc_entries: docs,
+        prose_entries: prose,
         derived_bump: derived,
         verdict: Some(verdict),
     }
@@ -1384,7 +1520,7 @@ fn default_previous(
     };
     if v == cur.version {
         if let Ok(s) = Surface::from_build(&dir) {
-            if s.to_value() == cur.to_value() {
+            if s.to_value() == cur.to_value() && s.prose == cur.prose {
                 return match Surface::manifest_previous(&dir) {
                     None => Ok(None),
                     Some(h) => resolve_reference(&h, &build_roots(options))

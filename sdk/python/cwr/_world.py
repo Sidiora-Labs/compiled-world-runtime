@@ -26,7 +26,15 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
-__all__ = ["Coordinates", "CoordinatesError", "coordinates", "version", "time", "propose", "PRIMITIVES"]
+__all__ = [
+    "PRIMITIVES",
+    "Coordinates",
+    "CoordinatesError",
+    "coordinates",
+    "propose",
+    "time",
+    "version",
+]
 
 # The Build primitives behind the RPC helpers, by helper name.
 PRIMITIVES = {"version": "world.version", "time": "world.now", "propose": "world.propose"}
@@ -60,12 +68,21 @@ def coordinates(envelope: dict) -> Coordinates:
         raise CoordinatesError("a turn result envelope carries a world object")
     world = envelope["world"]
     if set(world) != {"version", "build", "time", "turn"}:
-        raise CoordinatesError(f"world must have exactly version, build, time and turn, found {sorted(world)}")
+        raise CoordinatesError(
+            f"world must have exactly version, build, time and turn, found {sorted(world)}"
+        )
     if not isinstance(world["version"], str) or not _SEMVER.fullmatch(world["version"]):
-        raise CoordinatesError(f"world.version must be MAJOR.MINOR.PATCH, found {world['version']!r}")
+        raise CoordinatesError(
+            f"world.version must be MAJOR.MINOR.PATCH, found {world['version']!r}"
+        )
     if not isinstance(world["build"], str) or not _BUILD.fullmatch(world["build"]):
         raise CoordinatesError(f"world.build must be sha256:<64 hex>, found {world['build']!r}")
-    return Coordinates(world["version"], world["build"], _count(world["time"], "time"), _count(world["turn"], "turn"))
+    return Coordinates(
+        world["version"],
+        world["build"],
+        _count(world["time"], "time"),
+        _count(world["turn"], "turn"),
+    )
 
 
 def version() -> str:

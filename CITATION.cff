@@ -6,19 +6,21 @@ message: "If you use this software, please cite it using the metadata from this 
 type: software
 title: "Compiled World Runtime"
 abstract: >-
-  The Compiled World Runtime (CWR) turns an agent harness into a frozen, rule-governed world:
-  a human-edited World Source is compiled into an immutable, content-addressed Build, a kernel
-  runs sandboxed turns through atomic primitives whose outcomes depend only on visible
-  conditions, and the only path to a different world is a human recompilation into a new,
-  versioned and announced Build.
+  The Compiled World Runtime (CWR) is a runtime in which an AI model acts by running scripts
+  inside a compiled, rule-governed world. A human-edited World Source is compiled into an
+  immutable, content-addressed Build. The World Kernel runs each script in a sandbox through
+  atomic primitives whose outcomes depend only on visible conditions, records every action in a
+  hash-chained ledger and mediates every call to an outside service. The rules change only when a
+  human recompiles the world into a new, versioned Build that the model is told about.
 authors:
   - name: "Sidiora Labs Inc."
 version: "0.1.0"
 license: "LicenseRef-Sidiora-DEV-OSS-1.0"
 keywords:
-  - agents
   - runtime
   - compiler
+  - sandboxing
+  - language models
   - reproducibility
 preferred-citation:
   type: software

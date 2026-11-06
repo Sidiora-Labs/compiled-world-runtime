@@ -1,15 +1,17 @@
 <!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
 <!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
 
-# vendor: crate sources for offline, reproducible builds
+# Vendored crate sources
 
-`make vendor` runs `cargo vendor vendor/cargo`, copying the source of every crate pinned in
-`Cargo.lock` into `vendor/cargo/`. A build that reads from there needs no network and resolves
-exactly the locked versions.
+This directory makes the Rust workspace buildable without network access. `make vendor` runs
+`cargo vendor vendor/cargo`, which copies the source of every crate pinned in `Cargo.lock` into
+`vendor/cargo/`. A build that reads from there resolves exactly the locked versions.
 
-During development cargo still reads crates.io. The switch to the vendored sources is a
-`.cargo/config.toml` source replacement applied at release time, so day-to-day dependency
-changes do not require re-vendoring:
+## Build offline
+
+Day-to-day development reads crates from crates.io, so a dependency change does not require
+re-vendoring. To build from the vendored sources, add this source replacement to
+`.cargo/config.toml` at the repository root:
 
 ```toml
 [source.crates-io]
@@ -19,5 +21,9 @@ replace-with = "vendored-sources"
 directory = "vendor/cargo"
 ```
 
-Vendored code keeps its own license headers and is exempt from the Sidiora header check and from
-ruff. Third-party crates and their licenses are listed in [NOTICE](../NOTICE).
+When `.cargo/config.toml` is present, the release bundle includes it together with `vendor/cargo/`.
+
+## Licensing
+
+Vendored code keeps its own license headers. It is exempt from the Sidiora source header check and
+from ruff. Third-party crates and their licenses are listed in [NOTICE](../NOTICE).

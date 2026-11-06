@@ -14,7 +14,7 @@ generated_by = "benchmark/campaigns/h1h2.py register"
 [registration]
 campaign = "cwr-campaign-1"
 preregistration = "benchmark/preregistration.kvx"
-registered_at = "2026-11-06T13:54:40Z"
+registered_at = "2026-11-06T14:06:44Z"
 world = "refworld"
 task_set = "suite:all"
 tasks = 60

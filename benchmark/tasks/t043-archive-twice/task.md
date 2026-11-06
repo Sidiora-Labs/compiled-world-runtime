@@ -1,3 +1,6 @@
+<!-- Copyright Sidiora Labs Inc. CWR® 2026-2027 -->
+<!-- SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0 -->
+
 # Archive quarters around a summary
 
 Do these steps in order. First archive /inbox/q1.txt as /archive/q1.txt. Then, for every file under

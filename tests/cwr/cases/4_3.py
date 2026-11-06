@@ -370,6 +370,12 @@ def initial_json(pair: str, scratch: Path) -> Path:
     return path
 
 
+def built(report: dict) -> str:
+    """A build report in one short phrase: the Build hash, or the compiler's summary."""
+    build = report.get("build")
+    return build["hash"] if report.get("rc") == 0 and build else str(report.get("summary"))
+
+
 def strip_migration(diff: dict) -> dict:
     """A ContractDiff without the state_shape migration names, which only a World Source's
     CHANGELOG.kvx supplies (a Build carries contract_diff.json, not the changelog)."""
@@ -426,15 +432,11 @@ class Pair:
 
     def compile(self) -> bool:
         ra = self.cwr.build(self.src_a, self.root)
-        if not R.check(
-            "11.4", ra["rc"] == 0, self.tag(f"cwr build A rc={ra['rc']} {ra.get('summary')}")
-        ):
+        if not R.check("11.4", ra["rc"] == 0, self.tag(f"cwr build A rc={ra['rc']} {built(ra)}")):
             return False
         self.hash_a, self.dir_a = ra["build"]["hash"], Path(ra["build"]["dir"])
         rb = self.cwr.build(self.src_b, self.root, previous=self.hash_a)
-        if not R.check(
-            "11.4", rb["rc"] == 0, self.tag(f"cwr build B rc={rb['rc']} {rb.get('summary')}")
-        ):
+        if not R.check("11.4", rb["rc"] == 0, self.tag(f"cwr build B rc={rb['rc']} {built(rb)}")):
             return False
         self.hash_b, self.dir_b = rb["build"]["hash"], Path(rb["build"]["dir"])
         manifest = kvx.load(self.dir_b / "manifest.kvx")["build"]
@@ -641,6 +643,29 @@ class Pair:
                 else f"notice {got_text!r} != {expected!r}"
             ),
         )
+        if got_text is not None:
+            lines = got_text.split("\n")
+            listed = [ln.split()[1] for ln in lines if re.match(r"  (changed|removed|added)  ", ln)]
+            diff = json.loads((self.dir_b / "contract_diff.json").read_text(encoding="utf-8"))
+            changed = {e["target"] for e in diff["entries"] + diff["doc_entries"]}
+            unused = sorted(
+                t
+                for t in changed
+                if t not in self.notice["used_primitives"]
+                and not any(u.startswith(t + ".") for u in self.notice["used_primitives"])
+            )
+            R.check(
+                "5.3",
+                f"{self.pair['from_version']} -> {self.pair['to_version']}" in lines[0]
+                and len(lines) > 1
+                and lines[1] == f"Summary: {self.notice['summary']}"
+                and listed == self.notice["listed_targets"]
+                and not set(listed) & set(unused),
+                self.tag(
+                    f"notice names {lines[0].split('(')[0].strip()!r}, the summary and the used "
+                    f"targets {listed}; changed but unused targets omitted {unused}"
+                ),
+            )
         manual = (self.dir_b / "manual.md").read_text(encoding="utf-8")
         R.check(
             "5.3",
@@ -771,7 +796,7 @@ def rollbacks(cwr: Cwr, u5: Pair, scratch: Path) -> None:
     root.mkdir(parents=True)
     rb = cwr.build(src, root, previous=str(u5.dir_a))
     if R.check(
-        "5.2", rb["rc"] == 0, f"failing-migration Build compiles: rc={rb['rc']} {rb.get('summary')}"
+        "5.2", rb["rc"] == 0, f"failing-migration Build compiles: rc={rb['rc']} {built(rb)}"
     ):
         rollback_case(
             cwr,

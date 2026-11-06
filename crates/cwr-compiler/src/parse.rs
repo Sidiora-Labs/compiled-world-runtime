@@ -136,7 +136,10 @@ pub const MANUAL_PROSE: [&str; 4] = ["intro.md", "conventions.md", "types.md", "
 
 /// The required-layout check (clause 3.1): one `layout` diagnostic per missing part, located
 /// at the missing path (or at the `world.kvx` modules entry for a module without fixtures).
-pub fn layout(files: &BTreeMap<String, File>, docs: &BTreeMap<String, Document>) -> Vec<Diagnostic> {
+pub fn layout(
+    files: &BTreeMap<String, File>,
+    docs: &BTreeMap<String, Document>,
+) -> Vec<Diagnostic> {
     let at = |file: &str| Location {
         file: file.to_string(),
         line: 1,
@@ -147,10 +150,26 @@ pub fn layout(files: &BTreeMap<String, File>, docs: &BTreeMap<String, Document>)
     let mut out = Vec::new();
     let has_class = |class: FileClass| files.values().any(|f| f.class == class);
     for (dir, class, what) in [
-        ("lib/", FileClass::Lib, "the kernel-side implementation lib/<module>.py"),
-        ("contracts/", FileClass::Contract, "the rule contracts contracts/<module>.kvx"),
-        ("fixtures/", FileClass::Fixture, "the contract-test fixtures fixtures/<module>/*.kvx"),
-        ("manual/", FileClass::Manual, "the hand-written prose manual/*.md"),
+        (
+            "lib/",
+            FileClass::Lib,
+            "the kernel-side implementation lib/<module>.py",
+        ),
+        (
+            "contracts/",
+            FileClass::Contract,
+            "the rule contracts contracts/<module>.kvx",
+        ),
+        (
+            "fixtures/",
+            FileClass::Fixture,
+            "the contract-test fixtures fixtures/<module>/*.kvx",
+        ),
+        (
+            "manual/",
+            FileClass::Manual,
+            "the hand-written prose manual/*.md",
+        ),
     ] {
         if !has_class(class) {
             out.push(Diagnostic::new(

@@ -5,10 +5,22 @@
 # Prepare a development host for CWR: install the formatters and linters `make check` runs, then
 # check the interpreters and inputs the build, drivers and harness need. Idempotent; installs only
 # what is missing so an existing ruff version is never changed underneath the formatter.
-# Usage: scripts/bootstrap.sh
-# Exit status: 0 when every required check passes, 1 otherwise. Warnings do not fail.
+# Usage: scripts/bootstrap.sh [--dry-run]
+# --dry-run runs every check and installs nothing; a missing tool is reported as a failure.
+# Exit status: 0 when every required check passes, 1 otherwise, 2 on a usage error. Warnings do
+# not fail.
 
 set -euo pipefail
+
+dry_run=0
+case "$*" in
+    "") ;;
+    --dry-run) dry_run=1 ;;
+    *)
+        printf 'usage: %s [--dry-run]\n' "$0" >&2
+        exit 2
+        ;;
+esac
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -30,6 +42,8 @@ for component in rustfmt clippy; do
     if [[ "$component" == rustfmt ]]; then probe=(cargo fmt --version); else probe=(cargo clippy --version); fi
     if "${probe[@]}" >/dev/null 2>&1; then
         ok "$component: $("${probe[@]}")"
+    elif ((dry_run)); then
+        fail "$component missing; scripts/bootstrap.sh would install it with rustup"
     elif command -v rustup >/dev/null 2>&1 && rustup component add "$component"; then
         ok "$component: installed with rustup"
     else
@@ -51,6 +65,8 @@ fi
 
 if command -v ruff >/dev/null 2>&1; then
     ok "ruff: $(ruff --version)"
+elif ((dry_run)); then
+    fail "ruff missing; scripts/bootstrap.sh would install it with pip"
 elif python3 -m pip install --user --break-system-packages ruff; then
     if command -v ruff >/dev/null 2>&1; then
         ok "ruff: installed $(ruff --version)"

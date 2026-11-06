@@ -12,9 +12,13 @@ Sections, each derived from a single source so the map cannot drift from the cod
 
   Languages       files and lines per language over source files; hidden paths, recorded data
                   (evidence, results, cassettes), vendored code and CODEMAP.md itself are excluded
-  Layout          one line per directory, from the first heading of its README.md, else the first
-                  docstring line of its __init__.py, else the crate description, else the layout
-                  table in CLAUDE.md
+  Layout          every top-level directory (tracked hidden ones such as .githooks included) and
+                  every described directory down to depth 3, one line each, from the first heading
+                  of its README.md, else the first docstring line of its __init__.py, else the
+                  crate description, else the layout table in CLAUDE.md, else the first sentence
+                  of the leading # comment of the directory's only file; a top-level directory
+                  with none of these names its described subdirectories; nothing below recorded
+                  data or vendored code is listed
   Crates          workspace members from Cargo.toml with descriptions and path dependencies
   Make targets    targets, prerequisites and the descriptions in the Makefile header comment
 
@@ -78,8 +82,11 @@ WALK_SKIP = {"target", "build", "xbuild", "out", "artifacts", "__pycache__", "no
 MAX_LAYOUT_DEPTH = 3
 
 
-def list_files(root: Path) -> list[str]:
-    """Return repository-relative POSIX paths of every non-ignored, non-hidden file, sorted."""
+def list_files(root: Path, hidden: bool = False) -> list[str]:
+    """Return repository-relative POSIX paths of every non-ignored file, sorted.
+
+    Paths with a hidden component are dropped unless `hidden` is true.
+    """
     try:
         result = subprocess.run(
             [
@@ -105,7 +112,8 @@ def list_files(root: Path) -> list[str]:
     return sorted(
         p
         for p in paths
-        if not any(part.startswith(".") for part in p.split("/")) and (root / p).is_file()
+        if (hidden or not any(part.startswith(".") for part in p.split("/")))
+        and (root / p).is_file()
     )
 
 
@@ -193,6 +201,36 @@ def standard_layout(root: Path) -> dict[str, str]:
     return table
 
 
+def sole_file_comment(root: Path, directory: str, files: list[str]) -> str | None:
+    """First sentence of the leading `#` comment of the only file directly in `directory`.
+
+    Shebang and source-header lines are skipped. Describes configuration directories such as
+    .cargo, which hold one commented file and no README.
+    """
+    own = [f for f in files if f.rsplit("/", 1)[0] == directory and "/" in f]
+    if len(own) != 1:
+        return None
+    try:
+        lines = (root / own[0]).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    words: list[str] = []
+    for line in lines:
+        if line.startswith("#!") or "Copyright" in line or "SPDX-License-Identifier" in line:
+            continue
+        if not line.startswith("#"):
+            if words or line.strip():
+                break
+            continue
+        text = line.lstrip("#").strip()
+        if not text and words:
+            break
+        if text:
+            words.append(text)
+    sentence = " ".join(words).split(". ", 1)[0].rstrip(".")
+    return plain(sentence) if sentence else None
+
+
 def purpose_line(directory: str, text: str) -> str:
     """Normalise a directory purpose for the layout table.
 
@@ -208,12 +246,29 @@ def purpose_line(directory: str, text: str) -> str:
     return re.sub(r"\s*\([^()]*\btasks?\b[^()]*\)", "", text).strip()
 
 
-def layout_table(root: Path, files: list[str]) -> list[str]:
+def layout_directories(files: list[str]) -> set[str]:
+    """Directories to consider for the layout table, from repository-relative file paths.
+
+    Every top-level directory is kept, hidden ones included. Below the top level, hidden
+    directories and anything nested inside recorded data or vendored code are dropped, so
+    third-party READMEs never become purpose lines.
+    """
     directories: set[str] = set()
     for path in files:
         parts = path.split("/")[:-1]
         for depth in range(1, min(len(parts), MAX_LAYOUT_DEPTH) + 1):
-            directories.add("/".join(parts[:depth]))
+            prefix = parts[:depth]
+            if depth > 1 and (
+                any(part.startswith(".") for part in prefix)
+                or any(part in DATA_DIRS for part in prefix[:-1])
+            ):
+                break
+            directories.add("/".join(prefix))
+    return directories
+
+
+def layout_table(root: Path, files: list[str]) -> list[str]:
+    directories = layout_directories(files)
     standard = standard_layout(root)
     purposes: dict[str, str] = {}
     for directory in sorted(directories):
@@ -223,6 +278,7 @@ def layout_table(root: Path, files: list[str]) -> list[str]:
             or package_docstring(absolute)
             or cargo_description(absolute)
             or standard.get(directory)
+            or sole_file_comment(root, directory, files)
         )
         if purpose:
             purposes[directory] = purpose_line(directory, purpose)
@@ -232,8 +288,15 @@ def layout_table(root: Path, files: list[str]) -> list[str]:
         if purpose is None and "/" in directory:
             continue
         if purpose is None:
-            described = sorted(d for d in purposes if d.startswith(f"{directory}/"))
-            purpose = f"See `{described[0]}/`." if described else "Not yet described."
+            children = sorted(
+                d for d in purposes if d.startswith(f"{directory}/") and d.count("/") == 1
+            )
+            if len(children) == 1:
+                purpose = f"Holds `{children[0]}/`: {purposes[children[0]]}"
+            elif children:
+                purpose = "Holds " + ", ".join(f"`{d}/`" for d in children) + "."
+            else:
+                purpose = "Not yet described."
         rows.append(f"| `{directory}/` | {purpose} |")
     return ["| Directory | Purpose |", "|---|---|", *rows]
 
@@ -312,7 +375,7 @@ def render(root: Path) -> str:
         "",
         "## Layout",
         "",
-        *layout_table(root, files),
+        *layout_table(root, list_files(root, hidden=True)),
         "",
         "## Crates",
         "",

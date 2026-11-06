@@ -13,30 +13,33 @@ Counts cover source files only. Hidden paths, ignored build output, recorded dat
 
 | Language | Files | Lines |
 |---|---:|---:|
-| Python | 318 | 61275 |
-| Rust | 74 | 34842 |
-| KVX | 754 | 32307 |
-| Markdown | 165 | 9808 |
-| JSON | 63 | 1577 |
-| Text | 3 | 296 |
+| Python | 327 | 71282 |
+| Rust | 79 | 41160 |
+| KVX | 774 | 33850 |
+| Markdown | 168 | 10574 |
+| JSON | 83 | 1885 |
+| Text | 4 | 317 |
 | Lock file | 1 | 278 |
-| Task data | 132 | 216 |
-| Shell | 3 | 174 |
-| TOML | 8 | 144 |
+| Shell | 3 | 190 |
+| Task data | 132 | 186 |
+| TOML | 8 | 146 |
 | Python template | 5 | 97 |
-| Makefile | 1 | 81 |
+| Makefile | 1 | 83 |
 | Mermaid | 2 | 51 |
 | YAML | 1 | 31 |
-| **Total** | **1530** | **141177** |
+| **Total** | **1588** | **160130** |
 
 ## Layout
 
 | Directory | Purpose |
 |---|---|
+| `.cargo/` | Resolve every crates.io dependency from the sources pinned in vendor/cargo, so the workspace builds without network access |
+| `.githooks/` | Git hooks that enforce the commit rules |
 | `artifacts/` | Release bundles |
 | `benchmark/` | Experiments: task suite, stubs, harness and analysis |
 | `benchmark/harness/` | Experiment harness |
 | `benchmark/harness/tests/` | Unit tests for the CWR experiment harness. Synthetic ledgers only; no kernel, no network. |
+| `benchmark/predicates/tests/` | Tests of benchmark/predicates/common.py. |
 | `benchmark/stubs/` | Stub servers for the reference world's adapters |
 | `benchmark/tasks/` | Task suite |
 | `core/` | Shared Python reference implementations |
@@ -47,18 +50,18 @@ Counts cover source files only. Hidden paths, ignored build output, recorded dat
 | `crates/cwr-compiler/` | CWR World Compiler: parse, resolve, lint, contract tests, diff, changelog gate, generate, package. |
 | `crates/cwr-contract/` | CWR contract crate: strict KVX reader, typed World Source model, closed failure envelope, precondition grammar. |
 | `crates/cwr-kernel/` | CWR World Kernel: Instances, sandboxed turns, atomic primitives, adapter gateway, ledger, snapshots, upgrade. |
-| `docs/` | See `docs/cwr/`. |
+| `docs/` | Holds `docs/cwr/`: CWR user guides |
 | `docs/cwr/` | CWR user guides |
 | `examples/` | Reference world and upgrade pairs |
 | `examples/refworld-upgrades/` | Upgrade pairs U1 to U6 |
 | `modules/` | Reusable World Source module packs |
 | `research/` | Hypothesis reports |
 | `scripts/` | Operator scripts |
-| `sdk/` | See `sdk/python/`. |
+| `sdk/` | Holds `sdk/python/`: Python SDK runtime |
 | `sdk/python/` | Python SDK runtime |
-| `spec/` | See `spec/cwr/`. |
+| `spec/` | Holds `spec/cwr/`: Compiled World Runtime (CWR) |
 | `spec/cwr/` | Compiled World Runtime (CWR) |
-| `tests/` | See `tests/cwr/`. |
+| `tests/` | Holds `tests/cwr/`: Qualification: registry, runner, checker and evidence |
 | `tests/cwr/` | Qualification: registry, runner, checker and evidence |
 | `tools/` | Repository tooling |
 | `tools/tests/` | Unit tests for tools/codemap.py and tools/release.py; run from the root as the README shows. |

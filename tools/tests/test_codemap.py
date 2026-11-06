@@ -46,6 +46,46 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(codemap.purpose_line("examples", "refworld pairs"), "refworld pairs")
 
+    def test_layout_directories_skip_vendored_and_hidden_subdirectories(self):
+        files = [
+            ".githooks/pre-commit",
+            ".githooks/.cache/x",
+            "vendor/README.md",
+            "vendor/cargo/serde/README.md",
+            "tests/cwr/evidence/CWR-001/a.json",
+            "docs/cwr/guide.md",
+        ]
+        self.assertEqual(
+            codemap.layout_directories(files),
+            {".githooks", "vendor", "tests", "tests/cwr", "tests/cwr/evidence"}
+            | {"docs", "docs/cwr"},
+        )
+
+    def test_layout_table_names_the_described_child_of_a_bare_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs" / "cwr").mkdir(parents=True)
+            (root / "docs" / "cwr" / "README.md").write_text("# User guides\n")
+            (root / "empty").mkdir()
+            rows = codemap.layout_table(root, ["docs/cwr/README.md", "empty/x.txt"])
+        self.assertIn("| `docs/` | Holds `docs/cwr/`: User guides |", rows)
+        self.assertIn("| `docs/cwr/` | User guides |", rows)
+        self.assertIn("| `empty/` | Not yet described. |", rows)
+
+    def test_sole_file_comment_describes_a_configuration_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".cargo").mkdir()
+            (root / ".cargo" / "config.toml").write_text(
+                "# Copyright X\n# SPDX-License-Identifier: Y\n\n"
+                "# Build from vendored sources. Refresh often.\n# Second line.\n[source]\n"
+            )
+            files = [".cargo/config.toml"]
+            self.assertEqual(
+                codemap.sole_file_comment(root, ".cargo", files), "Build from vendored sources"
+            )
+            self.assertIsNone(codemap.sole_file_comment(root, ".cargo", [*files, ".cargo/b"]))
+
     def test_line_count(self):
         self.assertEqual(codemap.count_lines(b""), 0)
         self.assertEqual(codemap.count_lines(b"a\nb\n"), 2)

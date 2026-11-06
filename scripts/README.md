@@ -12,11 +12,12 @@ usage error. No script reads, prints or copies a credential.
 
 | Script | Purpose |
 | --- | --- |
-| `bootstrap.sh` | Prepares a development host. It installs `rustfmt` and `clippy` through rustup and `ruff` through pip when they are missing. It checks for cargo, `python3.12` and a `python3` of version 3.12 or later, and it warns when `bwrap` is absent, because the World Kernel refuses to run a turn without it. It confirms that model credentials are configured and private, without reading them. Exit 0 when every required check passes. |
+| `bootstrap.sh [--dry-run]` | Prepares a development host. It installs `rustfmt` and `clippy` through rustup and `ruff` through pip when they are missing. It checks for cargo, `python3.12` and a `python3` of version 3.12 or later, and it warns when `bwrap` is absent, because the World Kernel refuses to run a turn without it. It confirms that model credentials are configured and private, without reading them. `--dry-run` runs every check and installs nothing. Exit 0 when every required check passes. |
 | `campaign.sh h1\|h2\|h3\|h4 [--seeds N]` | Runs one pre-registered campaign through the experiment harness, from `benchmark/campaigns/hN.kvx`. It refuses with exit 2 and a reason when the campaign file is missing or the harness cannot read campaign files. |
 | `release.sh [--dry-run] [VAR=value ...]` | Runs `make release` and keeps the full log in `artifacts/release.log`. `--dry-run` runs only the release checks and writes nothing. |
 
 ```sh
+scripts/bootstrap.sh --dry-run
 scripts/bootstrap.sh
 scripts/release.sh --dry-run
 ```

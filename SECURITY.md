@@ -16,8 +16,9 @@ Report suspected vulnerabilities by email to <security@sidioralabs.com>. A repor
 bounty must submit by email only, with the full report and credentials required under Bug bounty
 below.
 
-GitHub private vulnerability reporting remains available: open the repository's Security tab and
-choose "Report a vulnerability". Only the maintainers see a private report. Reports made through
+GitHub private vulnerability reporting remains available at
+<https://github.com/Sidiora-Labs/compiled-world-runtime/security/advisories/new>. Only the
+maintainers see a private report. Reports made through
 GitHub, including private vulnerability reporting, or any other public surface (issue, discussion,
 pull request, advisory or social post) are taken up by the repair programme and fixed without
 attribution or reward. Do not disclose suspected vulnerabilities publicly.

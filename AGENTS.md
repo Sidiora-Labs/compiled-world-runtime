@@ -122,8 +122,10 @@ did the work. Enable the hooks once: `git config core.hooksPath .githooks`.
   `review:<area>`, `suite`, `campaign`, `release`, `chore`. Subject is
   imperative, capitalised, 72 characters at most, no final period. The body
   says what changed and why. An AI agent always adds its Co-Authored-By line.
-- Push immediately: `git pull --rebase origin main && git push origin main`.
-  On an index lock or a rejected push, wait and retry; never force-push.
+- Push immediately: `git pull --rebase --autostash origin main && git push
+  origin main`. When the remote has not moved, `git push origin main` alone
+  is enough. On an index lock or a rejected push, wait and retry; never
+  force-push.
 - The pre-commit hook refuses credential files, credential-looking hunks and
   files without the source header.
 

@@ -3,7 +3,8 @@
 
 # Running experiments
 
-> **Implemented, not yet qualified.** The [experimental Builds](../../crates/cwr-compiler/src/experimental/mod.rs), the [experiment harness](../../benchmark/harness/run.py) and the [analysis](../../benchmark/analyse.py) below are in the tree and run as shown; the pre-registration is still a draft, so no campaign has produced a result.
+Status: CWR has not yet passed qualification, and no campaign has a result because the
+pre-registration is still a draft.
 
 CWR rests on three pillars: stable rules, direct action through scripts, and change only by human
 recompilation. Each experiment removes one pillar from an otherwise identical world and measures
@@ -229,7 +230,9 @@ record_refworld: suite: 10 cassettes, 10 turns, digest sha256:7bd66d41...
 ```
 
 A full set holds every task. Its digest is registered, and ledgers recorded against different
-cassette digests are never pooled.
+cassette digests are never pooled. `run.py` refuses a set whose digest differs from the campaign's
+registration, so the pilot below replays the registered set under
+[benchmark/cassettes/suite](../../benchmark/cassettes/suite).
 
 ## Run cells
 
@@ -246,7 +249,7 @@ by the stop rule. It never compiles a Build.
 `registered = false`. This pilot runs two seeds of both H2 arms with the stub player:
 
 ```sh
-pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --cassettes cassettes/suite --results results --home runs "$@"; }
+pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --cassettes "$REPO/benchmark/cassettes/suite" --results results --home runs "$@"; }
 pilot --arm script --seed 1 --builds build --build "$CONTROL"
 pilot --arm script --seed 2 --builds build --build "$CONTROL"
 pilot --arm one-primitive --seed 1 --builds xbuild --build "$ONE"
@@ -366,3 +369,24 @@ or metric definition invalidates the affected results. A metric changed after ex
 pre-registration and a new campaign.
 
 The normative contract for experiments is [spec/cwr/experiments.md](../../spec/cwr/experiments.md).
+
+## What counts as a result
+
+A claim counts only when a qualification attempt backs it. The runner executes a case's task
+drivers, the independent checker recomputes every registered assertion, and only an accepted
+case-scope attempt changes a case's status in the registry:
+
+```text
+python3 tests/cwr/qualify.py --case CWR-NNN
+python3 tests/cwr/qualify.py --case CWR-NNN --task W.N
+python3 tests/cwr/qualify.py --check-registry
+```
+
+The checker also runs on its own and reports the recorded status of a case:
+
+```sh
+python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019
+```
+
+A hypothesis result needs the complete arm matrix with the pre-registered metric definitions; a
+component attempt never implies one, and a run containing `INVARIANT_VIOLATION` is excluded.

@@ -30,12 +30,12 @@ Include:
   ledger that triggers the defect)
 - the violated invariant and the plausible impact
 - the privileges exploitation needs, such as write access to a World Source, a Build directory,
-  an instance directory, the adapter stubs or the model gateway credentials
+  an instance directory, the adapter stubs or the process environment
 - any proposed fix or test case
 
 Test only against systems and credentials you own or have written permission to test. Do not probe
-the hosted model gateway or any adapter endpoint that is not your own stub, do not use credentials
-you obtain during research, and do not keep secrets you encounter.
+any hosted service or any adapter endpoint that is not your own stub, do not use credentials you
+obtain during research, and do not keep secrets you encounter.
 
 ## Handling and disclosure
 
@@ -69,7 +69,7 @@ This repository text is the bug bounty policy. The programme rewards vulnerabili
 in-scope code listed below, subject to the out-of-scope exclusions. Rewards are paid once per
 unique vulnerability to the first reporter. The amount is determined by Sidiora Labs Inc. from the
 affected subsystem, its role in the runtime, the severity and effect on the guarantees listed at
-the top of this policy, and the risk to users who run CWR against real adapters and real model
+the top of this policy, and the risk to users who run CWR against real adapters and real
 credentials.
 
 Bounty eligibility requires all three of the following:
@@ -140,7 +140,7 @@ In scope is the code in this repository, including:
 
 Out of scope:
 
-- hosted model services and other third-party services and integrations
+- third-party services and integrations
 - issues already known or reported
 - social engineering
 - defects that need write access to a Build directory, an instance directory or the process environment, unless

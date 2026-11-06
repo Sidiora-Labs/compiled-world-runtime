@@ -3,7 +3,8 @@
 
 # Writing a World Source
 
-> **Implemented, not yet qualified.** Everything below is what the current [World Compiler](../../crates/cwr-compiler/src/lib.rs) and `cwr` binary do; the qualification cases that certify this behaviour have not all passed.
+Status: CWR has not yet passed qualification. This guide describes what the current World Compiler
+and `cwr` binary do.
 
 A World Source is the directory of rules a human writes for a CWR world. The World Compiler turns
 it into a Build: an immutable, content-addressed directory that holds the manual the model reads,

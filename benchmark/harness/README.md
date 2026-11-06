@@ -9,7 +9,7 @@ by unit tests over synthetic ledgers.
 The harness runs one Instance per cell (hypothesis, arm, task, seed) and measures it from the ledger
 alone. Each arm is a CWR Build of the reference world with at most one pillar ablated by an
 experimental flag. The harness never compiles a Build, never writes into a Build directory and never
-references or runs any other agent or harness. Its contract is
+references or runs any system outside CWR. Its contract is
 [experiments.md](../../spec/cwr/experiments.md).
 
 ## Files

@@ -38,7 +38,7 @@ fix = "Put the dotted path in the section header and keep the key a single ident
 [gotcha.hyperfide-kvx-is-not-cwr-kvx]
 title = "hyperfide.kvx is not strict CWR KVX"
 symptom = "Pointing a CWR KVX reader at hyperfide.kvx fails on `workers = auto`."
-cause = "hyperfide.kvx configures the Hyperfide tool and follows that tool's looser syntax. CWR never reads it."
+cause = "hyperfide.kvx configures repository tooling outside CWR and follows that tooling's looser syntax. CWR never reads it."
 fix = "Keep it out of CWR KVX tooling and do not reformat it to CWR rules. Only its header lines follow the repository standard."
 
 [gotcha.validator-design-stage-pending]

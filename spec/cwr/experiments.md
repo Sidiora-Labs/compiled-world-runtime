@@ -7,7 +7,7 @@ Status: proposed contract; nothing has been built or run and every case is UNRUN
 
 ## 1. No external baseline
 
-Every experimental arm is a CWR Build. A hypothesis is tested by ablating one pillar of CWR with an experimental build flag and measuring the difference against the control Build on the same task suite, the same cassettes and the same model. The harness has no adapter, prompt, configuration file or metric that references, invokes or compares against any other agent or harness, and no document in this pack makes such a comparison. Task 5.1's driver scans `benchmark/harness/`, `benchmark/campaigns/` and every prompt template for such references and fails on a match. The results therefore say what each pillar contributes inside CWR and nothing else.
+Every experimental arm is a CWR Build. A hypothesis is tested by ablating one pillar of CWR with an experimental build flag and measuring the difference against the control Build on the same task suite, the same cassettes and the same model. The harness has no adapter, prompt, configuration file or metric that references, invokes or compares against any system outside CWR, and no document in this pack makes such a comparison. Task 5.1's driver scans `benchmark/harness/`, `benchmark/campaigns/` and every prompt template for such references and fails on a match. The results therefore say what each pillar contributes inside CWR and nothing else.
 
 ## 2. Shared setup
 
@@ -130,7 +130,7 @@ All campaigns run in replay mode. A live-mode run of the frozen arm against the 
 
 ## 9. Required future evidence
 
-- CWR-017 (task 5.1): no harness file references another agent or harness; metrics recomputed from ledgers alone equal the harness output; a live-mode run is labelled and excluded from pooling.
+- CWR-017 (task 5.1): no harness file references a system outside CWR; metrics recomputed from ledgers alone equal the harness output; a live-mode run is labelled and excluded from pooling.
 - CWR-018 (tasks 5.2 and 5.3): complete arm matrices with 10 seeds per task exist for every hypothesis; the research reports' numbers equal an independent recomputation from the ledgers; the pre-registration digests match the executed metric definitions.
 
 No hypothesis result exists. The expected directions above are registrations, not findings, and a campaign that contradicts them is reported as such.

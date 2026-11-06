@@ -3,8 +3,8 @@
 
 # Compiled World Runtime
 
-Status: CWR is in development and has no release. One of the twenty qualification cases that decide
-whether it meets its specification has passed; see [Status](#status).
+Status: CWR is in development. It has no release and has not yet passed qualification; see
+[Status](#status).
 
 The Compiled World Runtime (CWR) is a runtime in which an AI model acts by running scripts inside a
 compiled, rule-governed world. A human writes the rules as World Source. The World Compiler turns
@@ -69,49 +69,65 @@ flowchart TB
 The diagram is adapted from [spec/cwr/diagrams/architecture.mmd](spec/cwr/diagrams/architecture.mmd).
 A single turn is drawn in [spec/cwr/diagrams/turn.mmd](spec/cwr/diagrams/turn.mmd).
 
-## Quick start
+## Install
 
 CWR runs on Linux. It needs:
 
 | Requirement | Used for |
 |---|---|
-| Rust toolchain with `cargo` | Building the `cwr` binary |
-| Python 3.12 as `python3.12` | Turn scripts, world library code and repository tooling |
+| Python 3.12 as `python3` and `python3.12` | Turn scripts, world library code and repository tooling |
 | bubblewrap as `bwrap` | The turn sandbox. The kernel refuses to run a script without it. |
+| Rust toolchain with `cargo`, `rustfmt` and `clippy` | Building from source and producing a release bundle |
+| `ruff` | Producing a release bundle. The bundler refuses to run without every tool `make check` uses. |
 
-Build the `cwr` binary and put it on your path:
+CWR ships as a source bundle, `cwr-<version>.tar.gz`, with its digest in
+`cwr-<version>.tar.gz.sha256`. The bundle holds the sources, the prebuilt `cwr` binary as
+`bin/cwr` and a `MANIFEST.sha256` with the digest of every file.
 
-```sh
-make build
-export PATH="$PWD/target/release:$PATH"
+No bundle has been published yet. To produce one, run these commands in the root of a repository
+checkout. They build the binary and write both files into `../cwr-dist`:
+
+```bash
+cargo build --release --locked -p cwr-cli
+python3 tools/release.py --output ../cwr-dist
 ```
 
-Check and compile the reference world, `refworld`:
+From the directory that holds the two files, verify the bundle, unpack it and install the binary:
+
+```sh
+sha256sum -c cwr-0.1.0.tar.gz.sha256
+tar -xzf cwr-0.1.0.tar.gz
+cd cwr-0.1.0
+sha256sum --quiet -c MANIFEST.sha256
+install -D -m 0755 bin/cwr "$HOME/.local/bin/cwr"
+export PATH="$HOME/.local/bin:$PATH"
+cwr help
+```
+
+Turn scripts need no separate SDK. Every Build carries its own generated SDK, and the sandbox makes
+only that SDK importable.
+
+## Quick start
+
+From the unpacked bundle, check and compile the reference world, `refworld`. `cwr build` runs eight stages: parse, resolve, lint, contract tests, diff, changelog gate, generate and package. It writes the Build under `build/`, prints `built sha256:<hex> at <path>`, and `--json` prints the same report as JSON. Building an unchanged source again is "already built", so the second command only reads the hash:
 
 ```sh
 cwr lint examples/refworld
 cwr build examples/refworld
+BUILD=$(cwr build examples/refworld --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["build"]["hash"])')
 ```
 
-`cwr build` runs eight stages: parse, resolve, lint, contract tests, diff, changelog gate, generate
-and package. It writes the Build under `build/` and prints its hash as `built sha256:<hex> at
-<path>`. Use that hash in the commands below. When `build/` already holds an earlier Build of the
-same world, the changelog gate compares the two, and a changed world must carry a new version and a
-changelog entry.
-
-Read the manual the model sees, then create an Instance. `cwr instance create` prints the new
-Instance id. Instances live under `.cwr/` in the working directory unless `--home` or `CWR_HOME`
-names another location.
+When `build/` already holds an earlier Build of the same world, the changelog gate compares the two, and a changed world must carry a new version and a changelog entry. Read the manual the model sees, then create an Instance. `cwr instance create` prints the new Instance id. Instances live under `.cwr/` in the working directory unless `--home` or `CWR_HOME` names another location.
 
 ```sh
-cwr manual sha256:<hex>
-cwr instance create sha256:<hex> --seed 7
+cwr manual "$BUILD" > manual.md
+ID=$(cwr instance create "$BUILD" --seed 7)
 ```
 
-Run one turn. The script arrives on standard input, exactly as a model would send it:
+Run one turn. The script arrives on standard input:
 
 ```sh
-cwr instance turn <id> <<'SCRIPT'
+cwr instance turn "$ID" <<'SCRIPT'
 import fs
 
 fs.write(path="/notes/hello.md", content=b"hello")
@@ -119,16 +135,26 @@ return fs.exists(path="/notes/hello.md")
 SCRIPT
 ```
 
-The kernel prints the result envelope as JSON: the turn status, a trace of every primitive call and
-the resources used. Inspect what was recorded:
+The kernel prints the result envelope as JSON: the turn status, a trace of every primitive call and the resources used. Inspect what was recorded:
 
 ```sh
-cwr instance tail <id>
-cwr instance ledger <id>
+cwr instance tail "$ID"
+cwr instance ledger "$ID"
 ```
 
-`cwr instance tail` prints the ledger tail the model sees on its next turn. `cwr instance ledger`
-verifies the ledger's sequence numbers and hash chain. `cwr help` lists every subcommand.
+`cwr instance tail` prints the ledger tail the model sees on its next turn. `cwr instance ledger` verifies the ledger's sequence numbers and hash chain. `cwr help` lists every subcommand; the guides below give every option and exit code.
+
+## Build from source
+
+Build the workspace in release mode with the dependency versions recorded in
+[Cargo.lock](Cargo.lock):
+
+```sh
+cargo build --workspace --release --locked
+"${CARGO_TARGET_DIR:-target}/release/cwr" help
+```
+
+`make build` runs the same build without `--locked`.
 
 ## Documentation
 
@@ -158,20 +184,21 @@ specification disagree, the specification wins.
 | `docs/cwr/` | Guides for world authors, operators and experimenters |
 | `core/` | Shared Python reference code: the KVX reader and the failure envelope |
 | `tools/` | Repository tooling: source headers, code map and release checks |
+| `research/` | One report per hypothesis, H1 to H4 |
 | `scripts/` | Operator scripts: host setup, campaigns and release |
 | `vendor/` | Target of `make vendor` for offline, reproducible builds |
 | `artifacts/` | Release bundles written by `make release` |
 
 ## Status
 
-No release exists. A claim about CWR's behaviour counts only when a qualification case backs it.
+CWR has no release. A claim about its behaviour counts only when a qualification case backs it.
 The specification defines twenty cases, CWR-001 to CWR-020. The runner `tests/cwr/qualify.py`
-executes a case, and its outcome enters the evidence registry
-[tests/cwr/registry.kvx](tests/cwr/registry.kvx) only after the independent checker
-`tests/cwr/check_evidence.py` accepts the attempt. One case has passed: CWR-019, which qualifies the
-runner and checker themselves. The others have not run, and no hypothesis has a result.
+executes a case. Its outcome enters the evidence registry,
+[tests/cwr/registry.kvx](tests/cwr/registry.kvx), only after the independent checker
+`tests/cwr/check_evidence.py` accepts the attempt. A release needs an accepted, passing attempt for
+every case and the owner's acceptance. No hypothesis has a result yet.
 
-Read the recorded status of any case with:
+Read the recorded outcome of any case with:
 
 ```sh
 python3 tests/cwr/check_evidence.py --status CWR-019

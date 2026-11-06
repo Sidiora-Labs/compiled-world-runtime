@@ -13,11 +13,11 @@ Counts cover source files only. Hidden paths, ignored build output, recorded dat
 
 | Language | Files | Lines |
 |---|---:|---:|
-| Python | 317 | 58437 |
-| Rust | 74 | 33991 |
-| KVX | 752 | 32050 |
-| Markdown | 161 | 8517 |
-| JSON | 62 | 1219 |
+| Python | 318 | 61275 |
+| Rust | 74 | 34842 |
+| KVX | 754 | 32307 |
+| Markdown | 165 | 9808 |
+| JSON | 63 | 1577 |
 | Text | 3 | 296 |
 | Lock file | 1 | 278 |
 | Task data | 132 | 216 |
@@ -27,7 +27,7 @@ Counts cover source files only. Hidden paths, ignored build output, recorded dat
 | Makefile | 1 | 81 |
 | Mermaid | 2 | 51 |
 | YAML | 1 | 31 |
-| **Total** | **1522** | **135582** |
+| **Total** | **1530** | **141177** |
 
 ## Layout
 
@@ -42,7 +42,7 @@ Counts cover source files only. Hidden paths, ignored build output, recorded dat
 | `core/` | Shared Python reference implementations |
 | `core/cwr_core/` | Shared Python reference implementations for CWR tooling. |
 | `core/tests/` | Unit tests for cwr_core.kvx and cwr_core.envelope; run from the root as the README shows. |
-| `crates/` | Rust workspace: cwr-contract, cwr-compiler, cwr-kernel, cwr-cli |
+| `crates/` | Rust workspace: World Compiler, World Kernel and the cwr CLI |
 | `crates/cwr-cli/` | The cwr command line: one module per subcommand. |
 | `crates/cwr-compiler/` | CWR World Compiler: parse, resolve, lint, contract tests, diff, changelog gate, generate, package. |
 | `crates/cwr-contract/` | CWR contract crate: strict KVX reader, typed World Source model, closed failure envelope, precondition grammar. |
@@ -50,15 +50,16 @@ Counts cover source files only. Hidden paths, ignored build output, recorded dat
 | `docs/` | See `docs/cwr/`. |
 | `docs/cwr/` | CWR user guides |
 | `examples/` | Reference world and upgrade pairs |
-| `examples/refworld-upgrades/` | refworld upgrade pairs U1 to U6 |
+| `examples/refworld-upgrades/` | Upgrade pairs U1 to U6 |
 | `modules/` | Reusable World Source module packs |
+| `research/` | Hypothesis reports |
 | `scripts/` | Operator scripts |
 | `sdk/` | See `sdk/python/`. |
-| `sdk/python/` | Generated-SDK runtime for sandboxed scripts |
+| `sdk/python/` | Python SDK runtime |
 | `spec/` | See `spec/cwr/`. |
 | `spec/cwr/` | Compiled World Runtime (CWR) |
 | `tests/` | See `tests/cwr/`. |
-| `tests/cwr/` | Qualification registry, runner, checker, drivers, evidence |
+| `tests/cwr/` | Qualification: registry, runner, checker and evidence |
 | `tools/` | Repository tooling |
 | `tools/tests/` | Unit tests for tools/codemap.py and tools/release.py; run from the root as the README shows. |
 | `vendor/` | Vendored crate sources |

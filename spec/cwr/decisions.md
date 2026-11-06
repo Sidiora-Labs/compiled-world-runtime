@@ -20,7 +20,7 @@ Status: product design, not implementation evidence. Requirements and task statu
 | D09 | The model is told about change | The recompile notice is rendered on the first turn after upgrade; only an experimental Build may alter that rendering. |
 | D10 | One upward channel, text only | `world.propose` writes to the ledger and the outbox and changes nothing inside the world. |
 | D11 | The ledger is the only experimental input | Metrics and oracles read ledgers and final state; kernel internals, stdout and raw payloads are not evidence. |
-| D12 | No external baseline | Every arm is a CWR Build with one pillar ablated. Nothing references, invokes or compares against another agent or harness. |
+| D12 | No external baseline | Every arm is a CWR Build with one pillar ablated. Nothing references, invokes or compares against any system outside CWR. |
 
 ## Proposed implementation choices
 

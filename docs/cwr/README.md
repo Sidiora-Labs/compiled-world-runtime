@@ -3,8 +3,7 @@
 
 # CWR user guides
 
-CWR has no release yet. Its qualification cases are still being run, and
-`python3 tests/cwr/check_evidence.py --status CWR-NNN` reports where any case stands.
+> **Implemented, not yet qualified.** CWR has no release and has not yet passed qualification. The guides describe the shipped [World Compiler](../../crates/cwr-compiler/src/lib.rs), [World Kernel](../../crates/cwr-kernel/src/lib.rs), [Model Surface](../../crates/cwr-kernel/src/surface/context.rs) and [experiment harness](../../benchmark/harness/run.py).
 
 The Compiled World Runtime (CWR) is the runtime in which an AI model acts by running scripts inside
 a compiled, rule-governed world. A human writes the rules as World Source. The World Compiler turns
@@ -20,11 +19,9 @@ service. The rules change only when a human recompiles.
 | [kernel.md](kernel.md) | Create Instances, run turns, read the ledger, call outside services, replay, snapshot and upgrade |
 | [experiments.md](experiments.md) | Build experimental arms, record cassettes, run cells and campaigns and analyse the results |
 
-Each guide is a walk-through. Its `sh` blocks run in order in one shell, starting from the
-repository root, and work in a scratch directory. The release check
-[tests/cwr/cases/6_1.py](../../tests/cwr/cases/6_1.py) runs every one of them against the release
-bundle, so a guide that drifts from the binary fails the release. `text` blocks show output
-excerpts and commands that fail on purpose.
+Each guide is a walk-through. Its `sh` blocks run in order in one shell, starting from the root of
+a checkout or an unpacked bundle, and work in a scratch directory. `text` blocks show output excerpts and
+commands that fail on purpose.
 
 Install the `cwr` binary first, as described in [Install](../../README.md#install).
 

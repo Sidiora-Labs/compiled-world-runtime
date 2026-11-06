@@ -7,7 +7,7 @@ Status: design draft. The [specification](spec.kvx) is normative; all verificati
 
 ## 1. The analogy and the claim
 
-An ordinary agent harness is a body: a set of tools the model reaches for, whose shapes, availability and failure modes can change between calls and between deployments. The model spends context re-deriving what the body can do. A Compiled World Runtime is a world: a fixed set of rules the model lives inside. A chair is a chair on every turn; sitting on it has the same outcome under the same visible conditions, and if it is occupied the world says so before the model sits.
+An ordinary model harness is a body: a set of tools the model reaches for, whose shapes, availability and failure modes can change between calls and between deployments. The model spends context re-deriving what the body can do. A Compiled World Runtime is a world: a fixed set of rules the model lives inside. A chair is a chair on every turn; sitting on it has the same outcome under the same visible conditions, and if it is occupied the world says so before the model sits.
 
 The claim is not that a world is more capable than a body. It is that a model acting inside stable, visible, directly scriptable rules will fail less, repeat failures less, reuse rules more and keep acting correctly over long horizons and across announced change. Each of those is a hypothesis in [experiments.md](experiments.md), tested only against CWR Builds with one pillar removed.
 
@@ -53,7 +53,7 @@ flowchart LR
 8. **World time is ticks.** The clock advances by tick_per_primitive and tick_per_turn only. Adapter timeouts are measured in host time but reported into world time as declared ticks.
 9. **The ledger is complete.** Every primitive call, turn, drift injection, proposal, upgrade and recovery is a ledger record written before the result returns. Replay from seed, initial state, Build and cassettes reproduces the ledger except host fields.
 10. **The outbox has no effect.** Proposals are text. Nothing in the kernel reads the outbox.
-11. **No external baseline.** Every experimental arm is a CWR Build with exactly one pillar ablated by an experimental flag; nothing compares to any other agent or harness.
+11. **No external baseline.** Every experimental arm is a CWR Build with exactly one pillar ablated by an experimental flag; nothing compares to any system outside CWR.
 
 ## 4. The compiled world
 

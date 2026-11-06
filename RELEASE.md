@@ -9,9 +9,9 @@ when every qualification case has an accepted attempt and the owner has accepted
 document states how versions are numbered, what a release contains, how a release is cut and how
 anyone can verify one.
 
-No version has been released yet. Version 0.1.0 is declared, but its inputs are not pinned, the
-packaging of the CLI and SDK is not yet fixed and 19 of the 20 qualification cases have no
-accepted attempt.
+Status: no version has been released. The release file for 0.1.0,
+[benchmark/release.kvx](benchmark/release.kvx), does not yet record the Build hashes, the cassette
+digest or the campaign results, so `cwr release check` names those pins as failing.
 
 ## Versions
 
@@ -50,9 +50,9 @@ The first stable release at 1.0.0 or higher also converts the license to MIT, as
 
 The tarball includes vendored crate sources under `vendor/cargo` when `make vendor` has run. It
 excludes the top-level output directories (`target`, `build`, `xbuild`, `out`, `artifacts`), ignored
-files, Python caches and hidden
-paths other than the repository dotfiles and `.cargo/config.toml`. The bundler refuses any file
-that looks like a credential: an environment file, a key or a certificate.
+files, Python caches and hidden paths other than the repository dotfiles and a
+`.cargo/config.toml` when one exists. The bundler refuses any file that looks like a credential:
+an environment file, a key or a certificate.
 
 The release file also names the packaged `cwr` CLI and Python SDK under `[artifact.cli]` and
 `[artifact.sdk]`, and pins their checksums.
@@ -87,7 +87,8 @@ Run these steps from the repository root.
 4. The owner runs the acceptance journey with `python3 tests/cwr/closure.py --journey` and
    records acceptance with `python3 tests/cwr/closure.py --accept --owner` followed by the
    owner's name. Nothing in the repository records acceptance on the owner's behalf.
-5. Place the packaged CLI and SDK at the paths named by `[artifact.cli]` and `[artifact.sdk]` in
+5. Package the CLI and SDK as [Packaging the CLI and SDK](#packaging-the-cli-and-sdk) describes;
+   the artifacts land at the paths named by `[artifact.cli]` and `[artifact.sdk]` in
    [benchmark/release.kvx](benchmark/release.kvx).
 6. Record the pins with `cwr release pin --write`, then confirm them with
    `cwr release check --claim`. The check exits 0 only when every pin equals its recomputation
@@ -113,19 +114,51 @@ exits 1 when it refuses and 2 on a usage error. It refuses, listing every reason
 - a file selected for the bundle looks like a credential
 - a bundle of the same name already exists with different content
 
+## Packaging the CLI and SDK
+
+Two artifacts are pinned besides the bundle. The CLI is the release `cwr` binary built with the
+locked dependencies of `Cargo.lock`; it is byte-reproducible from the same sources whatever the
+cargo target directory. The SDK is the `cwr-sdk` wheel built from
+[sdk/python/pyproject.toml](sdk/python/pyproject.toml) with the pinned build backend
+(setuptools 68.1.2 and wheel 0.42.0, used offline without build isolation) and a fixed
+`SOURCE_DATE_EPOCH`, which makes it byte-reproducible too. Run from the repository root or from an
+unpacked bundle:
+
+```sh
+cargo build --release --locked -p cwr-cli
+mkdir -p artifacts
+cp "${CARGO_TARGET_DIR:-target}/release/cwr" artifacts/cwr-0.1.0-x86_64-linux-gnu
+rm -rf sdk/python/build sdk/python/cwr_sdk.egg-info
+SOURCE_DATE_EPOCH=315532800 python3 -m pip wheel --quiet --no-deps --no-build-isolation --no-index --wheel-dir artifacts ./sdk/python
+sha256sum artifacts/cwr-0.1.0-x86_64-linux-gnu artifacts/cwr_sdk-0.1.0-py3-none-any.whl
+```
+
+Install the CLI by copying the binary onto `PATH`, as [README.md](README.md#install) shows. The
+wheel installs with `python3 -m pip install --no-deps --target <dir>`. Turn scripts never import
+it: every Build carries its own generated SDK.
+
 ## Verifying a release
 
 The commands below use version 0.1.0 as the example. Download `cwr-0.1.0.tar.gz` and
 `cwr-0.1.0.tar.gz.sha256` into one directory. Check the tarball
 with `sha256sum -c cwr-0.1.0.tar.gz.sha256`, then unpack it with `tar -xzf cwr-0.1.0.tar.gz`.
 
-Inside the unpacked `cwr-0.1.0` directory, check every file against the manifest, then check every
-pin against the bundled sources:
+Inside the unpacked `cwr-0.1.0` directory, after packaging the CLI and SDK as above, check every
+file against the manifest, recompute every pin into the release file and confirm that nothing
+changed, then check every pin:
 
 ```sh
 sha256sum -c --quiet MANIFEST.sha256
+cp benchmark/release.kvx release-recorded.kvx
+cwr release pin --write > pins.txt
+cmp benchmark/release.kvx release-recorded.kvx
 cwr release check
 ```
+
+`cwr release pin --write` rewrites only the value lines of the release file; `cmp` exits 0 only
+when every recomputed pin equals the recorded one, which is the reproducibility claim. A claim
+also needs closure and owner acceptance. `cwr release check --claim` checks them as CWR-R015 and
+exits 2 naming CWR-R015 while either is missing.
 
 `cwr release check` needs the `cwr` binary and Python 3.12 or newer as `python3` on `PATH`; the
 World Compiler runs each world's contract tests with Python. It recomputes every revision, digest,
@@ -136,7 +169,8 @@ same report as JSON.
 
 To confirm that the tarball itself reproduces, check out the same tree and run
 `python3 tools/release.py --output "$(mktemp -d)"`. The digest it prints must equal the one in
-`cwr-0.1.0.tar.gz.sha256`.
+`cwr-0.1.0.tar.gz.sha256`. The bundler lists files with git, so it runs in a repository checkout,
+not in an unpacked bundle.
 
 ## Diagnostics
 

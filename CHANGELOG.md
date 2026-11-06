@@ -10,8 +10,8 @@ All notable changes to the Compiled World Runtime are recorded in this file. The
 This file covers the runtime, its tools and its documentation. A world records its own rule
 changes in its `CHANGELOG.kvx`, and the World Compiler's changelog gate enforces them.
 
-No version has been released, and 19 of the 20 qualification cases have no accepted attempt, so the
-entries below describe what the tree contains, not qualified behaviour.
+Status: no version has been released, and CWR has not yet passed qualification. The entries below
+describe what the tree contains.
 
 ## [Unreleased]
 
@@ -37,13 +37,19 @@ entries below describe what the tree contains, not qualified behaviour.
   `world` modules and `search` and `publish` adapters, and the six upgrade pairs U1 to U6.
 - The experiment suite in [benchmark](benchmark/): 60 tasks with reference solutions and success
   predicates, stub servers for the `search` and `publish` adapters, cassette tooling, the
-  experiment harness, the pre-registration file, campaign definitions for H1 and H2 and the
-  ledger analysis `benchmark/analyse.py`.
+  experiment harness, the pre-registration file, the campaign definitions and the ledger analysis
+  `benchmark/analyse.py`.
 - Qualification tooling in [tests/cwr](tests/cwr/): the evidence registry for the 20 cases, the
   runner `qualify.py`, the independent checker `check_evidence.py`, the closure tool `closure.py`
   and the task drivers under `cases/`.
 - Release tooling: [tools/release.py](tools/release.py) writes byte-reproducible source bundles,
   and [benchmark/release.kvx](benchmark/release.kvx) names every release pin with its diagnostic.
+- Release pins and packaging: `cwr release pin` and `cwr release check` recompute every input of
+  [benchmark/release.kvx](benchmark/release.kvx) and name each missing or differing input with one
+  of the diagnostics CWR-R001 to CWR-R021. The inputs are the component revisions, `Cargo.lock`,
+  the control, experimental and upgrade-pair Build hashes, the cassette, suite, result,
+  specification and pre-registration digests and the packaged CLI and SDK checksums. The CLI binary
+  and the `cwr-sdk` wheel are packaged reproducibly as [RELEASE.md](RELEASE.md) describes.
 - Repository tooling: the source header checker and the code map generator in
   [tools](tools/README.md), the operator scripts in [scripts](scripts/README.md) and a
   [Makefile](Makefile) with `check`, `test`, `qualify`, `closure`, `vendor` and `release` targets.

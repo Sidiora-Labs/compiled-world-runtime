@@ -3,7 +3,8 @@
 
 # Running a world: the World Kernel
 
-> **Implemented, not yet qualified.** Everything below is what the current [World Kernel](../../crates/cwr-kernel/src/lib.rs), its [Model Surface](../../crates/cwr-kernel/src/surface/context.rs) and the `cwr` binary do; the qualification cases that certify this behaviour have not all passed.
+Status: CWR has not yet passed qualification. This guide describes what the current World Kernel,
+its Model Surface and the `cwr` binary do.
 
 The World Kernel runs Instances of a Build. Each turn it executes one Python script in a sandbox,
 checks every primitive call against the Build's contracts, records every action in an append-only,

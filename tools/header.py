@@ -133,7 +133,20 @@ def is_exempt(path: Path) -> bool:
         return True
     if any(part in EXEMPT_DIR_PARTS for part in rel.parts[:-1]):
         return True
-    return path.suffix in EXEMPT_EXT
+    return path.suffix in EXEMPT_EXT or is_binary(path)
+
+
+def is_binary(path: Path) -> bool:
+    """Return True when `path` holds binary data (a NUL byte in its first 8 KiB).
+
+    Binaries (release executables under artifacts/, compiled objects) have no comment syntax,
+    whatever their name; detecting them by content keeps extension-less binaries exempt.
+    """
+    try:
+        with path.open("rb") as handle:
+            return b"\0" in handle.read(8192)
+    except OSError:
+        return False
 
 
 def header_lines(prefix: str, suffix: str) -> tuple[str, str]:

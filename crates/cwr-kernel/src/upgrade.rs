@@ -6,7 +6,8 @@
 //!
 //! [`upgrade`] performs, in order:
 //!
-//! 1. resolve any earlier interrupted upgrade of the Instance first (see below) and stop there;
+//! 1. resolve any earlier interrupted upgrade of the Instance first (see below); stop there when
+//!    it was rolled back or when its completed commit bound the Build requested now;
 //! 2. open the Instance (lock, Build hash, strict ledger) and require it `idle` and not sealed;
 //! 3. load the target Build, which verifies its hash over its contents;
 //! 4. refuse a target with a different world name, a version that is not strictly greater
@@ -32,7 +33,11 @@
 //! A crash leaves `upgrade.json` behind. The next `upgrade` of that Instance resolves it before
 //! anything else: if the journal's `upgrade` record is durable the commit is completed (roll
 //! forward); otherwise the snapshot is restored, a truncated record is cut, the staged notice is
-//! discarded and the earlier failure is reported with exit code 6. Fault points for the drivers:
+//! discarded and the earlier failure is reported with exit code 6. A completed commit ends the
+//! command with exit code 0 only when it bound the Build the operator asks for now; for any other
+//! target the requested upgrade then runs from the newly bound Build and its exit code is the
+//! requested upgrade's own, with the completion reported in [`UpgradeReport::resolved`] or in the
+//! error text. Fault points for the drivers:
 //! `CWR_FAULT_INJECT=upgrade:after_snapshot|after_migrate|after_notice|after_commit`.
 
 use std::fs::{self, File};
@@ -68,6 +73,8 @@ pub struct UpgradeReport {
     pub notice: Notice,
     /// Hash of the pre-upgrade snapshot.
     pub snapshot: String,
+    /// An earlier interrupted upgrade whose commit was completed before this one ran.
+    pub resolved: Option<Resolution>,
 }
 
 /// How an earlier interrupted upgrade was resolved.
@@ -104,8 +111,17 @@ pub enum UpgradeError {
         snapshot: String,
     },
     /// An earlier upgrade was interrupted and has just been resolved; the requested upgrade was
-    /// not attempted. Exit 6 for a rollback, 0 when the earlier upgrade was completed.
+    /// not attempted. Exit 6 for a rollback, 0 when the completed earlier upgrade bound exactly
+    /// the Build requested now (a completion to any other Build is never reported this way).
     Interrupted(Resolution),
+    /// An earlier interrupted upgrade was completed, then the requested upgrade failed. Exit as
+    /// the requested upgrade's failure.
+    AfterCompletion {
+        /// The completed earlier upgrade.
+        resolution: Resolution,
+        /// The requested upgrade's failure.
+        error: Box<UpgradeError>,
+    },
     /// Any other kernel failure (Instance not idle, sealed, I/O). Exit as the kernel error.
     Kernel(KernelError),
 }
@@ -118,6 +134,7 @@ impl UpgradeError {
             UpgradeError::RolledBack { .. } => 6,
             UpgradeError::Interrupted(Resolution::RolledBack { .. }) => 6,
             UpgradeError::Interrupted(Resolution::Completed { .. }) => 0,
+            UpgradeError::AfterCompletion { error, .. } => error.exit_code(),
             UpgradeError::Kernel(e) => e.exit_code(),
         }
     }
@@ -138,6 +155,11 @@ impl std::fmt::Display for UpgradeError {
             UpgradeError::Interrupted(Resolution::Completed { seq, build }) => write!(
                 f,
                 "an earlier interrupted upgrade had committed (upgrade record seq {seq}); its commit was completed and {build} is bound"
+            ),
+            UpgradeError::AfterCompletion { resolution, error } => write!(
+                f,
+                "{}; then {error}",
+                UpgradeError::Interrupted(resolution.clone())
             ),
             UpgradeError::Kernel(e) => write!(f, "{e}"),
         }
@@ -313,9 +335,40 @@ pub fn upgrade(
     target_dir: &Path,
     opts: UpgradeOptions,
 ) -> Result<UpgradeReport> {
-    if let Some(r) = resolve_interrupted(home, id)? {
-        return Err(UpgradeError::Interrupted(r));
+    let resolved = match resolve_interrupted(home, id)? {
+        None => None,
+        Some(r @ Resolution::RolledBack { .. }) => return Err(UpgradeError::Interrupted(r)),
+        Some(Resolution::Completed { seq, build }) => {
+            let requested = Build::load(target_dir).is_ok_and(|t| t.hash == build);
+            let r = Resolution::Completed { seq, build };
+            if requested {
+                return Err(UpgradeError::Interrupted(r));
+            }
+            Some(r)
+        }
+    };
+    match upgrade_idle(home, id, target_dir, opts) {
+        Ok(mut rep) => {
+            rep.resolved = resolved;
+            Ok(rep)
+        }
+        Err(error) => Err(match resolved {
+            Some(resolution) => UpgradeError::AfterCompletion {
+                resolution,
+                error: Box::new(error),
+            },
+            None => error,
+        }),
     }
+}
+
+/// Steps 2 to 8 of [`upgrade`], on an Instance with no interrupted upgrade left.
+fn upgrade_idle(
+    home: &Path,
+    id: &str,
+    target_dir: &Path,
+    opts: UpgradeOptions,
+) -> Result<UpgradeReport> {
     let mut inst = Instance::open(home, id)?;
     if inst.meta.status != "idle" {
         return Err(KernelError::State(format!(
@@ -427,6 +480,7 @@ pub fn upgrade(
         record,
         notice: n,
         snapshot,
+        resolved: None,
     })
 }
 
@@ -561,6 +615,13 @@ mod tests {
             seq: 3,
             build: String::new(),
         };
-        assert_eq!(UpgradeError::Interrupted(done).exit_code(), 0);
+        assert_eq!(UpgradeError::Interrupted(done.clone()).exit_code(), 0);
+        let then_refused = UpgradeError::AfterCompletion {
+            resolution: done,
+            error: Box::new(UpgradeError::Refused("version 0.3.0 is not greater".into())),
+        };
+        assert_eq!(then_refused.exit_code(), 5);
+        assert!(then_refused.to_string().contains("had committed"));
+        assert!(then_refused.to_string().ends_with("not greater"));
     }
 }

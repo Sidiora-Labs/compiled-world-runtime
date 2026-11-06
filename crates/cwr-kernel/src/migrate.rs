@@ -16,7 +16,10 @@
 //!   the forbidden-import list of world-source.md section 12 enforced inside the process, a host
 //!   wall budget equal to the target's `wall_ms` and a check that the argument was not mutated.
 //!   The result must be an object of module states; modules the target adds start as `{}` (as at
-//!   `create`), and the final state must validate against the target's compiled state shapes.
+//!   `create`). Each migration's result is validated against the target's compiled state shapes
+//!   for every module that no later migration of the plan targets (a module still awaiting a
+//!   later migration may hold an intermediate shape), so the result of the last migration, and
+//!   therefore the final state, validates in full.
 //!
 //! Nothing here touches the Instance: [`apply`] works on a copy and returns the migrated state,
 //! which the upgrade transaction commits or discards.
@@ -354,17 +357,59 @@ fn run_one(
         .ok_or_else(|| format!("migration {} answered without a state", migration.path))
 }
 
+/// The module a changelog change target names: `kv` for `kv` and for `kv.set`.
+fn module_of(target: &str) -> &str {
+    target.split('.').next().unwrap_or(target)
+}
+
+/// Checks the module states of `state` (codec JSON) named in `shapes` against their target
+/// shapes, skipping the modules in `pending`. `after` names the step for the failure text.
+fn check_modules(
+    state: &Value,
+    shapes: &[(String, Shape)],
+    pending: &BTreeSet<&str>,
+    after: &str,
+) -> std::result::Result<(), String> {
+    let obj = state.as_object().ok_or_else(|| {
+        format!("the state after {after} is not an object of module states: {state}")
+    })?;
+    for (module, ty) in shapes {
+        if pending.contains(module.as_str()) {
+            continue;
+        }
+        if let Some(v) = obj.get(module) {
+            check_shape(v, ty, &format!("state.{module}"))
+                .map_err(|e| format!("the state after {after} does not validate: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Applies `plan` in order to a copy of `state` and returns the migrated state for `to`, or the
-/// first failure as text. The result has exactly `to`'s modules (added modules start as `{}`) and
-/// validates against `to`'s compiled state shapes.
+/// first failure as text. After each migration, every module that no later migration of the plan
+/// targets must validate against `to`'s compiled state shapes (kernel.md section 10 step 5). The
+/// result has exactly `to`'s modules (added modules start as `{}`) and validates in full.
 pub fn apply(
     to: &Build,
     plan: &[Migration],
     state: &WorldState,
 ) -> std::result::Result<WorldState, String> {
+    let contracts = contracts_of(to).map_err(|e| e.to_string())?;
+    let mut shapes = Vec::new();
+    for (module, shape) in state_shapes(&contracts) {
+        let ty = parse_shape(&shape)
+            .map_err(|e| format!("state shape of {module} in Build {}: {e}", to.version))?;
+        shapes.push((module, ty));
+    }
     let mut current = state.to_json();
-    for m in plan {
+    for (i, m) in plan.iter().enumerate() {
         current = run_one(to, m, &current)?;
+        let pending: BTreeSet<&str> = plan
+            .iter()
+            .skip(i + 1)
+            .map(|later| module_of(&later.target))
+            .collect();
+        check_modules(&current, &shapes, &pending, &m.path)?;
     }
     let mut obj: Map<String, Value> = match current {
         Value::Object(o) => o,
@@ -385,12 +430,9 @@ pub fn apply(
         obj.entry(m.clone()).or_insert_with(|| json!({}));
     }
     let migrated = WorldState::from_json(&Value::Object(obj)).map_err(|e| e.to_string())?;
-    let contracts = contracts_of(to).map_err(|e| e.to_string())?;
-    for (module, shape) in state_shapes(&contracts) {
-        let ty = parse_shape(&shape)
-            .map_err(|e| format!("state shape of {module} in Build {}: {e}", to.version))?;
-        if let Some(v) = migrated.get(&module) {
-            check_shape(v, &ty, &format!("state.{module}"))?;
+    for (module, ty) in &shapes {
+        if let Some(v) = migrated.get(module) {
+            check_shape(v, ty, &format!("state.{module}"))?;
         }
     }
     Ok(migrated)
@@ -615,6 +657,31 @@ pub fn check_shape(v: &Value, shape: &Shape, at: &str) -> std::result::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intermediate_results_validate_settled_modules_only() {
+        let shapes = vec![
+            (
+                "kv".to_string(),
+                parse_shape("{namespaces: dict[str, dict[str, bytes]]}").unwrap(),
+            ),
+            ("jobs".to_string(), parse_shape("{next_id: int}").unwrap()),
+        ];
+        let mid = json!({"kv": {"a": {"$bytes": ""}}, "jobs": {"next_id": 1}});
+        let kv_pending: BTreeSet<&str> = ["kv"].into_iter().collect();
+        assert_eq!(check_modules(&mid, &shapes, &kv_pending, "m1"), Ok(()));
+        let err = check_modules(&mid, &shapes, &BTreeSet::new(), "m1").unwrap_err();
+        assert!(
+            err.contains("after m1") && err.contains("state.kv"),
+            "{err}"
+        );
+        let bad_jobs = json!({"kv": {}, "jobs": {"next_id": 1, "bogus": 1}});
+        let err = check_modules(&bad_jobs, &shapes, &kv_pending, "m1").unwrap_err();
+        assert!(err.contains("state.jobs"), "{err}");
+        assert!(check_modules(&json!([]), &shapes, &kv_pending, "m1").is_err());
+        assert_eq!(module_of("kv.set"), "kv");
+        assert_eq!(module_of("kv"), "kv");
+    }
 
     #[test]
     fn semver_is_numeric_and_strict() {

@@ -14,6 +14,7 @@ Prints one line per clause, `CLAUSE <req.ac> PASS|FAIL <evidence>`, and exits 0 
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import importlib.util
@@ -350,14 +351,12 @@ def envelope_core(env: dict) -> dict:
 def run_pairs(work: Path, home: Home, frozen: dict, builds: dict) -> dict:
     """Upgrade one Instance per pair from A to B at the pair's midpoint and check notice and state."""
     out = {}
-    patched_pairs = []
     for pair in frozen["meta"]["pairs"]:
         task = frozen[f"task.{pair}"]
         meta = frozen[f"pair.{pair}"]
         note = frozen[f"notice.{pair}"]
         src_a, src_b, patched = prepare_pair(work, pair)
-        if patched:
-            patched_pairs.append(pair)
+        fixture_note = " (B world.version fixture patched in the scratch copy)" if patched else ""
         bout = work / "builds" / pair
         ha, da = compile_world(src_a, bout)
         hb, db = compile_world(src_b, bout, previous=ha)
@@ -376,7 +375,7 @@ def run_pairs(work: Path, home: Home, frozen: dict, builds: dict) -> dict:
         ok = R.check(
             "5.2",
             proc.returncode == 0,
-            f"{pair} upgrade {meta['from_version']}->{meta['to_version']} exit {proc.returncode} {proc.stderr.strip()[:300]}",
+            f"{pair} upgrade {meta['from_version']}->{meta['to_version']}{fixture_note} exit {proc.returncode} {proc.stderr.strip()[:300]}",
         )
         if not ok:
             continue
@@ -456,12 +455,6 @@ def run_pairs(work: Path, home: Home, frozen: dict, builds: dict) -> dict:
             "src_a": src_a,
             "src_b": src_b,
         }
-    R.check(
-        "5.3",
-        True,
-        "B-side world.version fixtures patched in the scratch copy for "
-        + (",".join(patched_pairs) or "no pair"),
-    )
     return out
 
 
@@ -641,6 +634,208 @@ def run_failures(work: Path, home: Home, pairs: dict) -> None:
     )
 
 
+HEADER = (
+    "# Copyright Sidiora Labs Inc. CWR\u00ae 2026-2027\n"
+    "# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0\n"
+)
+# Two migrations of release 0.3.1, listed archive first. Their file names sort the other way, so
+# only the changelog order applies them correctly: mirror needs the namespace archive creates,
+# and both need the namespaced kv that the 0.3.0 migration produces. A kv key "intermediate-bad"
+# makes archive leave an unknown jobs field that mirror removes again, so only a check of each
+# intermediate result (jobs is targeted by no later migration) can refuse that upgrade.
+CHAIN_ARCHIVE = HEADER + (
+    "def migrate(state: dict) -> dict:\n"
+    '    namespaces = state["kv"]["namespaces"]\n'
+    "    out = dict(state)\n"
+    "    ns = dict(namespaces)\n"
+    '    ns["archive"] = dict(namespaces.get("default", {}))\n'
+    '    out["kv"] = {"namespaces": ns}\n'
+    '    if "intermediate-bad" in namespaces.get("default", {}):\n'
+    '        jobs = dict(state.get("jobs", {}))\n'
+    '        jobs["bogus"] = 1\n'
+    '        out["jobs"] = jobs\n'
+    "    return out\n"
+)
+CHAIN_MIRROR = HEADER + (
+    "def migrate(state: dict) -> dict:\n"
+    '    namespaces = state["kv"]["namespaces"]\n'
+    "    out = dict(state)\n"
+    "    ns = dict(namespaces)\n"
+    '    ns["mirror"] = dict(namespaces["archive"])\n'
+    '    out["kv"] = {"namespaces": ns}\n'
+    '    if "bogus" in state.get("jobs", {}):\n'
+    '        jobs = dict(state["jobs"])\n'
+    '        del jobs["bogus"]\n'
+    '        out["jobs"] = jobs\n'
+    "    return out\n"
+)
+CHAIN_RELEASE = """[release.0.3.1]
+version = "0.3.1"
+date = "2026-11-06"
+summary = "kv gains the namespaces archive and mirror, each a copy of namespace default."
+changes = ["kv_archive", "kv_mirror"]
+
+[change.kv_archive]
+kind = "doc_only"
+target = "kv.has"
+before = "kv.has documents no namespace archive."
+after = "kv.has documents that namespace archive holds a copy of namespace default."
+migration = "migrations/0_3_0_0_3_1_z_archive.py"
+
+[change.kv_mirror]
+kind = "doc_only"
+target = "kv.get"
+before = "kv.get documents no namespace mirror."
+after = "kv.get documents that namespace mirror holds a copy of namespace archive."
+migration = "migrations/0_3_0_0_3_1_a_mirror.py"
+
+"""
+
+
+def chain_fixture(name: str, path: str, before: dict, after: dict) -> str:
+    return HEADER + (
+        "\n[meta]\n"
+        'format = "cwr.migration-fixture"\n'
+        "schema_version = 1\n"
+        'module = "kv"\n'
+        f'migration = "{path}"\n'
+        f"\n[migration.{name}]\n"
+        f"before = {json.dumps(before)}\n"
+        f"after = {json.dumps(after)}\n"
+    )
+
+
+def chain_source(work: Path, src_b: Path) -> Path:
+    """U5/B (0.3.0) plus release 0.3.1 declaring two more migrations: World Source for 0.3.1."""
+    dst = work / "src" / "U5chain"
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src_b, dst)
+    wk = dst / "world.kvx"
+    wk.write_text(wk.read_text().replace('version = "0.3.0"', 'version = "0.3.1"', 1))
+    fx = dst / "fixtures" / "world" / "version.kvx"
+    fx.write_text(fx.read_text().replace('returned = "0.3.0"', 'returned = "0.3.1"'))
+    cl = dst / "CHANGELOG.kvx"
+    cl.write_text(cl.read_text().replace("[release.0.3.0]", CHAIN_RELEASE + "[release.0.3.0]", 1))
+    kv = dst / "contracts" / "kv.kvx"
+    kv.write_text(
+        kv.read_text()
+        .replace(
+            'doc = "True when key is stored in namespace ns. Never fails."',
+            'doc = "True when key is stored in namespace ns; archive holds a copy of default. Never fails."',
+            1,
+        )
+        .replace(
+            'doc = "Value stored under key in namespace ns."',
+            'doc = "Value stored under key in namespace ns; mirror holds a copy of archive."',
+            1,
+        )
+    )
+    archive, mirror = "migrations/0_3_0_0_3_1_z_archive.py", "migrations/0_3_0_0_3_1_a_mirror.py"
+    (dst / archive).write_text(CHAIN_ARCHIVE)
+    (dst / mirror).write_text(CHAIN_MIRROR)
+    one = {"default": {"a": "1"}}
+    two = {"default": {"a": "1"}, "archive": {"a": "1"}}
+    three = {"default": {"a": "1"}, "archive": {"a": "1"}, "mirror": {"a": "1"}}
+    (dst / "fixtures" / "kv" / "migration_0_3_1_archive.kvx").write_text(
+        chain_fixture("copy", archive, {"kv": {"namespaces": one}}, {"kv": {"namespaces": two}})
+    )
+    (dst / "fixtures" / "kv" / "migration_0_3_1_mirror.kvx").write_text(
+        chain_fixture("copy", mirror, {"kv": {"namespaces": two}}, {"kv": {"namespaces": three}})
+    )
+    return dst
+
+
+def run_chain(work: Path, home: Home, pairs: dict) -> None:
+    """Several migrations across two releases, applied in changelog order, each result validated;
+    an interrupted upgrade completed on the way to a different requested Build (clauses 3.6, 5.2)."""
+    p5 = pairs["U5"]
+    da, db = p5["da"], p5["db"]
+    src = chain_source(work, p5["src_b"])
+    hc, dc = compile_world(src, da.parent, previous=p5["hb"])
+    base = initial_state(REPO / "examples/refworld-upgrades/U5/task/initial.kvx", da)
+    chain = [
+        "migrations/0_2_0_0_3_0_kv_namespaces.py",
+        "migrations/0_3_0_0_3_1_z_archive.py",
+        "migrations/0_3_0_0_3_1_a_mirror.py",
+    ]
+
+    # 0.2.0 -> 0.3.1 in one upgrade: three migrations over two releases, in changelog order.
+    iid = home.create(da, base)
+    before = snapshot_of(home, iid)
+    proc = home.upgrade(iid, dc)
+    rec = json.loads(proc.stdout)["record"] if proc.returncode == 0 else {}
+    flat = before["state"]["kv"]
+    want = dict(before["state"])
+    want["kv"] = {"namespaces": {"default": flat, "archive": flat, "mirror": flat}}
+    got = home.state(iid)
+    ok = (
+        proc.returncode == 0
+        and rec.get("migrations") == chain
+        and got == want
+        and home.meta(iid)["build"] == f"sha256:{hc}"
+    )
+    evidence = f"0.2.0->0.3.1 upgrade (exit {proc.returncode}) applied {rec.get('migrations')} in changelog order (release 0.3.0, then 0.3.1 as listed, not by file name); kv now holds namespaces {sorted(got['kv'].get('namespaces', {}))} with {len(flat)} keys each"
+    R.check("5.2", ok, evidence + (f"; stderr {proc.stderr.strip()[:300]}" if not ok else ""))
+    R.check("3.6", ok, f"declared migrations ran as pure functions in order: {len(chain)} applied")
+
+    # An intermediate result that breaks a module no later migration targets is refused, even
+    # though the final result would validate.
+    bad = json.loads(json.dumps(base))
+    bad["kv"]["intermediate-bad"] = {"$bytes": base64.b64encode(b"x").decode()}
+    iid = home.create(da, bad)
+    before = snapshot_of(home, iid)
+    proc = home.upgrade(iid, dc)
+    R.check(
+        "5.2",
+        proc.returncode == 6
+        and "0_3_0_0_3_1_z_archive.py" in proc.stderr
+        and "state.jobs" in proc.stderr
+        and snapshot_of(home, iid) == before
+        and not (home.dir(iid) / "upgrade.json").exists(),
+        f"the archive migration leaves an unknown jobs field that the next migration would remove: the intermediate result is refused (exit {proc.returncode}, '{proc.stderr.strip()[-160:]}'), Instance rolled back unchanged",
+    )
+
+    # Interrupted after the commit to 0.3.0, then asked for 0.3.1: the earlier commit is completed
+    # and the requested upgrade runs from 0.3.0; the exit code is the requested upgrade's.
+    iid = home.create(da, base)
+    crash = home.upgrade(iid, db, env={"CWR_FAULT_INJECT": "upgrade:after_commit"})
+    proc = home.upgrade(iid, dc)
+    out = json.loads(proc.stdout) if proc.returncode == 0 else {}
+    ups = [r for r in home.records(iid) if r["kind"] == "upgrade"]
+    R.check(
+        "5.2",
+        crash.returncode != 0
+        and proc.returncode == 0
+        and "completed_interrupted" in out
+        and [(r["new_version"], r["migrations"]) for r in ups]
+        == [("0.3.0", chain[:1]), ("0.3.1", chain[1:])]
+        and home.meta(iid)["build"] == f"sha256:{hc}"
+        and home.state(iid) == want,
+        f"crash after the 0.3.0 commit, then upgrade to 0.3.1: exit {proc.returncode}, earlier commit completed and reported, then the requested upgrade committed ({len(ups)} upgrade records, 0.3.1 bound)",
+    )
+    # Interrupted after the commit to 0.3.1, then asked for 0.3.0: completing 0.3.1 does not make
+    # the request succeed; the request is refused as a downgrade (exit 5) and 0.3.1 stays bound.
+    iid = home.create(da, base)
+    crash = home.upgrade(iid, dc, env={"CWR_FAULT_INJECT": "upgrade:after_commit"})
+    proc = home.upgrade(iid, db)
+    R.check(
+        "5.2",
+        crash.returncode != 0
+        and proc.returncode == 5
+        and "had committed" in proc.stderr
+        and "not greater" in proc.stderr
+        and home.meta(iid)["build"] == f"sha256:{hc}"
+        and home.meta(iid)["status"] == "idle",
+        f"crash after the 0.3.1 commit, then upgrade to 0.3.0: earlier commit completed, request refused (exit {proc.returncode}), 0.3.1 bound",
+    )
+    retry = home.upgrade(iid, dc)
+    R.check(
+        "5.2",
+        retry.returncode == 5,
+        f"asking again for the Build an interrupted upgrade already bound, once resolved, is refused as the bound Build (exit {retry.returncode})",
+    )
+
+
 def forge_experimental(src_build: Path, out_root: Path, flag: str) -> Path:
     """Fallback only when the compiler does not yet write experimental Builds: a copy of a control
     Build with the manifest marker set and the Build hash recomputed (compiler.md section 7)."""
@@ -766,6 +961,45 @@ def run_outbox(work: Path, home: Home, pairs: dict) -> None:
         and home.state(a) == state0,
         f"world.propose returned {pid}: one proposal ledger record carrying only the text hash, one outbox line with the text, state unchanged",
     )
+    # Repeated proposals (verification.md CWR-011): every call gets its own id, in call order, and
+    # the outbox lines and ledger records match one to one by id. A refused proposal takes no id.
+    texts = ["first idea", "second idea", "third idea", "next turn idea"]
+    c = home.create(p6["da"], initial, seed=5)
+    rc1, env1, _ = home.turn(
+        c,
+        "import world\n"
+        f"ids = [world.propose(text={texts[0]!r}), world.propose(text={texts[1]!r})]\n"
+        "try:\n"
+        "    world.propose(text='x' * 5000)\n"
+        "    ids.append('accepted')\n"
+        "except Exception as e:\n"
+        "    ids.append('refused')\n"
+        f"ids.append(world.propose(text={texts[2]!r}))\n"
+        "return ids\n",
+    )
+    rc2, env2, _ = home.turn(c, f"import world\nreturn world.propose(text={texts[3]!r})\n")
+    ids = (env1["returned"] if env1 and env1["status"] == "ok" else []) + (
+        [env2["returned"]] if env2 and env2["status"] == "ok" else []
+    )
+    want_ids = ["p1.1", "p1.2", "refused", "p1.3", "p2.1"]
+    granted = [i for i in ids if i != "refused"]
+    recs_c = [r for r in home.records(c) if r["kind"] == "proposal"]
+    box_c = home.dir(c) / "proposals.jsonl"
+    lines_c = [json.loads(x) for x in box_c.read_text().splitlines()] if box_c.is_file() else []
+    sent = [texts[0], texts[1], texts[2], texts[3]]
+    R.check(
+        "5.4",
+        rc1 == 0
+        and rc2 == 0
+        and ids == want_ids
+        and len(set(granted)) == len(granted)
+        and [r["id"] for r in recs_c] == granted
+        and [r["text_hash"] for r in recs_c]
+        == ["sha256:" + hashlib.sha256(t.encode()).hexdigest() for t in sent]
+        and [(x["id"], x["text"], x["turn"]) for x in lines_c]
+        == [(i, t, int(i[1:].split(".")[0])) for i, t in zip(granted, sent, strict=False)],
+        f"world.propose called 3 times in turn 1 (plus one refused 5000-byte text) and once in turn 2: ids {ids}; ledger proposal ids {[r['id'] for r in recs_c]}; outbox ids {[x['id'] for x in lines_c]}, texts in call order",
+    )
     # The outbox has no effect: tamper with A's outbox, then the same probe turn on A and B agrees.
     outbox.write_text('{"id":"forged","text":"rm -rf rules","turn":0}\n' * 3)
     rca, enva, _ = home.turn(a, probe)
@@ -816,6 +1050,100 @@ def run_outbox(work: Path, home: Home, pairs: dict) -> None:
         set(WORLD.PRIMITIVES.values()) <= names,
         f"sdk/python/cwr/_world.py helpers map to {sorted(WORLD.PRIMITIVES.values())}, all declared by the Build",
     )
+
+
+HARNESS = REPO / "benchmark" / "harness"
+SPAWN_CALLS = {"run", "Popen", "call", "check_call", "check_output"}
+OS_SPAWN = {"system", "popen", "execv", "execvp", "execve", "spawnv", "spawnvp", "posix_spawn"}
+SHUTIL_WRITES = {"copyfile", "copy", "copy2", "copytree", "rmtree", "move"}
+OS_WRITES = {"replace", "rename", "remove", "unlink", "mkdir", "makedirs", "rmdir", "chmod"}
+PATH_WRITES = {"write_text", "write_bytes", "mkdir", "touch", "unlink", "rmdir", "chmod"}
+
+
+def enclosing_function(node, parent: dict):
+    while node in parent:
+        node = parent[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+    return None
+
+
+def argv_head(call, scope):
+    """The literal first argv element of a `_run(...)` call, resolving `*args` within `scope`."""
+    if not call.args:
+        return None
+    first = call.args[0]
+    if isinstance(first, ast.Constant):
+        return first.value
+    if not (isinstance(first, ast.Starred) and isinstance(first.value, ast.Name)):
+        return None
+    heads = set()
+    for n in ast.walk(scope):
+        if isinstance(n, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == first.value.id for t in n.targets
+        ):
+            v = n.value
+            literal = isinstance(v, ast.List) and v.elts and isinstance(v.elts[0], ast.Constant)
+            heads.add(v.elts[0].value if literal else None)
+    return heads.pop() if len(heads) == 1 else None
+
+
+def opens_for_writing(call, index: int) -> bool:
+    modes = call.args[index : index + 1] + [k.value for k in call.keywords if k.arg == "mode"]
+    return any(isinstance(m, ast.Constant) and set(str(m.value)) & set("wax+") for m in modes)
+
+
+def write_target(call) -> str | None:
+    """The path expression a filesystem-writing call writes to, or None for any other call."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        if f.id == "open" and call.args and opens_for_writing(call, 1):
+            return ast.unparse(call.args[0])
+        return None
+    if not isinstance(f, ast.Attribute):
+        return None
+    base = ast.unparse(f.value)
+    if base == "shutil":
+        if f.attr in SHUTIL_WRITES and call.args:
+            return ast.unparse(call.args[0] if f.attr == "rmtree" else call.args[-1])
+        return None
+    if base == "os":
+        flags = " ".join(ast.unparse(a) for a in call.args[1:])
+        creates = f.attr == "open" and ("O_CREAT" in flags or "O_WRONLY" in flags)
+        if call.args and (f.attr in OS_WRITES or creates):
+            return ast.unparse(call.args[-1] if f.attr in {"replace", "rename"} else call.args[0])
+        return None
+    if f.attr in PATH_WRITES or (f.attr == "open" and opens_for_writing(call, 0)):
+        return base
+    return None
+
+
+def harness_closure() -> dict:
+    """Static reading of benchmark/harness (task 2.5 do_4): where it spawns processes, which cwr
+    commands it runs, and every filesystem write target, by AST over each module."""
+    spawns, commands, writes = [], [], []
+    for path in sorted(HARNESS.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        parent = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            at = f"{path.name}:{n.lineno}"
+            target = write_target(n)
+            if target is not None:
+                writes.append((at, target))
+            f = n.func
+            if not isinstance(f, ast.Attribute):
+                continue
+            base = ast.unparse(f.value)
+            if (base == "subprocess" and f.attr in SPAWN_CALLS) or (
+                base == "os" and f.attr in OS_SPAWN
+            ):
+                fn = enclosing_function(n, parent)
+                spawns.append(f"{at}:{fn.name if fn else '<module>'}")
+            if f.attr == "_run":
+                commands.append((at, argv_head(n, enclosing_function(n, parent) or tree)))
+    return {"spawns": spawns, "commands": commands, "writes": writes}
 
 
 def run_closure(work: Path, home: Home, pairs: dict, digests_before: dict) -> None:
@@ -892,6 +1220,31 @@ def run_closure(work: Path, home: Home, pairs: dict, digests_before: dict) -> No
         "cwr-compiler" not in kernel_toml and callers == ["build.rs"] and not sdk_writes,
         f"cwr-kernel does not depend on cwr-compiler; CLI modules calling compile(): {callers}; SDK write calls: {sdk_writes or 'none'}",
     )
+    # Static: the harness runs the kernel only through `cwr instance ...` from one spawn site, never
+    # the compiler, and none of its own writes names a Build root (build/, xbuild/, --builds roots).
+    h = harness_closure()
+    heads = sorted({str(head) for _, head in h["commands"]})
+    build_writes = [
+        f"{at}:{target}"
+        for at, target in h["writes"]
+        if re.search(r"build|roots", target, flags=re.I)
+    ]
+    imports_compiler = [
+        p.name
+        for p in sorted(HARNESS.glob("*.py"))
+        if re.search(r"cwr[-_]compiler|validate_spec|\bcompile_world\b", p.read_text())
+    ]
+    R.check(
+        "5.1",
+        len(h["spawns"]) == 1
+        and h["spawns"][0].startswith("run.py:")
+        and h["spawns"][0].endswith(":_run")
+        and heads == ["instance"]
+        and h["writes"]
+        and not build_writes
+        and not imports_compiler,
+        f"benchmark/harness: process spawns {h['spawns']}; cwr subcommands run {heads} over {len(h['commands'])} call sites; {len(h['writes'])} write sites, none naming a Build root ({build_writes or 'none'}); compiler references: {imports_compiler or 'none'}",
+    )
 
 
 def main() -> int:
@@ -907,6 +1260,7 @@ def main() -> int:
             R.check("5.2", False, f"pairs upgraded: {sorted(pairs)}")
             return 0 if R.report() else 1
         run_failures(work, home, pairs)
+        run_chain(work, home, pairs)
         run_experimental(work, home, pairs)
         run_outbox(work, home, pairs)
         run_closure(work, home, pairs, BUILD_DIGESTS)

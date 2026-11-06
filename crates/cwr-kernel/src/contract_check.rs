@@ -787,6 +787,9 @@ pub struct Checker<'a> {
     /// The sealing defect, if any.
     pub sealed: Option<Failure>,
     proposals: Vec<String>,
+    /// Proposals committed earlier in this turn; ids continue from here so that every
+    /// `world.propose` of a turn gets a distinct id.
+    proposed: usize,
     draws: u64,
 }
 
@@ -863,6 +866,7 @@ impl<'a> Checker<'a> {
             mutated: false,
             sealed: None,
             proposals: Vec::new(),
+            proposed: 0,
             draws: 0,
         }
     }
@@ -884,6 +888,7 @@ impl<'a> Checker<'a> {
         let turn = self.turn;
         let inst = &mut *self.inst;
         let proposals = &mut self.proposals;
+        let proposed = self.proposed;
         let draws = &mut self.draws;
         let mut cb = |v: &Value| -> Value {
             match v.get("cb").and_then(Value::as_str) {
@@ -902,7 +907,7 @@ impl<'a> Checker<'a> {
                         .unwrap_or("")
                         .to_string();
                     proposals.push(text);
-                    json!({"value": format!("p{turn}.{}", proposals.len())})
+                    json!({"value": format!("p{turn}.{}", proposed + proposals.len())})
                 }
                 other => json!({"error": format!("unknown kernel facility {other:?}")}),
             }
@@ -1379,8 +1384,9 @@ impl<'a> Checker<'a> {
                 self.mutated = true;
             }
             let proposals = std::mem::take(&mut self.proposals);
-            for (i, text) in proposals.iter().enumerate() {
-                self.write_proposal(i + 1, text)?;
+            for text in &proposals {
+                self.proposed += 1;
+                self.write_proposal(self.proposed, text)?;
             }
             return Ok(CallReply {
                 result: call_ok(value, c.content_guaranteed),

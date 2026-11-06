@@ -112,10 +112,13 @@ fn run_upgrade(a: &Args) -> i32 {
     match upgrade::upgrade(&a.home, id, &target, opts) {
         Ok(rep) => {
             let text = notice::render(&rep.notice, notice::Rendering::Full);
-            println!(
-                "{}",
-                json!({"status": "upgraded", "record": rep.record, "snapshot": rep.snapshot, "notice": text})
-            );
+            let mut out = json!({"status": "upgraded", "record": rep.record, "snapshot": rep.snapshot, "notice": text});
+            if let Some(r) = rep.resolved {
+                let earlier = UpgradeError::Interrupted(r).to_string();
+                eprintln!("cwr instance upgrade: {earlier}");
+                out["completed_interrupted"] = json!(earlier);
+            }
+            println!("{out}");
             0
         }
         Err(e @ UpgradeError::Interrupted(_)) => {

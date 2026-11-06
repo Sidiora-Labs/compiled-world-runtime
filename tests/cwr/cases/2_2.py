@@ -23,6 +23,13 @@ adapter budgets.
 
 Prints one line per clause, `CLAUSE <req.ac> PASS|FAIL <evidence>`, and exits 0 only when every clause
 passes. Honours CARGO_TARGET_DIR (default: the workspace target dir). Python 3.12, standard library only.
+
+The Instance home (ledger, state objects, metadata) lives on a tmpfs when the host has one (/dev/shm),
+else in the default temp dir; CWR_DRIVER_HOME_ROOT overrides. Builds stay in the default temp dir. The kernel fsyncs every ledger record before it answers,
+and on a shared, write-loaded disk each fsync can take most of a second. That latency counts against
+every turn's wall_ms, so with enough of it a spec-default 30000 ms turn of 69 calls hits LIMIT wall_ms.
+tmpfs keeps the Instance store off the host disk. Every fsync is still issued, and the 6.2 strace check
+still asserts that it comes before each answer.
 """
 
 from __future__ import annotations
@@ -183,10 +190,10 @@ def tree_digest(d: Path) -> str:
 
 
 class World:
-    def __init__(self, cwr: Path, scratch: Path) -> None:
+    def __init__(self, cwr: Path, scratch: Path, home: Path | None = None) -> None:
         self.cwr = cwr
         self.scratch = scratch
-        self.home = scratch / "home"
+        self.home = home or scratch / "home"
         self.n = 0
         self.envelopes: list[tuple[str, dict]] = []
 
@@ -380,7 +387,7 @@ def check_closure(world: World, ctl: Path) -> None:
     R.check(
         "1.1",
         ok,
-        f"{len(expect)} closure probes (unlisted module and primitives, socket, files, clock, os, subprocess, frames) each refused INVALID with its facility, {len(refused)} ledger records, no tick; wrong={wrong}",
+        f"{len(expect)} closure probes (unlisted module and primitives, socket, files, clock, os, subprocess, frames) each refused INVALID with its facility, {len(refused)} ledger records, no tick; turn {summary(env)}; wrong={wrong}",
     )
     R.check(
         "6.1",
@@ -392,7 +399,7 @@ def check_closure(world: World, ctl: Path) -> None:
         all(
             isinstance(out.get(k), list) and out[k][2] is True
             for k in expect
-            if out.get(k, [None])[1]
+            if (out.get(k) if isinstance(out.get(k), list) and len(out[k]) > 1 else [None, None])[1]
             in ("sandbox.import", "sandbox.filesystem", "sandbox.os", "sandbox.network")
         ),
         "closure refusals are typed INVALID exceptions that are also ImportError or PermissionError",
@@ -1303,13 +1310,29 @@ def check_rules_frozen(world: World, ctl: Path) -> None:
     )
 
 
+def home_root_dir() -> str | None:
+    """Where the driver keeps its Instance home (see the module docstring)."""
+    if os.environ.get("CWR_DRIVER_HOME_ROOT"):
+        return os.environ["CWR_DRIVER_HOME_ROOT"]
+    try:
+        mounts = Path("/proc/mounts").read_text().split("\n")
+    except OSError:
+        return None
+    for ln in mounts:
+        f = ln.split()
+        if len(f) >= 3 and f[1] == "/dev/shm" and f[2] == "tmpfs" and os.access("/dev/shm", os.W_OK):
+            return "/dev/shm"
+    return None
+
+
 def main() -> int:
     cwr, tests_ok, tests_ev = build_binaries()
     for c in CLAUSES:
         R.check(c, tests_ok, tests_ev)
     scratch = Path(tempfile.mkdtemp(prefix="cwr-2_2-"))
+    home_root = Path(tempfile.mkdtemp(prefix="cwr-2_2-home-", dir=home_root_dir()))
     try:
-        world = World(cwr, scratch)
+        world = World(cwr, scratch, home_root / "home")
         ctl = world.build("control")
 
         def set_limits(values: dict):
@@ -1358,6 +1381,7 @@ def main() -> int:
         check_audit(world, {"sha256:" + defect.name})
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(home_root, ignore_errors=True)
     failed = 0
     for c in CLAUSES:
         if R.bad[c]:

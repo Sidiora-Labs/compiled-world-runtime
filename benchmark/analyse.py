@@ -14,11 +14,12 @@ Refusals (non-zero exit, no report written):
   3  metrics.py or arms.kvx digest differs from the registered digest
   2  the registration is a draft (null campaign inputs) and --draft-ok was not given
   4  integrity failure: a ledger header disagrees with its cell (arm, seed, model, tail, Build hash,
-     experimental stamp), a cell is unregistered, a ledger is malformed, replay ledgers with
-     different cassette digests would be pooled, the task suite's recomputed digest is not the
-     registered one, an attempt was run under other registration digests than the current ones,
-     or a campaign file (benchmark/campaigns/h<N>.kvx) registered other digests than the current
-     pre-registration
+     experimental stamp), an attempt's gateway mode is not the one its ledger header records (a
+     replay header names a cassette digest, a live header none), a cell is unregistered, a ledger
+     is malformed, replay ledgers with different cassette digests would be pooled, the task
+     suite's recomputed digest is not the registered one, an attempt was run under other
+     registration digests than the current ones, or a campaign file
+     (benchmark/campaigns/h<N>.kvx) registered other digests than the current pre-registration
   5  --require-complete and the arm matrix has a missing cell
   1  --check FILE and the recomputed report differs from FILE
 
@@ -370,12 +371,16 @@ def integrity_errors(ctx: Context, cell: Cell) -> list[str]:
             break
     if cell.attempt.get("mode") != "replay":
         return errors  # a live run has no cassette set
-    digest = head.get("cassette_digest", cell.attempt.get("cassette_digest"))
+    # The ledger header is the only authority on the cassette set (experiments.md section 8): a
+    # replay cell whose header names no digest is not a replay ledger, whatever attempt.kvx says.
+    digest = head.get("cassette_digest")
+    if not isinstance(digest, str) or not digest:
+        errors.append(f"{where}: the ledger header names no cassette digest; it is not a replay")
+        return errors
     recorded = cell.attempt.get("cassette_digest")
-    if "cassette_digest" in head and recorded and recorded != head["cassette_digest"]:
+    if recorded is not None and recorded != digest:
         errors.append(
-            f"{where}: ledger header cassette digest {head['cassette_digest']} is not the "
-            f"attempt's {recorded}"
+            f"{where}: ledger header cassette digest {digest} is not the attempt's {recorded}"
         )
     # A hypothesis whose tasks are outside the suite cassette set (H4's upgrade-pair tasks) registers
     # its own set digest in [hypothesis.<H>].cassette_digest; every other hypothesis uses the campaign's.
@@ -487,6 +492,26 @@ def campaign_errors(ctx: Context, hypothesis: str) -> list[str]:
                 f"{registration[key]}, not the current registration's {current}"
             )
     return errors
+
+
+def ledger_mode(cell: Cell) -> str:
+    """The gateway mode the ledger itself records: replay when its header names a cassette digest.
+
+    The kernel writes cassette_digest into the header of every Instance created against a cassette
+    set and into no other header, so a live ledger cannot be passed off as a replay one by editing
+    attempt.kvx, which is not a ledger.
+    """
+    return "replay" if "cassette_digest" in cell.ledger[0] else "live"
+
+
+def mode_errors(cell: Cell) -> list[str]:
+    """attempt.kvx's mode against the ledger's: a disagreement is an integrity failure."""
+    recorded, found = cell.attempt.get("mode"), ledger_mode(cell)
+    if recorded == found:
+        return []
+    where = str(cell.path.relative_to(cell.path.parents[3]))
+    names = "names a cassette digest" if found == "replay" else "names no cassette digest"
+    return [f"{where}: attempt mode {recorded!r} but the ledger header {names} ({found})"]
 
 
 def exclusion(ctx: Context, cell: Cell, mode: str) -> str | None:
@@ -783,6 +808,7 @@ def analyse(
                     (p for p in task_dir.iterdir() if p.is_dir()), key=lambda p: p.name
                 ):
                     cell = read_cell(ctx, hypothesis, arm, task_dir.name, seed_dir)
+                    errors.extend(mode_errors(cell))
                     # A cell of the other gateway mode is excluded before anything else: it is
                     # never pooled, and its own report (--live or not) checks its integrity.
                     if cell.attempt.get("mode") == mode:
@@ -820,10 +846,7 @@ def analyse(
             raise Refused(4, f"{cell.path}: metrics cannot be computed: {error}") from None
         cell.values["turns_to_success_method"] = cell.method
     by_hypothesis = {
-        h: sorted(
-            {str(c.ledger[0].get("cassette_digest", c.attempt.get("cassette_digest"))) for c in cs}
-        )
-        for h, cs in cells.items()
+        h: sorted({str(c.ledger[0].get("cassette_digest")) for c in cs}) for h, cs in cells.items()
     }
     for h, found in sorted(by_hypothesis.items()):
         if len(found) > 1:

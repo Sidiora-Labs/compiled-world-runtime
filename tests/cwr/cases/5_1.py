@@ -77,6 +77,8 @@ SEEDS = list(range(1, 11))
 # The live run uses a task outside the replay smoke so its cell path never collides with one.
 LIVE_TASK = "t002-remove-old-log"
 LIVE_SEED = 1
+# The stub-model live cell that is copied and relabelled into the replay tree (clause 12.6).
+STUB_LIVE_SEED = 2
 # Smoke registrations written by main(): "replay" and "live" paths and whether they are drafts.
 SMOKE: dict = {}
 TIMEOUT = 900
@@ -837,7 +839,7 @@ def main() -> int:
         with OBS.observe("CWR-017.a2"):
             check_ledger_only(work, report_path, attempts)
         with OBS.observe("CWR-017.a3"):
-            check_live_exclusion(work, report, live_dir, report_path)
+            check_live_exclusion(work, report, live_dir, control, set_digest, model_mod.STUB_MODEL)
     finally:
         if os.environ.get("CWR_KEEP_WORK"):
             print(f"work directory kept: {work}")
@@ -858,7 +860,7 @@ def main() -> int:
 
 
 def check_context_layout(work: Path, run_mod, model_mod, control: str) -> None:
-    """Run two Instances in process and inspect every context the model received (clause 12.3)."""
+    """Run one Instance per seed in process and inspect every context the model received (12.3)."""
 
     class Recording:
         def __init__(self, inner):
@@ -906,7 +908,7 @@ def check_context_layout(work: Path, run_mod, model_mod, control: str) -> None:
         len(contexts) >= 3
         and all(c.startswith(manual) and c.endswith(task_text) for c in contexts)
         and all(envelopes),
-        f"{len(contexts)} contexts over 2 Instances: each starts with the Build manual byte for byte "
+        f"{len(contexts)} contexts over {len(SEEDS)} Instances: each starts with the Build manual byte for byte "
         f"({len(manual)} bytes), then the ledger tail and last envelope, and ends with task.md under "
         f"the fixed harness template; assembly={refusals[0]['context']}",
     )
@@ -1167,7 +1169,63 @@ def check_ledger_only(work: Path, report_path: Path, attempts: list) -> None:
     )
 
 
-def check_live_exclusion(work: Path, report: dict, live_dir: Path, report_path: Path) -> None:
+def run_stub_live(work: Path, control: str, results: Path) -> tuple[Path, str]:
+    """A live-mode cell with the deterministic stub model under the replay registration.
+
+    Its model, arm and Build match the replay campaign, so only its gateway mode separates it from
+    a replay cell: the kernel writes no cassette digest into a live ledger header.
+    """
+    proc = run(
+        [
+            sys.executable,
+            "-I",
+            REPO / "benchmark/harness/run.py",
+            "--hypothesis",
+            "H2",
+            "--arm",
+            "script",
+            "--task",
+            LIVE_TASK,
+            "--seed",
+            str(STUB_LIVE_SEED),
+            "--build",
+            control,
+            "--builds",
+            work / "build",
+            "--home",
+            work / "home" / "stub-live",
+            "--results",
+            results,
+            "--prereg",
+            SMOKE["replay"],
+            *(["--allow-unregistered"] if SMOKE["draft"] else []),
+            "--live",
+            "--model",
+            "stub",
+        ],
+        env={"CWR_BIN": str(work / "cwr")},
+    )
+    cell = results / "live" / "h2" / "script" / LIVE_TASK / str(STUB_LIVE_SEED)
+    return cell, f"rc={proc.returncode} {proc.stderr.strip()[-200:]}"
+
+
+def pooled_tree(work: Path, name: str, live_cell: Path, attempt_edit=None) -> tuple[Path, str]:
+    """The replay results with live_cell copied in at its replay path, attempt.kvx edited."""
+    tree = work / name
+    shutil.copytree(work / "results", tree, ignore=shutil.ignore_patterns("live"))
+    rel = Path("h2") / "script" / LIVE_TASK / str(STUB_LIVE_SEED)
+    if (tree / rel).exists():
+        shutil.rmtree(tree / rel)
+    shutil.copytree(live_cell, tree / rel)
+    if attempt_edit is not None:
+        path = tree / rel / "attempt.kvx"
+        path.write_text(attempt_edit(path.read_text("utf-8")), encoding="utf-8")
+    return tree, str(rel)
+
+
+def check_live_exclusion(
+    work: Path, report: dict, live_dir: Path, control: str, set_digest: str, stub_model: str
+) -> None:
     if not report:
         R.check("12.6", False, "no replay report to check live exclusion against")
         return
@@ -1178,12 +1236,25 @@ def check_live_exclusion(work: Path, report: dict, live_dir: Path, report_path: 
         and str(live_dir).startswith(str(work / "results" / "live"))
         and not any(c.endswith(f"/{LIVE_TASK}/{LIVE_SEED}") for c in cells)
         and report["mode"] == "replay",
-        f"the replay report pools {len(cells)} Instances, none from results/live",
+        f"the replay report pools {len(cells)} Instances, none from results/live "
+        f"(live cell present: {live_dir.is_dir()})",
     )
-    pooled = work / "pooled"
-    shutil.copytree(work / "results", pooled, ignore=shutil.ignore_patterns("live"))
-    rel = live_dir.relative_to(work / "results" / "live")
-    shutil.copytree(live_dir, pooled / rel)
+    stub_live, how = run_stub_live(work, control, work / "results-stub-live")
+    head = read_jsonl(stub_live / "ledger.jsonl")[0] if stub_live.is_dir() else {}
+    attempt = kvx(stub_live / "attempt.kvx")["attempt"] if stub_live.is_dir() else {}
+    R.check(
+        "12.6",
+        stub_live.is_dir()
+        and attempt.get("mode") == "live"
+        and head.get("model") == stub_model
+        and "cassette_digest" not in head,
+        f"a live-mode stub cell under the replay registration ({how.strip()}) is labelled "
+        f"mode={attempt.get('mode')!r}, model {head.get('model')!r}, and its ledger header names no cassette digest "
+        f"({'cassette_digest' not in head})",
+    )
+    if not stub_live.is_dir():
+        return
+    pooled, rel = pooled_tree(work, "pooled", stub_live)
     trap = analyse(work, "--results", pooled, "--out", work / "pooled.json")
     trapped = json.loads((work / "pooled.json").read_text()) if trap.returncode == 0 else {}
     excluded = trapped.get("excluded", [])
@@ -1194,12 +1265,37 @@ def check_live_exclusion(work: Path, report: dict, live_dir: Path, report_path: 
     R.check(
         "12.6",
         trap.returncode == 0
-        and any(
-            e["cell"] == str(rel) and "mode 'live' is not 'replay'" in e["reason"] for e in excluded
-        )
+        and any(e["cell"] == rel and "mode 'live' is not 'replay'" in e["reason"] for e in excluded)
         and same_cells,
         f"a live cell copied into the replay tree is excluded ({excluded}) and every replay "
         "statistic is unchanged",
+    )
+    relabels = {
+        "mode": lambda t: set_kvx(t, "attempt", "mode", "replay"),
+        "mode and cassette digest": lambda t: set_kvx(
+            set_kvx(t, "attempt", "mode", "replay"), "attempt", "cassette_digest", set_digest
+        ),
+    }
+    outcomes = []
+    for n, (what, edit) in enumerate(relabels.items()):
+        tree, _ = pooled_tree(work, f"relabelled-{n}", stub_live, edit)
+        out = work / f"relabelled-{n}.json"
+        proc = analyse(work, "--results", tree, "--out", out)
+        outcomes.append(
+            (
+                what,
+                proc.returncode,
+                "names no cassette digest" in proc.stderr and not out.exists(),
+            )
+        )
+    R.check(
+        "12.6",
+        all(rc == 4 and named for _, rc, named in outcomes),
+        "a live ledger whose attempt.kvx is relabelled replay is refused, never pooled: "
+        + "; ".join(
+            f"relabelled {what}: rc={rc}, header without cassette digest named={named}"
+            for what, rc, named in outcomes
+        ),
     )
     live = analyse(
         work, "--results", work / "results", "--live", "--out", work / "live.json", live=True
@@ -1208,9 +1304,10 @@ def check_live_exclusion(work: Path, report: dict, live_dir: Path, report_path: 
     live_cells = [
         i["cell"] for h in live_report.get("hypotheses", {}).values() for i in h["instances"]
     ]
+    expected = str(live_dir.relative_to(work / "results" / "live"))
     R.check(
         "12.6",
-        live.returncode == 0 and live_report.get("mode") == "live" and live_cells == [str(rel)],
+        live.returncode == 0 and live_report.get("mode") == "live" and live_cells == [expected],
         f"analyse.py --live writes a separately labelled report (mode={live_report.get('mode')!r}) "
         f"holding only the live Instance {live_cells}",
     )

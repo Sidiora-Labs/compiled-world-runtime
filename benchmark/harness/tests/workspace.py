@@ -193,7 +193,7 @@ class Workspace:
             "mode": "live" if live else "replay",
             "registered": True,
             "exit_status": "success",
-            "cassette_digest": CASSETTE,
+            "cassette_digest": None if live else CASSETTE,
             "tokens_input_total": 100,
             "tokens_output_total": 10,
         }

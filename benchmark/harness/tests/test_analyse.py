@@ -274,13 +274,21 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(code, 4)
         self.assertIn("not registered", err)
 
+    def live_ledger(self, seed: int = 1) -> list:
+        """A live ledger: the kernel writes no cassette digest into its header."""
+        builder = LedgerBuilder(arm="H1/frozen", seed=seed, cassette=None)
+        return builder.call("fs.exists").turn().build_ledger()
+
     def test_live_runs_are_excluded_and_analysed_separately(self):
         cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
+        shutil.rmtree(cell)
+        self.ws.write_cell(
+            "H1", "frozen", "t001-short", 1, self.live_ledger(), {"task": {"done": 1}}
+        )
         attempt = (cell / "attempt.kvx").read_text().replace('mode = "replay"', 'mode = "live"')
         (cell / "attempt.kvx").write_text(attempt)
-        live_ledger = LedgerBuilder(arm="H1/frozen", seed=1).call("fs.exists").turn().build_ledger()
         self.ws.write_cell(
-            "H1", "frozen", "t001-short", 1, live_ledger, {"task": {"done": 1}}, live=True
+            "H1", "frozen", "t001-short", 1, self.live_ledger(), {"task": {"done": 1}}, live=True
         )
         report = self.analyse_ok()
         self.assertIn(
@@ -293,6 +301,24 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(live["mode"], "live")
         self.assertEqual(live["hypotheses"]["H1"]["cells"]["frozen"]["short"]["instances"], 1)
         self.assertEqual(live["hypotheses"]["H1"]["cells"]["drift-1"]["short"]["instances"], 0)
+
+    def test_live_ledger_relabelled_as_replay_is_refused(self):
+        cell = self.ws.write_cell(
+            "H1", "frozen", "t001-short", 1, self.live_ledger(), {"task": {"done": 1}}
+        )
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4, err)
+        self.assertIn("attempt mode 'replay' but the ledger header names no cassette digest", err)
+        self.assertFalse(self.out.exists())
+        self.assertTrue((cell / "ledger.jsonl").exists())
+
+    def test_replay_ledger_relabelled_as_live_is_refused(self):
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
+        attempt = (cell / "attempt.kvx").read_text().replace('mode = "replay"', 'mode = "live"')
+        (cell / "attempt.kvx").write_text(attempt)
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4, err)
+        self.assertIn("attempt mode 'live' but the ledger header names a cassette digest", err)
 
     def test_invariant_violation_and_model_error_excluded(self):
         bad = (

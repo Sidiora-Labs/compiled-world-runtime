@@ -1,3 +1,2 @@
-search.query[rate]:RATE_LIMITED
+search.query[2]:LIMIT
 search.query[shape]
-fs.move[3]:CONFLICT

@@ -1,3 +1,2 @@
 kv.get[1]:NOT_FOUND
 kv.del[1]:NOT_FOUND
-kv.set[1]:INVALID

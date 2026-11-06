@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t054-cancel-twice"
 PRIMITIVES = 32  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 1
+TURNS = 3
 
 
 def script(body, **data):
@@ -38,15 +38,28 @@ def ok_times(env, primitive):
 
 
 def turns():
-    yield script("""
-        import fs, jobs
+    cancel = """
+        import jobs
         def cancel_unfinished(ids):
             for job in ids:
                 if jobs.status(id=job) in ["queued", "running"]:
                     jobs.cancel(id=job)
+    """
+    yield script(
+        cancel
+        + """
         cancel_unfinished(["w1", "w2", "w3"])
+    """
+    )
+    yield script("""
+        import fs
         for path in fs.list(prefix="/minutes/"):
             fs.write(path="/minutes-public/" + path[len("/minutes/"):],
                      content=b"PUBLIC\\n" + fs.read(path=path))
-        cancel_unfinished(["z1", "z2", "z3", "z4"])
     """)
+    yield script(
+        cancel
+        + """
+        cancel_unfinished(["z1", "z2", "z3", "z4"])
+    """
+    )

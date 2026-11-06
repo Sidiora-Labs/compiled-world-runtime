@@ -10,13 +10,13 @@ import common as c
 
 def success(state, ledger):
     lines = c.file_lines(state, "/notes/tennis.md")
-    search_seq = c.first_seq(ledger, "search.query")
+    searches = c.called_with(ledger, "search.query", {"q": "tennis", "limit": 1})
     write_seq = c.last_seq(ledger, "fs.write")
     return (
         lines is not None
         and len(lines) == 1
         and 0 < len(lines[0]) <= 1000
-        and search_seq is not None
+        and len(searches) >= 1
         and write_seq is not None
-        and search_seq < write_seq
+        and searches[0]["seq"] < write_seq
     )

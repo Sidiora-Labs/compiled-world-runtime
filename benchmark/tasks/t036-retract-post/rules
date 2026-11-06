@@ -1,3 +1,2 @@
 publish.post[key]:DUPLICATE_KEY
-publish.post[1]:INVALID
 kv.del[1]:NOT_FOUND

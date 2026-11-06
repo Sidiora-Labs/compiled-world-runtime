@@ -43,3 +43,25 @@ def turns():
         hits = search.query(q="tennis", limit=1)
         fs.write(path="/notes/tennis.md", content=(hits[0]["title"] + "\\n").encode())
     """)
+
+
+def near_miss_wrong_query():
+    yield script("""
+        import fs, search
+        hits = search.query(q="golf", limit=1)
+        fs.write(path="/notes/tennis.md", content=(hits[0]["title"] + "\\n").encode())
+    """)
+
+
+def near_miss_no_search():
+    yield script("""
+        import fs
+        fs.write(path="/notes/tennis.md", content=b"Tennis\\n")
+    """)
+
+
+# Near misses: each drops or changes one step; the predicate is false after each.
+NEAR_MISSES = {
+    "wrong-query": near_miss_wrong_query,
+    "no-search": near_miss_no_search,
+}

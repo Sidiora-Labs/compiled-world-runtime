@@ -19,25 +19,29 @@ pure function of two inputs and nothing else:
     world      ``{"time": int, "turn": int}``
     gateway    ``{"idempotency": {adapter: {key: {"receipt": {...}, "payload_hash": str,
                "seq": int}}}}``; the key-adapter idempotency store, ``seq`` being the ledger
-               seq of the first call that produced the stored outcome
+               seq of the service call that produced the stored outcome
     =========  ============================================================================
 
 ``ledger``
     The Instance ledger as a list of dicts, one per JSONL record, with the fields defined in
     spec/cwr/kernel.md section 8 (``seq``, ``kind``, ``primitive``, ``outcome`` and so on).
-    The ledger carries no parameters and no payloads, only ``params_hash``; predicates never
-    try to recover parameters from it.
+    The ledger carries no parameters and no payloads, only ``params_hash`` and, for adapter
+    records, the gateway's ``request_hash``; predicates never try to recover parameters from it.
+    They may check that a call was made with parameters the task pins, by comparing
+    ``request_hash`` with the hash of those parameters (``called_with``).
 
 Rules every predicate follows, checked by ``check_predicate_source``:
 
-* it imports only this module, as ``import common as c``;
+* it imports only this module, as ``import common as c``, and uses only the names in
+  ``PREDICATE_API`` as ``c.<name>``; ``load_predicate`` hands it a module holding nothing else;
 * it never reads model text, sandbox stdout, kernel internals, cassettes or adapter payloads;
 * it never opens files, never calls eval/exec, and never mutates its arguments;
-* two evaluations over one state and ledger return the same value (``evaluate_twice``).
+* two evaluations over one state and ledger return the same value and leave the inputs they
+  were given unchanged (``evaluate_twice``).
 
 Search hits and post bodies are content, not rules: predicates assert on the shape of the work
-(files exist, lines counted, receipts stored under the right key, codes in the ledger), never on
-which hits came back.
+(files exist, lines counted, receipts stored under the right key, codes in the ledger, the pinned
+request made), never on which hits came back.
 
 Standard library only. Nothing here imports the kernel crate or any CWR implementation module.
 """
@@ -57,7 +61,8 @@ CALL_KINDS = ("primitive", "adapter")
 
 # Rule identifiers named in each task's ``rules`` file:
 #   <module>.<primitive>[<N>]:<CODE>   declared precondition N (one-based) failing with CODE
-#   <module>.<primitive>[rate]:RATE_LIMITED   stub-side rate limit
+#   <module>.<primitive>[rate]:RATE_LIMITED   stub-side rate limit; parsed, but no task lists one
+#                                             while replay does not enforce the stub limits
 #   <module>.<primitive>[key]:DUPLICATE_KEY   key-idempotency rule
 #   <module>.<primitive>[shape]       interface shape guarantee, content not guaranteed
 #   <module>.<primitive>[clock]       transition driven only by world_time
@@ -242,6 +247,32 @@ def posted_ok(state, ledger, key: str, adapter: str = "publish.post") -> bool:
         and record.get("primitive") == adapter
         and (record.get("outcome") or {}).get("status") == "ok"
     )
+
+
+def request_hash(adapter: str, params: dict) -> str:
+    """The gateway's canonical request hash of one adapter call: sha256 over the canonical JSON
+    of ``{"adapter": adapter, "params": params}`` (sorted keys, no whitespace, UTF-8), the scheme
+    sha256-cwr-canonical-json-v1 of crates/cwr-kernel/src/gateway/cassette.rs."""
+    text = json.dumps(
+        {"adapter": adapter, "params": params},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def called_with(ledger, adapter: str, params: dict, status="ok") -> list:
+    """Adapter records of ``adapter`` whose gateway request hash is that of ``params`` and whose
+    outcome status is ``status`` (any status when None). This binds a call to the parameters a
+    task pins without reading any parameter or payload from the ledger."""
+    wanted = request_hash(adapter, params)
+    return [
+        record
+        for record in calls(ledger, adapter, status)
+        if record.get("kind") == "adapter"
+        and (record.get("gateway") or {}).get("request_hash") == wanted
+    ]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -517,15 +548,29 @@ def read_key_store(gateway_dir) -> list:
     return events
 
 
-def _store_seq(ledger, adapter: str, request_hash: str):
-    for record in ledger:
+def _store_seq(ledger, adapter: str, event: dict):
+    """Ledger seq of the service call that produced the outcome a ``done`` key-store event holds.
+
+    A key slot can be released (RATE_LIMITED, a defect) and filled again by a later identical call,
+    so the first record with the request hash is not necessarily the one that produced the stored
+    outcome. The bound record is the last record of ``adapter`` that the gateway sent to the
+    service (not answered from the store) with the event's request hash and the stored outcome:
+    status ok when the event holds no failure, otherwise the failure's code."""
+    failure = event.get("failure")
+    code = failure.get("code") if isinstance(failure, dict) else None
+    for record in reversed(ledger):
         gateway = record.get("gateway") or {}
+        outcome = record.get("outcome") or {}
         if (
-            record.get("kind") == "adapter"
-            and record.get("primitive") == adapter
-            and gateway.get("request_hash") == request_hash
-            and gateway.get("via") != "store"
+            record.get("kind") != "adapter"
+            or record.get("primitive") != adapter
+            or gateway.get("request_hash") != event.get("request_hash")
+            or gateway.get("via") == "store"
         ):
+            continue
+        if failure is None and outcome.get("status") == "ok":
+            return record.get("seq")
+        if failure is not None and outcome.get("status") == "error" and outcome.get("code") == code:
             return record.get("seq")
     return None
 
@@ -533,8 +578,8 @@ def _store_seq(ledger, adapter: str, request_hash: str):
 def state_view_from_instance(kernel_state: dict, ledger: list, key_events: list) -> dict:
     """The predicate state view of a finished refworld Instance, from ``cwr instance state``, the
     ledger and the gateway key-store events only. Job status is evaluated at the final world_time
-    of the ledger; ``seq`` of an idempotency entry is the ledger seq of the adapter call that sent
-    the stored request."""
+    of the ledger; ``seq`` of an idempotency entry is the ledger seq of the adapter call that produced
+    the stored outcome (``_store_seq``)."""
     final = ledger[-1] if ledger else {}
     now = final.get("world_time", 0)
     fs = kernel_state.get("fs") or {}
@@ -566,7 +611,7 @@ def state_view_from_instance(kernel_state: dict, ledger: list, key_events: list)
             "receipt": event.get("outcome") if event.get("failure") is None else None,
             "failure": event.get("failure"),
             "payload_hash": event.get("payload_hash"),
-            "seq": _store_seq(ledger, adapter, event.get("request_hash")),
+            "seq": _store_seq(ledger, adapter, event),
         }
     return {
         "fs": {
@@ -589,6 +634,51 @@ def state_view_from_instance(kernel_state: dict, ledger: list, key_events: list)
 # Predicate loading, purity audit and double evaluation
 # ---------------------------------------------------------------------------------------------
 
+# The whole interface a predicate may use, as c.<name>. Everything else in this module (loaders,
+# digests, the state-view mapping, the purity audit, and the modules it imports) is driver side:
+# check_predicate_source rejects any other attribute of c, and load_predicate hands the predicate
+# a module that holds only these names.
+PREDICATE_API = frozenset(
+    {
+        "CALL_KINDS",
+        "ENVELOPE_CODES",
+        "brackets",
+        "called_with",
+        "calls",
+        "count",
+        "failures",
+        "file_bytes",
+        "file_exists",
+        "file_lines",
+        "file_text",
+        "files_under",
+        "final_time",
+        "first_seq",
+        "header",
+        "idempotency_entry_seq",
+        "idempotency_keys",
+        "is_locked",
+        "job_known",
+        "job_result",
+        "job_status",
+        "jobs_of_kind",
+        "kv_get",
+        "kv_has",
+        "kv_keys",
+        "kv_used",
+        "last_seq",
+        "locked_under",
+        "no_invariant_violation",
+        "ok_count",
+        "posted_ok",
+        "rate_limited_beyond_first",
+        "receipt_for_key",
+        "receipt_id",
+        "record_at",
+        "request_hash",
+        "turns",
+    }
+)
 FORBIDDEN_CALLS = frozenset(
     {
         "open",
@@ -618,6 +708,17 @@ FORBIDDEN_CALLS = frozenset(
 FORBIDDEN_NAMES = frozenset({"__builtins__", "__loader__", "__spec__", "__file__"})
 
 
+def predicate_api():
+    """A module object named ``common`` that holds exactly the ``PREDICATE_API`` names of this
+    module. It is what ``import common as c`` yields inside a loaded predicate."""
+    import types
+
+    api = types.ModuleType("common", "CWR predicate API (benchmark/predicates/common.py)")
+    for name in sorted(PREDICATE_API):
+        setattr(api, name, globals()[name])
+    return api
+
+
 def check_predicate_source(source: str) -> list:
     """Return a list of purity violations in a success.py source (empty when clean)."""
     problems = []
@@ -632,13 +733,27 @@ def check_predicate_source(source: str) -> list:
         problems.append("success.py must define exactly one top-level success(state, ledger)")
     elif [a.arg for a in successes[0].args.args] != ["state", "ledger"]:
         problems.append("success must take exactly (state, ledger)")
+    api_values = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "c"
+        ):
+            api_values.add(id(node.value))
+            if node.attr not in PREDICATE_API:
+                problems.append(f"line {node.lineno}: c.{node.attr} is not in the predicate API")
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name != "common":
                     problems.append(f"line {node.lineno}: import of {alias.name}")
+                elif alias.asname != "c":
+                    problems.append(f"line {node.lineno}: common must be imported as c")
         elif isinstance(node, ast.ImportFrom):
             problems.append(f"line {node.lineno}: from-import is not allowed")
+        elif isinstance(node, ast.Name) and node.id == "c" and id(node) not in api_values:
+            problems.append(f"line {node.lineno}: c is used other than as c.<name>")
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -657,19 +772,19 @@ def check_predicate_source(source: str) -> list:
 
 
 def load_predicate(task_dir):
-    """Load ``success`` from a task directory with ``common`` as the only importable module."""
+    """Load ``success`` from a task directory. The source must pass ``check_predicate_source``;
+    ``import common`` then yields ``predicate_api()``, and no other module can be imported."""
     import builtins
-    import sys
 
     source = Path(task_dir, "success.py").read_text(encoding="utf-8")
     problems = check_predicate_source(source)
     if problems:
         raise ValueError(f"{task_dir}: impure predicate: {'; '.join(problems)}")
-    this = sys.modules[__name__]
+    api = predicate_api()
 
     def only_common(name, globals_=None, locals_=None, fromlist=(), level=0):
         if name == "common" and level == 0:
-            return this
+            return api
         raise ImportError(f"predicates may import only common, not {name}")
 
     safe = {
@@ -717,18 +832,23 @@ def load_predicate(task_dir):
 
 
 def evaluate_twice(predicate, state, ledger) -> bool:
-    """Evaluate a predicate twice on deep copies and require equal results and untouched inputs."""
-    state_before = json.dumps(state, sort_keys=True)
-    ledger_before = json.dumps(ledger, sort_keys=True)
-    first = predicate(copy.deepcopy(state), copy.deepcopy(ledger))
-    second = predicate(copy.deepcopy(state), copy.deepcopy(ledger))
+    """Evaluate a predicate twice, each time on fresh deep copies, and require equal bool results
+    and that neither evaluation changed the copies it was given (a predicate never mutates its
+    arguments)."""
+    results = []
+    for _ in range(2):
+        state_copy, ledger_copy = copy.deepcopy(state), copy.deepcopy(ledger)
+        state_before = json.dumps(state_copy, sort_keys=True)
+        ledger_before = json.dumps(ledger_copy, sort_keys=True)
+        results.append(predicate(state_copy, ledger_copy))
+        if (
+            json.dumps(state_copy, sort_keys=True) != state_before
+            or json.dumps(ledger_copy, sort_keys=True) != ledger_before
+        ):
+            raise ValueError("predicate inputs changed during evaluation")
+    first, second = results
     if not isinstance(first, bool) or first is not second:
         raise ValueError(f"predicate is not a deterministic bool: {first!r} then {second!r}")
-    if (
-        json.dumps(state, sort_keys=True) != state_before
-        or json.dumps(ledger, sort_keys=True) != ledger_before
-    ):
-        raise ValueError("predicate inputs changed during evaluation")
     return first
 
 

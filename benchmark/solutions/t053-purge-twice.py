@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t053-purge-twice"
 PRIMITIVES = 30  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 1
+TURNS = 3
 
 
 def script(body, **data):
@@ -38,16 +38,28 @@ def ok_times(env, primitive):
 
 
 def turns():
-    yield script("""
-        import fs, kv
+    purge = """
+        import fs
         def purge(names):
             for name in names:
                 fs.unlock(path="/queue/" + name)
                 fs.delete(path="/queue/" + name)
+    """
+    yield script(
+        purge
+        + """
         purge(["stale-1.job", "stale-2.job"])
-        kv_del = kv.del_
+    """
+    )
+    yield script("""
+        import kv
         for key in kv.keys(ns="jobs-v1"):
             kv.set(ns="jobs-v2", key=key, value=kv.get(ns="jobs-v1", key=key))
-            kv_del(ns="jobs-v1", key=key)
-        purge(["stale-3.job", "stale-4.job"])
+            kv.del_(ns="jobs-v1", key=key)
     """)
+    yield script(
+        purge
+        + """
+        purge(["stale-3.job", "stale-4.job"])
+    """
+    )

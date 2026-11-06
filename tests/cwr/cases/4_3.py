@@ -317,20 +317,6 @@ def first_failure(ledger: list, after: int, envelopes: list) -> dict | None:
     return None
 
 
-def names_primitive(failure: dict, primitive: str) -> bool:
-    """The failure is attributed to `primitive`: by its call record, or, for a refusal raised in
-    the sandbox before any RPC (`turn.script`), by the exception naming the SDK function."""
-    if failure["primitive"] == primitive:
-        return True
-    module, function = primitive.split(".", 1)
-    detail = failure.get("detail") or ""
-    return failure["primitive"] == "turn.script" and (
-        f"module '{module}' has no attribute '{function}'" in detail
-        or re.search(rf"\b{re.escape(function)}\(\) (missing|got an unexpected)", detail)
-        is not None
-    )
-
-
 def notice_component(context: str) -> str | None:
     if SEP_NOTICE not in context:
         return None
@@ -730,17 +716,15 @@ class Pair:
                 ),
             )
             return
-        attributed = failure is not None and names_primitive(failure, expected["primitive"])
-        if attributed and failure["primitive"] != expected["primitive"]:
-            SDK_REFUSALS.append(
-                f"{self.name} {variant}: {expected['primitive']} {failure['detail']}"
-            )
+        # The frozen record is what the kernel emits: for a refusal raised in the sandbox before
+        # any RPC that is primitive turn.script with the SDK's exception text (detail_contains).
+        frozen = {k: v for k, v in expected.items() if k != "detail_contains"}
+        detail = (failure or {}).get("detail") or ""
+        if failure is not None and failure["primitive"] == "turn.script":
+            SDK_REFUSALS.append(f"{self.name} {variant}: {detail}")
         R.check(
             "11.4",
-            not success
-            and attributed
-            and got["code"] == expected["code"]
-            and got["precondition"] == expected["precondition"],
+            not success and got == frozen and expected.get("detail_contains", "") in detail,
             self.tag(
                 f"{variant} solution fails with the documented code: {got} from "
                 f"{failure and failure['source']}, frozen {expected}; predicate {success}"

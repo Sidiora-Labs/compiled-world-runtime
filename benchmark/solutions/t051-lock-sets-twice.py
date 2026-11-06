@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t051-lock-sets-twice"
 PRIMITIVES = 40  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 1
+TURNS = 3
 
 
 def script(body, **data):
@@ -38,14 +38,61 @@ def ok_times(env, primitive):
 
 
 def turns():
-    yield script("""
-        import fs, kv
+    lock_all = """
+        import fs
         def lock_all(prefix):
             for path in fs.list(prefix=prefix):
                 if not fs.locked(path=path):
                     fs.lock(path=path)
+    """
+    yield script(
+        lock_all
+        + """
         lock_all("/legal/")
+    """
+    )
+    yield script("""
+        import fs, kv
         for path in fs.list(prefix="/memos/"):
             kv.set(ns="memos", key=path, value=fs.read(path=path))
-        lock_all("/finance/")
     """)
+    yield script(
+        lock_all
+        + """
+        lock_all("/finance/")
+    """
+    )
+
+
+def near_miss_memos_dropped():
+    lock_all = """
+        import fs
+        def lock_all(prefix):
+            for path in fs.list(prefix=prefix):
+                if not fs.locked(path=path):
+                    fs.lock(path=path)
+    """
+    yield script(
+        lock_all
+        + """
+        lock_all("/legal/")
+    """
+    )
+    yield script("""
+        import fs, kv
+        kv.set(ns="scratch", key="started", value=b"1")
+        for path in fs.list(prefix="/memos/"):
+            fs.delete(path=path)
+    """)
+    yield script(
+        lock_all
+        + """
+        lock_all("/finance/")
+    """
+    )
+
+
+# Near misses: each drops or changes one step; the predicate is false after each.
+NEAR_MISSES = {
+    "memos-dropped": near_miss_memos_dropped,
+}

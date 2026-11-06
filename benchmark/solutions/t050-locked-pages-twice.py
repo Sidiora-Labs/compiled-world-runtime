@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t050-locked-pages-twice"
 PRIMITIVES = 33  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 1
+TURNS = 3
 
 
 def script(body, **data):
@@ -38,16 +38,29 @@ def ok_times(env, primitive):
 
 
 def turns():
-    yield script("""
+    page = """
         import fs, kv
         def publish_page(name):
             content = fs.read(path="/drafts/" + name + ".html")
             fs.unlock(path="/site/" + name + ".html")
             fs.write(path="/site/" + name + ".html", content=content)
             fs.lock(path="/site/" + name + ".html")
+    """
+    yield script(
+        page
+        + """
         publish_page("home")
+    """
+    )
+    yield script("""
+        import fs, kv
         for path in fs.list(prefix="/docs/"):
             kv.set(ns="sizes", key=path, value=str(fs.size(path=path)).encode())
+    """)
+    yield script(
+        page
+        + """
         publish_page("about")
         publish_page("contact")
-    """)
+    """
+    )

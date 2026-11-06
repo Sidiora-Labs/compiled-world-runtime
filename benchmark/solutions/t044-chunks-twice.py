@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t044-chunks-twice"
 PRIMITIVES = 32  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 1
+TURNS = 3
 
 
 def script(body, **data):
@@ -38,15 +38,28 @@ def ok_times(env, primitive):
 
 
 def turns():
-    yield script("""
+    store = """
         import fs, kv
         def store(path):
             text = fs.read(path=path).decode()
             name = path[len("/big/"):]
             for i in range(0, len(text), 1024):
                 kv.set(ns="chunks", key=name + "." + str(i // 1024), value=text[i:i + 1024].encode())
+    """
+    yield script(
+        store
+        + """
         store("/big/a.txt")
+    """
+    )
+    yield script("""
+        import fs
         for path in fs.list(prefix="/docs/"):
             fs.write(path=path, content=fs.read(path=path).lower())
-        store("/big/b.txt")
     """)
+    yield script(
+        store
+        + """
+        store("/big/b.txt")
+    """
+    )

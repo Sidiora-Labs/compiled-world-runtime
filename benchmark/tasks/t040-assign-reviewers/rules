@@ -1,2 +1,2 @@
 world.random[stream]
-kv.set[1]:INVALID
+fs.read[1]:NOT_FOUND

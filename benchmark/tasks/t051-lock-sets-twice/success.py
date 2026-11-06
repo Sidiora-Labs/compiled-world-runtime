@@ -11,9 +11,10 @@ import common as c
 def success(state, ledger):
     legal = [f"/legal/l{i}.pdf" for i in range(1, 6)]
     finance = [f"/finance/f{i}.xls" for i in range(1, 7)]
-    memos = [f"/memos/m{i:02d}.txt" for i in range(1, 11)]
+    memos = {f"/memos/m{i:02d}.txt": f"memo {i}\n" for i in range(1, 11)}
     return (
         all(c.is_locked(state, p) for p in legal + finance)
-        and all(c.kv_get(state, "memos", p) == c.file_text(state, p) for p in memos)
+        and all(c.file_text(state, p) == text for p, text in memos.items())
+        and all(c.kv_get(state, "memos", p) == text for p, text in memos.items())
         and c.brackets(ledger, "fs.lock", "kv.set")
     )

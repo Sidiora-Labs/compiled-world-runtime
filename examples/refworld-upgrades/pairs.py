@@ -1098,10 +1098,38 @@ class Kernel:
 
             def __getattr__(self, attr):
                 name = f"{self._module}.{'del' if attr == 'del_' else attr}"
+                contracts = kernel.side.contracts
+                if name not in contracts and name not in kernel.side.adapters:
+                    # The generated SDK has no such function: the script fails in the sandbox
+                    # before any RPC, as the kernel reports it (turn.script, no call record).
+                    raise WorldError(
+                        "INVALID",
+                        "turn.script",
+                        None,
+                        f"uncaught exception: AttributeError: module '{self._module}' has no "
+                        f"attribute '{attr}'",
+                    )
 
                 def invoke(*args, **kwargs):
                     if args:
                         raise WorldError("INVALID", name, None, "keyword arguments only")
+                    declared = list((contracts.get(name) or {}).get("params") or {})
+                    missing = [p for p in declared if p not in kwargs]
+                    unexpected = [k for k in kwargs if k not in declared]
+                    if name in contracts and (missing or unexpected):
+                        # The SDK function signature refuses the call in the sandbox, as in Python.
+                        function = attr
+                        if unexpected:
+                            why = (
+                                f"{function}() got an unexpected keyword argument '{unexpected[0]}'"
+                            )
+                        else:
+                            noun = "argument" if len(missing) == 1 else "arguments"
+                            names = " and ".join(f"'{p}'" for p in missing)
+                            why = f"{function}() missing {len(missing)} required positional {noun}: {names}"
+                        raise WorldError(
+                            "INVALID", "turn.script", None, f"uncaught exception: TypeError: {why}"
+                        )
                     value = kernel.call(name, kwargs)
                     if kernel.side.contracts[name]["side_effect"] != "read_only":
                         mutated[0] = True
@@ -1695,8 +1723,12 @@ def check(generated: dict) -> list:
                 "code": first["code"],
                 "precondition": first["precondition_index"],
             }
-            if got != expected:
-                errors.append(f"{pair}: {variant} solution first failure {got}, frozen {expected}")
+            frozen = {k: v for k, v in expected.items() if k != "detail_contains"}
+            detail = (first or {}).get("detail") or ""
+            if got != frozen or expected.get("detail_contains", "") not in detail:
+                errors.append(
+                    f"{pair}: {variant} solution first failure {got} ({detail}), frozen {expected}"
+                )
             if ok:
                 errors.append(f"{pair}: {variant} solution unexpectedly satisfies the predicate")
     return errors

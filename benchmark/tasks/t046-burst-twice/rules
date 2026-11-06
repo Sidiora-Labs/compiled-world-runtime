@@ -1,2 +1,2 @@
-publish.post[rate]:RATE_LIMITED
+publish.post[1]:INVALID
 publish.post[key]:DUPLICATE_KEY

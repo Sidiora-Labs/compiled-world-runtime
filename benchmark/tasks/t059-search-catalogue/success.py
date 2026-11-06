@@ -36,9 +36,10 @@ def success(state, ledger):
         lines = c.file_lines(state, "/catalogue/{}.md".format(topic.replace(" ", "-")))
         if lines is None or not 1 <= len(lines) <= 3:
             return False
+        if len(c.called_with(ledger, "search.query", {"q": topic, "limit": 3})) < 1:
+            return False
         expected.append(f"{topic}: {len(lines)}")
     return (
         c.file_lines(state, "/catalogue/README.md") == expected
-        and c.ok_count(ledger, "search.query") >= 20
         and c.rate_limited_beyond_first(ledger, "search.query") == 0
     )

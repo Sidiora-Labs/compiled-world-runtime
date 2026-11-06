@@ -19,7 +19,10 @@ Everything is exercised against the real implementation, nothing is mocked:
    admits only `common`) and evaluated with `common.evaluate_twice` on each replay run's final
    state view and ledger. The state view is built by `common.state_view_from_instance` from
    `cwr instance state`, the ledger and the gateway's key store only. The predicate must be true on
-   both replay runs and false on the untouched initial Instance (header-only ledger).
+   both replay runs and false on the untouched initial Instance (header-only ledger), on a replay of
+   the reference cut before its last working turn, and on every near miss (NEAR_MISSES of the
+   solution file, one step dropped or changed, run in record mode against the stubs). On t008 a
+   publish.post that misses the cassette under the pinned key must not consume the key.
 6. The primitive count of each task is measured from the ledger (records of kind primitive or
    adapter) and must equal across runs, fall inside the task's declared bin, and equal the
    `primitive_count` frozen in benchmark/suite.kvx. Bins must hold 20/20/20, and at least 12 long
@@ -267,19 +270,53 @@ def load_solution(task: str):
     return module
 
 
-def drive(inst: Instance, task: str, mode: str, cassette: Path, stubs: dict, fenced: bool):
-    """Runs the reference solution's turns() generator to completion; returns the envelopes."""
-    gen = load_solution(task).turns()
+def drive(
+    inst: Instance,
+    task: str,
+    mode: str,
+    cassette: Path,
+    stubs: dict,
+    fenced: bool,
+    turns=None,
+    keep: int | None = None,
+    bodies: list | None = None,
+):
+    """Runs a turns() generator (the reference solution's unless ``turns`` is given) to
+    completion, or for its first ``keep`` turns; returns the envelopes and appends every turn
+    script to ``bodies`` when given."""
+    gen = (turns or load_solution(task).turns)()
     envelopes = []
     body = next(gen)
     while True:
+        if bodies is not None:
+            bodies.append(body)
         envelopes.append(inst.turn(body, mode, cassette, stubs, fenced))
         if len(envelopes) > TURN_LIMIT:
             raise RuntimeError(f"turn limit {TURN_LIMIT} exceeded")
+        if keep is not None and len(envelopes) >= keep:
+            return envelopes
         try:
             body = gen.send(envelopes[-1])
         except StopIteration:
             return envelopes
+
+
+def last_work_turn(bodies: list) -> int:
+    """Turns before the last turn that does any work, when at least two turns work; else 0."""
+    work = [i for i, body in enumerate(bodies) if body.strip() != "pass"]
+    return work[-1] if len(work) >= 2 else 0
+
+
+# A replay request that misses the cassette never reaches the service, so it must not consume a
+# key adapter's idempotency key: a corrected call under the task's pinned key still succeeds.
+KEY_RELEASE_TASK = "t008-publish-release"
+KEY_RELEASE_PROBE = """import publish
+try:
+    publish.post(key="rel-1.0", title="Release 1.0", body="draft that was never recorded")
+except Exception as failure:
+    return failure.code
+return "ok"
+"""
 
 
 def host_free_ledger(ledger: list) -> list:
@@ -316,17 +353,26 @@ def reuse_shape(positions: list, total: int) -> tuple[bool, dict]:
 
 
 def record_task(task_dir: Path, cwr: Path, build: Path, homes: Path, stubs: dict, fenced: bool):
-    """Record mode against the live stubs; this run only produces the task's cassette. Returns an
-    error string or None; never raises."""
+    """Record mode against the live stubs; this run only produces the task's cassette. Each near
+    miss of the solution file (NEAR_MISSES: one step dropped or changed) is also run in record
+    mode, into its own cassette, and its predicate value kept. Returns (error string or None,
+    {label: predicate value}); never raises."""
     task = task_dir.name
+    near: dict = {}
     try:
         root = homes / task
         root.mkdir(parents=True, exist_ok=True)
-        rec = Instance(cwr, build, root / "record", c.kernel_initial_state(task_dir))
+        initial = c.kernel_initial_state(task_dir)
+        rec = Instance(cwr, build, root / "record", initial)
         drive(rec, task, "record", root / "cassette.jsonl", stubs, fenced)
-        return None
+        predicate = c.load_predicate(task_dir)
+        for label, turns in sorted(getattr(load_solution(task), "NEAR_MISSES", {}).items()):
+            inst = Instance(cwr, build, root / f"near-{label}", initial)
+            drive(inst, task, "record", root / f"near-{label}.jsonl", stubs, fenced, turns=turns)
+            near[label] = c.evaluate_twice(predicate, *inst.view())
+        return None, near
     except Exception as error:  # report every broken task, not only the first
-        return f"record: {type(error).__name__}: {error}"
+        return f"record: {type(error).__name__}: {error}", near
 
 
 def replay_task(task_dir: Path, cwr: Path, build: Path, homes: Path, fenced: bool, frozen: bool):
@@ -340,9 +386,12 @@ def replay_task(task_dir: Path, cwr: Path, build: Path, homes: Path, fenced: boo
         root = homes / task
         cassette = root / "cassette.jsonl"
         runs = []
+        bodies: list = []
         for label in ("replay-a", "replay-b"):
             inst = Instance(cwr, build, root / label, initial)
-            envelopes = drive(inst, task, "replay", cassette, {}, fenced)
+            envelopes = drive(
+                inst, task, "replay", cassette, {}, fenced, bodies=bodies if not runs else None
+            )
             state, ledger = inst.view()
             runs.append(
                 {
@@ -362,6 +411,17 @@ def replay_task(task_dir: Path, cwr: Path, build: Path, homes: Path, fenced: boo
         idle = Instance(cwr, build, root / "idle", initial)
         idle_state, idle_ledger = idle.view()
         out["idle_success"] = c.evaluate_twice(predicate, idle_state, idle_ledger)
+        keep = last_work_turn(bodies)
+        if keep:
+            # The reference without its last working turn: a missing final step.
+            cut = Instance(cwr, build, root / "cut", initial)
+            drive(cut, task, "replay", cassette, {}, fenced, keep=keep)
+            out["cut_success"] = c.evaluate_twice(predicate, *cut.view())
+        if task == KEY_RELEASE_TASK:
+            probe = Instance(cwr, build, root / "key-release", initial)
+            first = probe.turn(KEY_RELEASE_PROBE, "replay", cassette, {}, fenced)
+            drive(probe, task, "replay", cassette, {}, fenced)
+            out["key_release"] = (first.get("returned"), c.evaluate_twice(predicate, *probe.view()))
         a, b = runs
         out["success"] = [a["success"], b["success"]]
         out["count"] = len(a["calls"])
@@ -492,8 +552,8 @@ def main() -> int:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
             urls = stubs.urls
             recorded = {
-                t.name: error
-                for t, error in zip(
+                t.name: outcome
+                for t, outcome in zip(
                     tasks,
                     pool.map(lambda t: record_task(t, cwr, build, homes, urls, fenced), tasks),
                     strict=True,
@@ -504,7 +564,8 @@ def main() -> int:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
             replayed = pool.map(lambda t: replay_task(t, cwr, build, homes, fenced, frozen), tasks)
             results = {r["task"]: r for r in replayed}
-        for name, error in recorded.items():
+        for name, (error, near) in recorded.items():
+            results[name]["near_misses"] = near
             if error:
                 results[name]["errors"].insert(0, error)
     finally:
@@ -527,6 +588,21 @@ def main() -> int:
             f"{name}: predicate {res['success']} on two replay runs",
         )
         R.check("11.3", res["idle_success"] is False, f"{name}: predicate true when idle")
+        if "cut_success" in res:
+            R.check(
+                "11.3",
+                res["cut_success"] is False,
+                f"{name}: predicate true without the last working turn",
+            )
+        for label, value in sorted(res.get("near_misses", {}).items()):
+            R.check("11.3", value is False, f"{name}: predicate true on near miss {label}")
+        if "key_release" in res:
+            R.check(
+                "11.3",
+                res["key_release"] == ("UNAVAILABLE", True),
+                f"{name}: after a cassette miss under the pinned key, (probe code, predicate) "
+                f"{res['key_release']} != ('UNAVAILABLE', True)",
+            )
         if "frozen_success" in res:
             R.check("11.3", res["frozen_success"], f"{name}: predicate false on frozen cassette")
         R.check("11.3", res["replay_equal"] and res["state_equal"], f"{name}: replay differs")
@@ -604,9 +680,10 @@ def main() -> int:
         "11.3",
         f"{len(tasks)} task directories with task.md, initial.kvx, success.py, bin and rules; "
         "every predicate passes the AST audit (imports only common, no kernel module, no model "
-        "text, no I/O), loads through common.load_predicate, is true on two replay runs, false on "
-        "the idle Instance and deterministic under evaluate_twice; common.py imports only the "
-        "standard library",
+        "text, no I/O, only the predicate API of common), loads through common.load_predicate, is "
+        "true on two replay runs, false on the idle Instance, false without the last working turn "
+        "of a multi-turn reference, false on every near miss of the solution file, and "
+        "deterministic under evaluate_twice; common.py imports only the standard library",
     )
     if args.write_counts:
         Path(args.write_counts).write_text(

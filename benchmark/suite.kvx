@@ -19,11 +19,11 @@ count_source = "kernel-ledger"
 rule_reuse_definition = "reused primitive first called in the first quarter of the reference calls, not called in the middle half, called again in the last quarter at least ten calls later"
 rule_id_grammar = "<module>.<primitive>[<N>|rate|key|shape|clock|stream][:<CODE>]"
 turn_limit = 200
-suite_digest = "sha256:390026249d91d96f6ffa4ee833a153c5c3e43a88daa8a3a2f8f16c89a1547e20"
+suite_digest = "sha256:21b81c446b254856196c794bfd9ae5c63fa874c9670f0cbfc0a5bf58e8cc5233"
 suite_digest_scope = "every file of every benchmark/tasks/tNNN-slug directory; paths relative to benchmark/tasks; layout of spec/cwr/compiler.md section 7"
-solutions_digest = "sha256:61fc774db8c42ac90beff80a9df9bc90ceabf16ec148c85c716876fd4f86fd88"
-predicates_common_digest = "sha256:6f1d7a6a42ecdd26732024feb2ed927d3ef496791b4aace0973aadab12a31599"
-cassette_digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
+solutions_digest = "sha256:967f988615d0324439c914b9b188b13d8c576c09c1ecdc916c34beb566912b2c"
+predicates_common_digest = "sha256:e02ef2cf14ad4986ff0c73ced84a1213a23cd33aeb85b8d07376ce49f7eb29f1"
+cassette_digest = "sha256:c4d99f432d3f4fe76a04e5b3d8fc3d2db0d50785d3acfdaaaa9d2013234418e9"
 cassette_digest_note = "frozen by task 4.1 after recording the reference solutions against the stub servers; null until then"
 
 [bin.short]
@@ -51,11 +51,11 @@ tasks = ["t041-poll-then-reuse", "t042-cleanup-twice", "t043-archive-twice", "t0
 bin = "short"
 primitive_count = 2
 turns = 1
-rules = ["fs.read[1]:NOT_FOUND", "fs.write[1]:LOCKED"]
+rules = ["fs.read[1]:NOT_FOUND"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:9b5f8f0db569b2e7cb6e1e35840992322359deb986550f80258182f5eeb6751d"
+digest = "sha256:fa702df3bf741e107b51cf56a731aa2264525ecc4cd2773bd4615673ccba7502"
 solution = "benchmark/solutions/t001-copy-readme.py"
 
 [task.t002-remove-old-log]
@@ -73,11 +73,11 @@ solution = "benchmark/solutions/t002-remove-old-log.py"
 bin = "short"
 primitive_count = 2
 turns = 1
-rules = ["search.query[shape]", "fs.write[2]:LIMIT"]
+rules = ["search.query[shape]"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:4b26881971764b0e2894cafd3423972cb6813bc27e2e643af5f7c244ffc9096d"
+digest = "sha256:d1b6d21a1782f89536093494be92313058b9107898e72c827d03a9d2fc1c5e94"
 solution = "benchmark/solutions/t003-tennis-note.py"
 
 [task.t004-rename-key]
@@ -128,11 +128,11 @@ solution = "benchmark/solutions/t007-lock-swap.py"
 bin = "short"
 primitive_count = 3
 turns = 1
-rules = ["publish.post[key]:DUPLICATE_KEY", "publish.post[1]:INVALID"]
+rules = ["publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:7aa66c8ab8e64e0e2cbb52b4ae839b64a54a9f7945ac94484738b0f3c2ac330f"
+digest = "sha256:cb94027aeaeabe35b1cb193a8c7b3f7ad2f25ab1d9de3e8051f075517fc8391b"
 solution = "benchmark/solutions/t008-publish-release.py"
 
 [task.t009-cancel-unfinished]
@@ -227,11 +227,11 @@ solution = "benchmark/solutions/t016-finish-queue-item.py"
 bin = "short"
 primitive_count = 3
 turns = 1
-rules = ["world.random[stream]", "fs.write[1]:LOCKED"]
+rules = ["world.random[stream]", "fs.read[1]:NOT_FOUND"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:b714a0038fef176f023b364729f1c97b7e486979a23a0496c176471c63c1133b"
+digest = "sha256:77c7e429b304b3cd027eb5aa34ce49d89a8afa86939ffb92ef790c2afd9f97df"
 solution = "benchmark/solutions/t017-raffle.py"
 
 [task.t018-replace-site-index]
@@ -271,22 +271,22 @@ solution = "benchmark/solutions/t020-unlock-shared.py"
 bin = "medium"
 primitive_count = 8
 turns = 1
-rules = ["search.query[shape]", "fs.lock[2]:CONFLICT", "publish.post[key]:DUPLICATE_KEY", "kv.set[1]:INVALID"]
+rules = ["search.query[shape]", "fs.lock[2]:CONFLICT", "publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:a44c421d726a5b458ceb707e43ef8504f3f438cf1bbfef14ef8639398c8d54c5"
+digest = "sha256:a042a629ab228be8973163a0282c32d090fe0f600d0a6981231f2883cee6c783"
 solution = "benchmark/solutions/t021-sports-report.py"
 
 [task.t022-notice-versions]
 bin = "medium"
 primitive_count = 9
 turns = 1
-rules = ["publish.post[key]:DUPLICATE_KEY", "publish.post[rate]:RATE_LIMITED"]
+rules = ["publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:95bc0de1e07438d4122df4c60654964318d72929620d2d837ab771d78d4c062a"
+digest = "sha256:ccbd3ab002fd7aa462ed80dcc45b6e9ee90ad2c670534f435ba121b0fde69508"
 solution = "benchmark/solutions/t022-notice-versions.py"
 
 [task.t023-batch-archive]
@@ -304,11 +304,11 @@ solution = "benchmark/solutions/t023-batch-archive.py"
 bin = "medium"
 primitive_count = 9
 turns = 3
-rules = ["jobs.result[2]:CONFLICT", "jobs.submit[1]:INVALID"]
+rules = ["jobs.result[2]:CONFLICT"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:8b418ff51622907f70b3beb5a445e7d1b7a2527ed438cedf7eb5ec5ae92bc2fd"
+digest = "sha256:d1bb8bf0275f1d1c579e96f0b08be715e18678553934928ccbe2a6e21273025f"
 solution = "benchmark/solutions/t024-render-trio.py"
 
 [task.t025-kv-migrate]
@@ -337,11 +337,11 @@ solution = "benchmark/solutions/t026-cache-eviction.py"
 bin = "medium"
 primitive_count = 16
 turns = 11
-rules = ["publish.post[rate]:RATE_LIMITED", "publish.post[key]:DUPLICATE_KEY"]
+rules = ["publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:017848078c3cf9909dac253e582ffc9c14deab5c5539fbb7c15954d3ead9b488"
+digest = "sha256:6f0bc1c6f3c2c3432a8fd9ac8591045151280e491fb8dc9bb4cb8b47b9720529"
 solution = "benchmark/solutions/t027-publish-burst.py"
 
 [task.t028-dedupe-photos]
@@ -363,18 +363,18 @@ rules = ["search.query[shape]", "fs.write[1]:LOCKED"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:cd270eaed7bdef44325de9994dcf98d093db0e70d6221c2c0b3e8170129a2939"
+digest = "sha256:a920f26f9f2429512ab91cc6cf7216eff831e0a1f114377c93eba33895d8a704"
 solution = "benchmark/solutions/t029-topic-digest.py"
 
 [task.t030-search-sweep]
 bin = "medium"
 primitive_count = 14
 turns = 6
-rules = ["search.query[rate]:RATE_LIMITED", "search.query[shape]"]
+rules = ["search.query[shape]"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:796c8a654c9ae944d11d9ca24c20dd365a1b726cee3068f0e59b0bfbb4b6ce48"
+digest = "sha256:8ced5492b14654fd6110270553d25e78271e199080f17a5540a23448fcf8f061"
 solution = "benchmark/solutions/t030-search-sweep.py"
 
 [task.t031-resubmit-jobs]
@@ -403,22 +403,22 @@ solution = "benchmark/solutions/t032-rotate-logs.py"
 bin = "medium"
 primitive_count = 21
 turns = 1
-rules = ["fs.size[1]:NOT_FOUND", "kv.set[1]:INVALID"]
+rules = ["fs.size[1]:NOT_FOUND"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:3868c0143b219049d3907ddb05fe0fd12fa5b364ec8e837dc856c63d216d89d2"
+digest = "sha256:646d85a6db901cdc7bb746b9f1057b69f17ab9734b887e273c1bad1c80cfc874"
 solution = "benchmark/solutions/t033-size-index.py"
 
 [task.t034-config-merge]
 bin = "medium"
 primitive_count = 12
 turns = 1
-rules = ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT", "kv.set[1]:INVALID"]
+rules = ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:f89edc0404cb1d9b6948b96a0436e1f0fc0c73f5bcedc97711b501c96603d92f"
+digest = "sha256:088c9ff73364937fcef4bfc124a58861ecb330b3051ed58439b8ad2305caa6a1"
 solution = "benchmark/solutions/t034-config-merge.py"
 
 [task.t035-job-slots]
@@ -436,11 +436,11 @@ solution = "benchmark/solutions/t035-job-slots.py"
 bin = "medium"
 primitive_count = 9
 turns = 1
-rules = ["publish.post[key]:DUPLICATE_KEY", "publish.post[1]:INVALID", "kv.del[1]:NOT_FOUND"]
+rules = ["publish.post[key]:DUPLICATE_KEY", "kv.del[1]:NOT_FOUND"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:549e01235dc1eb11d8322f7dd8387b7e3ce2c5c6e1974e2921d288a2e71295d6"
+digest = "sha256:d0bbc3c6a42de2d10565e8441aad7c65390676d07bf0faec97fba2d11058fae4"
 solution = "benchmark/solutions/t036-retract-post.py"
 
 [task.t037-copy-tree]
@@ -480,28 +480,28 @@ solution = "benchmark/solutions/t039-lock-audit.py"
 bin = "medium"
 primitive_count = 14
 turns = 1
-rules = ["world.random[stream]", "kv.set[1]:INVALID"]
+rules = ["world.random[stream]", "fs.read[1]:NOT_FOUND"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:6baab21e433d94125b0393ccec4ccaafd62db1af56f88f8ed2bdff0b39590d7d"
+digest = "sha256:f0c6d8e9115ab5e535e96e0c8dbb68bf7290c62448f3d2cd3c03573732dc0e34"
 solution = "benchmark/solutions/t040-assign-reviewers.py"
 
 [task.t041-poll-then-reuse]
 bin = "long"
 primitive_count = 31
 turns = 3
-rules = ["jobs.result[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"]
+rules = ["jobs.result[2]:CONFLICT", "jobs.status[clock]"]
 rule_reuse = true
 reused_rule = "jobs.result[2]:CONFLICT"
 reuse_positions = {"first": 1, "first_late": 29, "last_early": 1}
-digest = "sha256:7406604164e2c1de884086a3bb29ba6ee90d4ef5811d885ea258a02bc302d5da"
+digest = "sha256:7573295ea4fab1df4be81b2fe3ac658c03ec365f2b3a448407973e8b7e70b714"
 solution = "benchmark/solutions/t041-poll-then-reuse.py"
 
 [task.t042-cleanup-twice]
 bin = "long"
 primitive_count = 31
-turns = 1
+turns = 3
 rules = ["fs.delete[2]:LOCKED", "fs.delete[1]:NOT_FOUND", "fs.write[1]:LOCKED"]
 rule_reuse = true
 reused_rule = "fs.delete[2]:LOCKED"
@@ -512,67 +512,67 @@ solution = "benchmark/solutions/t042-cleanup-twice.py"
 [task.t043-archive-twice]
 bin = "long"
 primitive_count = 30
-turns = 1
-rules = ["fs.move[3]:CONFLICT", "fs.move[2]:LOCKED", "fs.delete[1]:NOT_FOUND"]
+turns = 3
+rules = ["fs.move[3]:CONFLICT", "fs.delete[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "fs.move[3]:CONFLICT"
 reuse_positions = {"first": 1, "first_late": 28, "last_early": 1}
-digest = "sha256:6bd7e787b237c82de7fa55459ef8f537fb8ec34f1d0910aaae9d919345b17e82"
+digest = "sha256:84a3fb5f450a3fc0d0bc961e69c6e018e24a2f3eb31255293b25f96873535059"
 solution = "benchmark/solutions/t043-archive-twice.py"
 
 [task.t044-chunks-twice]
 bin = "long"
 primitive_count = 32
-turns = 1
-rules = ["kv.set[1]:INVALID", "fs.write[1]:LOCKED"]
+turns = 3
+rules = ["kv.set[1]:INVALID"]
 rule_reuse = true
 reused_rule = "kv.set[1]:INVALID"
 reuse_positions = {"first": 1, "first_late": 29, "last_early": 2}
-digest = "sha256:c926e4bb10afa98a2a8d735df9c91678faf6d237e34b0c8909b6d7694ff3e843"
+digest = "sha256:cfb891f81ec7468bedf61534cdb5b4585f76678ebf884169c202051e2734e226"
 solution = "benchmark/solutions/t044-chunks-twice.py"
 
 [task.t045-quota-twice]
 bin = "long"
 primitive_count = 34
-turns = 1
-rules = ["kv.set[2]:LIMIT", "kv.del[1]:NOT_FOUND", "fs.write[1]:LOCKED"]
+turns = 3
+rules = ["kv.set[2]:LIMIT", "kv.del[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "kv.set[2]:LIMIT"
 reuse_positions = {"first": 2, "first_late": 31, "last_early": 2}
-digest = "sha256:ba1d6afd100875edc9b679ec5993b01d6db04df66b2f2d514eab790d3b05ce2a"
+digest = "sha256:13adf88fa19f607151585eac7eafb312b1e954e66b62668e9132b02da9129f17"
 solution = "benchmark/solutions/t045-quota-twice.py"
 
 [task.t046-burst-twice]
 bin = "long"
 primitive_count = 38
 turns = 29
-rules = ["publish.post[rate]:RATE_LIMITED", "publish.post[key]:DUPLICATE_KEY"]
+rules = ["publish.post[1]:INVALID", "publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = true
-reused_rule = "publish.post[rate]:RATE_LIMITED"
+reused_rule = "publish.post[1]:INVALID"
 reuse_positions = {"first": 5, "first_late": 34, "last_early": 8}
-digest = "sha256:cc2c1b9aaef918deaf91b9f946f24c1aeb46aa5e78465165decebe68e5dce653"
+digest = "sha256:0a695d575e09d99a98fa7000270a34005b2a6d378698f79e6b032a2883653cb9"
 solution = "benchmark/solutions/t046-burst-twice.py"
 
 [task.t047-key-twice]
 bin = "long"
 primitive_count = 33
 turns = 9
-rules = ["publish.post[key]:DUPLICATE_KEY", "publish.post[rate]:RATE_LIMITED"]
+rules = ["publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = true
 reused_rule = "publish.post[key]:DUPLICATE_KEY"
 reuse_positions = {"first": 1, "first_late": 29, "last_early": 4}
-digest = "sha256:b85ff3503a658bdfe5264d19c3389a14aa17956e02375e705fa134143cbdb01f"
+digest = "sha256:8f22262c61526dba47f4220df2117f0229c9d3dc980a86af832dd6ce093df5ae"
 solution = "benchmark/solutions/t047-key-twice.py"
 
 [task.t048-search-twice]
 bin = "long"
-primitive_count = 59
-turns = 14
-rules = ["search.query[rate]:RATE_LIMITED", "search.query[shape]", "fs.move[3]:CONFLICT"]
+primitive_count = 57
+turns = 8
+rules = ["search.query[2]:LIMIT", "search.query[shape]"]
 rule_reuse = true
-reused_rule = "search.query[rate]:RATE_LIMITED"
-reuse_positions = {"first": 1, "first_late": 46, "last_early": 12}
-digest = "sha256:18d958b618514483ae8b15eb77dc538f4e9a261bc6aeeb955df9e6cbac8036a2"
+reused_rule = "search.query[2]:LIMIT"
+reuse_positions = {"first": 1, "first_late": 44, "last_early": 10}
+digest = "sha256:fbfcf46a013e7be99d772fccf200cef5d7f1e00a8ba143d14f59924f809cb47a"
 solution = "benchmark/solutions/t048-search-twice.py"
 
 [task.t049-slots-twice]
@@ -589,40 +589,40 @@ solution = "benchmark/solutions/t049-slots-twice.py"
 [task.t050-locked-pages-twice]
 bin = "long"
 primitive_count = 33
-turns = 1
-rules = ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT", "kv.set[1]:INVALID"]
+turns = 3
+rules = ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT"]
 rule_reuse = true
 reused_rule = "fs.write[1]:LOCKED"
 reuse_positions = {"first": 2, "first_late": 27, "last_early": 2}
-digest = "sha256:1c5f720ba5c20a60c07b1bedd54b8dd12d2c6c1fd724f29af07677df179ba722"
+digest = "sha256:ed6e35641f9250a4d9c23b8459760b173a8261ef54cb8f1471accf32442198ed"
 solution = "benchmark/solutions/t050-locked-pages-twice.py"
 
 [task.t051-lock-sets-twice]
 bin = "long"
 primitive_count = 40
-turns = 1
-rules = ["fs.lock[2]:CONFLICT", "fs.unlock[1]:NOT_FOUND", "kv.set[1]:INVALID"]
+turns = 3
+rules = ["fs.lock[2]:CONFLICT", "fs.unlock[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "fs.lock[2]:CONFLICT"
 reuse_positions = {"first": 2, "first_late": 33, "last_early": 8}
-digest = "sha256:72ad89d707bd6eba41f904364b46d1c20a44222921766ca2dae3789dccbed3a0"
+digest = "sha256:c9c963a7b022379c04e0eee0b0254daf3991149ccf13b4dd6b36f39cd7d187b1"
 solution = "benchmark/solutions/t051-lock-sets-twice.py"
 
 [task.t052-collect-twice]
 bin = "long"
 primitive_count = 31
 turns = 13
-rules = ["jobs.result[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"]
+rules = ["jobs.result[2]:CONFLICT", "jobs.status[clock]"]
 rule_reuse = true
 reused_rule = "jobs.result[2]:CONFLICT"
 reuse_positions = {"first": 0, "first_late": 27, "last_early": 0}
-digest = "sha256:8b4a6cb3b6bbd14e93d1540483736287e13e7edee8ddddf41d68bcd94ad9f46d"
+digest = "sha256:d0325394a658e755e5d1b36bc820c99f7426893ff28d7baf73b94b43cf4f5d16"
 solution = "benchmark/solutions/t052-collect-twice.py"
 
 [task.t053-purge-twice]
 bin = "long"
 primitive_count = 30
-turns = 1
+turns = 3
 rules = ["fs.delete[2]:LOCKED", "kv.del[1]:NOT_FOUND", "kv.get[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "fs.delete[2]:LOCKED"
@@ -633,34 +633,34 @@ solution = "benchmark/solutions/t053-purge-twice.py"
 [task.t054-cancel-twice]
 bin = "long"
 primitive_count = 32
-turns = 1
-rules = ["jobs.cancel[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"]
+turns = 3
+rules = ["jobs.cancel[2]:CONFLICT", "jobs.status[clock]"]
 rule_reuse = true
 reused_rule = "jobs.cancel[2]:CONFLICT"
 reuse_positions = {"first": 1, "first_late": 28, "last_early": 4}
-digest = "sha256:cfd2988deb39e56d65a9323ad3a91a086fe4036a4cf410185b378005f0d747a9"
+digest = "sha256:6c17a3c2ed555a4604a7efa359421c6e635a81a404f190069ed5d47b20105bc3"
 solution = "benchmark/solutions/t054-cancel-twice.py"
 
 [task.t055-inbox-digest]
 bin = "long"
 primitive_count = 67
 turns = 6
-rules = ["search.query[rate]:RATE_LIMITED", "fs.move[3]:CONFLICT", "publish.post[rate]:RATE_LIMITED", "publish.post[key]:DUPLICATE_KEY"]
+rules = ["search.query[shape]", "publish.post[key]:DUPLICATE_KEY"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:6009156eeda3c57dbf36c5953775c787c18b36416ca514160a69cbda93862e6a"
+digest = "sha256:e00d8579d05ee570af305aff818f025529ec0076344568fb276d9e9f595ba422"
 solution = "benchmark/solutions/t055-inbox-digest.py"
 
 [task.t056-kv-v2-migration]
 bin = "long"
 primitive_count = 47
 turns = 1
-rules = ["kv.get[1]:NOT_FOUND", "kv.del[1]:NOT_FOUND", "kv.set[1]:INVALID"]
+rules = ["kv.get[1]:NOT_FOUND", "kv.del[1]:NOT_FOUND"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:d108e28c36a41256446f28a706e487504de9287f84e44bdd778a7e7908edcaa0"
+digest = "sha256:1da24d9c2f473e9fad81f96f2fda61f008731e034dccfc3b913986b9ff5ee194"
 solution = "benchmark/solutions/t056-kv-v2-migration.py"
 
 [task.t057-job-farm]
@@ -682,18 +682,18 @@ rules = ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT", "publish.post[key]:DUPLICA
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:167b57592ddc7a689b0619b6814079538492565c3853bd8ad7405af5d124482f"
+digest = "sha256:33e5fe1dbdb691d9e9d400016962d1a5418746066a7c2efa0add7ca651431132"
 solution = "benchmark/solutions/t058-site-build.py"
 
 [task.t059-search-catalogue]
 bin = "long"
 primitive_count = 42
 turns = 6
-rules = ["search.query[rate]:RATE_LIMITED", "search.query[shape]", "search.query[2]:LIMIT"]
+rules = ["search.query[shape]"]
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:795ba78ccc2efda9f88e542e9c2f5dd63f2439d382cd2d8ce1003b9f9042becc"
+digest = "sha256:64d3d431e74e727bb161bc5e0b296542c9bc6844677dd2bd43c3b9603ffdcf80"
 solution = "benchmark/solutions/t059-search-catalogue.py"
 
 [task.t060-report-pipeline]
@@ -704,5 +704,5 @@ rules = ["jobs.result[2]:CONFLICT", "search.query[shape]", "fs.lock[2]:CONFLICT"
 rule_reuse = false
 reused_rule = null
 reuse_positions = null
-digest = "sha256:d2cf955d6eae9d16a208248c198f2ad0799c69140c45a00b4906ec64a8372515"
+digest = "sha256:b778c09ee84460871bf535edad2ac6a0a8567b4516fe8421bfafd31edf154dbb"
 solution = "benchmark/solutions/t060-report-pipeline.py"

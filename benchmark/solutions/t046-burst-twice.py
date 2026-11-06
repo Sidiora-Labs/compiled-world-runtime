@@ -43,7 +43,7 @@ def turns():
         texts = {p: fs.read(path=p).decode() for p in fs.list(prefix="/early/")}
         for p in sorted(texts)[:3]:
             key = p[len("/early/"):-len(".txt")]
-            publish.post(key=key, title=texts[p].splitlines()[0], body=texts[p])
+            publish.post(key=key, title=texts[p].splitlines()[0][:200], body=texts[p])
         return {p: texts[p] for p in sorted(texts)[3:]}
     """)
     rest, last = env["returned"], max(ok_times(env, "publish.post"))
@@ -52,7 +52,8 @@ def turns():
         """
         import fs, publish
         for p, text in sorted(REST.items()):
-            publish.post(key=p[len("/early/"):-len(".txt")], title=text.splitlines()[0], body=text)
+            publish.post(key=p[len("/early/"):-len(".txt")], title=text.splitlines()[0][:200],
+                         body=text)
         for path in fs.list(prefix="/pages/"):
             fs.write(path=path + ".bak", content=fs.read(path=path))
         return {p: fs.read(path=p).decode() for p in ["/late/l1.txt", "/late/l2.txt",
@@ -67,7 +68,7 @@ def turns():
             """
             import publish
             for p, text in sorted(GROUP.items()):
-                publish.post(key=p[len("/late/"):-len(".txt")], title=text.splitlines()[0],
+                publish.post(key=p[len("/late/"):-len(".txt")], title=text.splitlines()[0][:200],
                              body=text)
         """,
             GROUP={p: late[p] for p in group},

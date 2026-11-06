@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t042-cleanup-twice"
 PRIMITIVES = 31  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 1
+TURNS = 3
 
 
 def script(body, **data):
@@ -42,10 +42,16 @@ def turns():
         import fs
         fs.unlock(path="/scratch/session.tmp")
         fs.delete(path="/scratch/session.tmp")
+    """)
+    yield script("""
+        import fs
         for path in fs.list(prefix="/reports/raw/"):
             text = fs.read(path=path).decode()
             clean = "".join(line.rstrip(" ") + "\\n" for line in text.splitlines())
             fs.write(path="/reports/clean/" + path[len("/reports/raw/"):], content=clean.encode())
+    """)
+    yield script("""
+        import fs
         for name in ["build.tmp", "cache.tmp"]:
             fs.unlock(path="/scratch/" + name)
             fs.delete(path="/scratch/" + name)

@@ -11,13 +11,21 @@ import common as c
 def success(state, ledger):
     if not all(c.posted_ok(state, ledger, k) for k in ["a", "b", "c"]):
         return False
-    deletes = c.calls(ledger, "publish.delete", status="ok")
+    ids = {k: c.receipt_id(state, k) for k in ["a", "b", "c"]}
+    deleted = {
+        k: c.called_with(ledger, "publish.delete", {"post_id": ids[k]})
+        for k in ids
+        if isinstance(ids[k], str)
+    }
     b_seq = c.idempotency_entry_seq(state, "b")
     return (
-        len(deletes) >= 1
+        len(deleted) == 3
+        and len(deleted["b"]) >= 1
         and b_seq is not None
-        and deletes[0]["seq"] > b_seq
-        and c.kv_get(state, "receipts", "a") == c.receipt_id(state, "a")
-        and c.kv_get(state, "receipts", "c") == c.receipt_id(state, "c")
+        and deleted["b"][0]["seq"] > b_seq
+        and deleted["a"] == []
+        and deleted["c"] == []
+        and c.kv_get(state, "receipts", "a") == ids["a"]
+        and c.kv_get(state, "receipts", "c") == ids["c"]
         and not c.kv_has(state, "receipts", "b")
     )

@@ -42,15 +42,15 @@ def t002_turns():
 # t003 ------------------------------------------------------------------------------------------
 def t003_success(state, ledger):
     lines = c.file_lines(state, "/notes/tennis.md")
-    search_seq = c.first_seq(ledger, "search.query")
+    searches = c.called_with(ledger, "search.query", {"q": "tennis", "limit": 1})
     write_seq = c.last_seq(ledger, "fs.write")
     return (
         lines is not None
         and len(lines) == 1
         and 0 < len(lines[0]) <= 1000
-        and search_seq is not None
+        and len(searches) >= 1
         and write_seq is not None
-        and search_seq < write_seq
+        and searches[0]["seq"] < write_seq
     )
 
 
@@ -59,6 +59,21 @@ def t003_turns():
         import fs, search
         hits = search.query(q="tennis", limit=1)
         fs.write(path="/notes/tennis.md", content=(hits[0]["title"] + "\\n").encode())
+    """)
+
+
+def t003_wrong_query():
+    yield script("""
+        import fs, search
+        hits = search.query(q="golf", limit=1)
+        fs.write(path="/notes/tennis.md", content=(hits[0]["title"] + "\\n").encode())
+    """)
+
+
+def t003_no_search():
+    yield script("""
+        import fs
+        fs.write(path="/notes/tennis.md", content=b"Tennis\\n")
     """)
 
 
@@ -406,7 +421,7 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["fs.read[1]:NOT_FOUND", "fs.write[1]:LOCKED"],
+        ["fs.read[1]:NOT_FOUND"],
         t001_success,
         t001_turns,
     ),
@@ -433,11 +448,13 @@ TASKS = [
         "t003-tennis-note",
         "short",
         "Note the top tennis hit",
-        'Write the title of the top search hit for "tennis", on a single line, to /notes/tennis.md.',
+        'Search for "tennis" with a limit of 1 result and write the title of the top hit, on a '
+        "single line, to /notes/tennis.md.",
         {"fs": {"files": {}, "locks": []}},
-        ["search.query[shape]", "fs.write[2]:LIMIT"],
+        ["search.query[shape]"],
         t003_success,
         t003_turns,
+        extra={"near_misses": {"wrong-query": t003_wrong_query, "no-search": t003_no_search}},
     ),
     Task(
         "t004-rename-key",
@@ -512,7 +529,7 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["publish.post[key]:DUPLICATE_KEY", "publish.post[1]:INVALID"],
+        ["publish.post[key]:DUPLICATE_KEY"],
         t008_success,
         t008_turns,
     ),
@@ -665,7 +682,7 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["world.random[stream]", "fs.write[1]:LOCKED"],
+        ["world.random[stream]", "fs.read[1]:NOT_FOUND"],
         t017_success,
         t017_turns,
     ),

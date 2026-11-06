@@ -24,9 +24,15 @@ def success(state, ledger):
         region_lines = c.file_lines(state, f"/report/{region}.md")
         if region_lines is None or not 1 <= len(region_lines) <= 3:
             return False
+        if len(c.called_with(ledger, "search.query", {"q": region, "limit": 3})) < 1:
+            return False
+    summary = "".join(line + "\n" for line in results + [f"{r}.md" for r in regions])
+    post = {"key": "report-q", "title": "Quarterly report", "body": summary}
     return (
         lines == results + [f"{r}.md" for r in regions]
+        and c.file_text(state, "/report/summary.md") == summary
         and c.is_locked(state, "/report/summary.md")
         and c.posted_ok(state, ledger, "report-q")
+        and len(c.called_with(ledger, "publish.post", post)) >= 1
         and c.kv_get(state, "receipts", "report-q") == c.receipt_id(state, "report-q")
     )

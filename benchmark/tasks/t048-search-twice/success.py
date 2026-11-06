@@ -9,6 +9,32 @@ import common as c
 
 
 def success(state, ledger):
+    early_q = [
+        "river deltas",
+        "moss",
+        "lighthouses",
+        "chess endgames",
+        "saffron",
+        "comets",
+        "canal locks",
+        "harpsichords",
+        "permafrost",
+        "falconry",
+    ]
+    late_q = [
+        "sundials",
+        "kelp forests",
+        "bridges",
+        "fountain pens",
+        "magnetars",
+        "windmills",
+        "obsidian",
+        "lantern festivals",
+        "cave paintings",
+        "glassblowing",
+        "tea ceremony",
+        "auroras",
+    ]
     early = c.file_lines(state, "/out/early.md")
     late = c.file_lines(state, "/out/late.md")
     moved = all(
@@ -16,14 +42,18 @@ def success(state, ledger):
         and c.is_locked(state, f"/sorted/i{i:02d}.txt")
         for i in range(1, 16)
     )
+    searched = all(
+        len(c.called_with(ledger, "search.query", {"q": q, "limit": 50})) >= 1
+        for q in early_q + late_q
+    )
     return (
         early is not None
-        and len(early) == 12
+        and len(early) == len(early_q)
         and late is not None
-        and len(late) == 12
+        and len(late) == len(late_q)
         and moved
+        and searched
         and c.files_under(state, "/incoming/") == []
-        and c.ok_count(ledger, "search.query") >= 24
         and c.rate_limited_beyond_first(ledger, "search.query") == 0
         and c.brackets(ledger, "search.query", "fs.move")
     )

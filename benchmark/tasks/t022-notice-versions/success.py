@@ -9,11 +9,13 @@ import common as c
 
 
 def success(state, ledger):
-    by_id = {c.receipt_id(state, k): k for k in c.idempotency_keys(state)}
-    keys = []
     for name in ["notice-v1", "notice-v2", "notice-v3"]:
-        value = c.kv_get(state, "receipts", name)
-        if value not in by_id or not c.posted_ok(state, ledger, by_id[value]):
+        body = c.file_text(state, "/posts/" + name + ".txt")
+        post = {"key": name, "title": "Maintenance notice", "body": body}
+        if body is None or not c.posted_ok(state, ledger, name):
             return False
-        keys.append(by_id[value])
-    return len(set(keys)) == 3 and c.ok_count(ledger, "publish.delete") == 0
+        if c.kv_get(state, "receipts", name) != c.receipt_id(state, name):
+            return False
+        if len(c.called_with(ledger, "publish.post", post)) < 1:
+            return False
+    return c.ok_count(ledger, "publish.delete") == 0

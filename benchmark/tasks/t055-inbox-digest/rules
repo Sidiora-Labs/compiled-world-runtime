@@ -1,4 +1,2 @@
-search.query[rate]:RATE_LIMITED
-fs.move[3]:CONFLICT
-publish.post[rate]:RATE_LIMITED
+search.query[shape]
 publish.post[key]:DUPLICATE_KEY

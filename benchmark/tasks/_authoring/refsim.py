@@ -100,6 +100,9 @@ class World:
         self.next_job = 1
         self.ledger: list = []
         self.proposals: list = []
+        # (primitive, params) of every well-formed call, in order; build_suite re-evaluates them on
+        # the starting state to show that each precondition rule of a task can fire.
+        self.calls_made: list = []
         self._append(
             {
                 "kind": "header",
@@ -537,6 +540,7 @@ class World:
                 return self._refuse(
                     name, spec, "INVALID", None, f"{key} must be {typ.__name__}", params
                 )
+        self.calls_made.append((name, dict(params)))
         self._turn_calls += 1
         if self._turn_calls > LIMITS["primitive_calls"]:
             return self._refuse(
@@ -573,8 +577,22 @@ class World:
         return copy.deepcopy(value)
 
     def _record(self, name, spec, params, evaluated, status, code):
+        gateway = {}
+        if spec["kind"] == "adapter":
+            # The kernel gateway's request hash (common.request_hash); adapter params are JSON.
+            text = json.dumps(
+                {"adapter": name, "params": params},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            gateway["gateway"] = {
+                "request_hash": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "via": "service",
+            }
         self._append(
             {
+                **gateway,
                 "kind": spec["kind"],
                 "primitive": name,
                 "params_hash": _h(

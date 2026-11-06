@@ -215,7 +215,7 @@
    "first_late": 28,
    "last_early": 1
   },
-  "turns": 1
+  "turns": 3
  },
  "t043-archive-twice": {
   "count": 30,
@@ -224,7 +224,7 @@
    "first_late": 28,
    "last_early": 1
   },
-  "turns": 1
+  "turns": 3
  },
  "t044-chunks-twice": {
   "count": 32,
@@ -233,7 +233,7 @@
    "first_late": 29,
    "last_early": 2
   },
-  "turns": 1
+  "turns": 3
  },
  "t045-quota-twice": {
   "count": 34,
@@ -242,7 +242,7 @@
    "first_late": 31,
    "last_early": 2
   },
-  "turns": 1
+  "turns": 3
  },
  "t046-burst-twice": {
   "count": 38,
@@ -263,13 +263,13 @@
   "turns": 9
  },
  "t048-search-twice": {
-  "count": 59,
+  "count": 57,
   "reuse": {
    "first": 1,
-   "first_late": 46,
-   "last_early": 12
+   "first_late": 44,
+   "last_early": 10
   },
-  "turns": 14
+  "turns": 8
  },
  "t049-slots-twice": {
   "count": 39,
@@ -287,7 +287,7 @@
    "first_late": 27,
    "last_early": 2
   },
-  "turns": 1
+  "turns": 3
  },
  "t051-lock-sets-twice": {
   "count": 40,
@@ -296,7 +296,7 @@
    "first_late": 33,
    "last_early": 8
   },
-  "turns": 1
+  "turns": 3
  },
  "t052-collect-twice": {
   "count": 31,
@@ -314,7 +314,7 @@
    "first_late": 27,
    "last_early": 3
   },
-  "turns": 1
+  "turns": 3
  },
  "t054-cancel-twice": {
   "count": 32,
@@ -323,7 +323,7 @@
    "first_late": 28,
    "last_early": 4
   },
-  "turns": 1
+  "turns": 3
  },
  "t055-inbox-digest": {
   "count": 67,

@@ -50,3 +50,24 @@ def turns():
         receipt = publish.post(key="sports-1", title="Sports roundup", body=body)
         kv.set(ns="receipts", key="sports-1", value=receipt["id"].encode())
     """)
+
+
+def near_miss_body_without_newline():
+    yield script("""
+        import fs, kv, search, publish
+        golf = [h["title"] for h in search.query(q="golf", limit=3)]
+        tennis = [h["title"] for h in search.query(q="tennis", limit=3)]
+        fs.write(path="/reports/golf.md", content=("\\n".join(golf) + "\\n").encode())
+        fs.write(path="/reports/tennis.md", content=("\\n".join(tennis) + "\\n").encode())
+        body = "\\n".join(golf + tennis) + "\\n"
+        fs.write(path="/reports/sports.md", content=body.encode())
+        fs.lock(path="/reports/sports.md")
+        receipt = publish.post(key="sports-1", title="Sports roundup", body=body.strip())
+        kv.set(ns="receipts", key="sports-1", value=receipt["id"].encode())
+    """)
+
+
+# Near misses: each drops or changes one step; the predicate is false after each.
+NEAR_MISSES = {
+    "body-without-newline": near_miss_body_without_newline,
+}

@@ -11,10 +11,10 @@ import common as c
 def success(state, ledger):
     topics = ["chess openings", "tide tables", "sourdough", "bike repair", "jazz", "orbits"]
     names = [t.replace(" ", "-") + ".md" for t in topics]
-    for name in names:
+    for topic, name in zip(topics, names, strict=True):
         lines = c.file_lines(state, "/digest/" + name)
         if lines is None or not 1 <= len(lines) <= 5:
             return False
-    return (
-        c.file_lines(state, "/digest/index.md") == names and c.ok_count(ledger, "search.query") >= 6
-    )
+        if len(c.called_with(ledger, "search.query", {"q": topic, "limit": 5})) < 1:
+            return False
+    return c.file_lines(state, "/digest/index.md") == names

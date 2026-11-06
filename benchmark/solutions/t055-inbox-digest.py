@@ -73,3 +73,19 @@ def turns():
     """,
         REST=rest,
     )
+
+
+def near_miss_extra_post():
+    yield from turns()
+    for _ in range(11):  # past the publishing window, so the extra post is accepted
+        yield "pass"
+    yield script("""
+        import publish
+        publish.post(key="digest-4", title="Digest 4", body="none\\n")
+    """)
+
+
+# Near misses: each drops or changes one step; the predicate is false after each.
+NEAR_MISSES = {
+    "extra-post": near_miss_extra_post,
+}

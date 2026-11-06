@@ -80,10 +80,16 @@ def t042_turns():
         import fs
         fs.unlock(path="/scratch/session.tmp")
         fs.delete(path="/scratch/session.tmp")
+    """)
+    yield script("""
+        import fs
         for path in fs.list(prefix="/reports/raw/"):
             text = fs.read(path=path).decode()
             clean = "".join(line.rstrip(" ") + "\\n" for line in text.splitlines())
             fs.write(path="/reports/clean/" + path[len("/reports/raw/"):], content=clean.encode())
+    """)
+    yield script("""
+        import fs
         for name in ["build.tmp", "cache.tmp"]:
             fs.unlock(path="/scratch/" + name)
             fs.delete(path="/scratch/" + name)
@@ -107,10 +113,16 @@ def t043_turns():
         import fs
         fs.delete(path="/archive/q1.txt")
         fs.move(src="/inbox/q1.txt", dst="/archive/q1.txt")
+    """)
+    yield script("""
+        import fs
         for path in fs.list(prefix="/data/"):
             name = path[len("/data/"):]
             fs.write(path="/summary/" + name, content=("# " + name + "\\n").encode()
                      + fs.read(path=path))
+    """)
+    yield script("""
+        import fs
         fs.delete(path="/archive/q2.txt")
         fs.move(src="/inbox/q2.txt", dst="/archive/q2.txt")
         fs.move(src="/inbox/q3.txt", dst="/archive/q3.txt")
@@ -141,18 +153,31 @@ def t044_success(state, ledger):
 
 
 def t044_turns():
-    yield script("""
+    store = """
         import fs, kv
         def store(path):
             text = fs.read(path=path).decode()
             name = path[len("/big/"):]
             for i in range(0, len(text), 1024):
                 kv.set(ns="chunks", key=name + "." + str(i // 1024), value=text[i:i + 1024].encode())
+    """
+    yield script(
+        store
+        + """
         store("/big/a.txt")
+    """
+    )
+    yield script("""
+        import fs
         for path in fs.list(prefix="/docs/"):
             fs.write(path=path, content=fs.read(path=path).lower())
-        store("/big/b.txt")
     """)
+    yield script(
+        store
+        + """
+        store("/big/b.txt")
+    """
+    )
 
 
 # t045 kv.set[2]:LIMIT --------------------------------------------------------------------------
@@ -176,29 +201,47 @@ def t045_success(state, ledger):
 def t045_turns():
     yield script("""
         import fs, kv
-        kv_del = kv.del_
-        kv_del(ns="cache", key="stale-00")
+        kv.del_(ns="cache", key="stale-00")
         kv.set(ns="cache", key="e1", value=fs.read(path="/in/e1.txt"))
+    """)
+    yield script("""
+        import fs
         for path in fs.list(prefix="/letters/"):
             fs.write(path=path, content=b"Dear team,\\n" + fs.read(path=path))
+    """)
+    yield script("""
+        import fs, kv
         e2 = fs.read(path="/in/e2.txt").decode()
         e3 = fs.read(path="/in/e3.txt").decode()
-        kv_del(ns="cache", key="stale-01")
+        kv.del_(ns="cache", key="stale-01")
         kv.set(ns="cache", key="e2", value=e2.encode())
-        kv_del(ns="cache", key="stale-02")
+        kv.del_(ns="cache", key="stale-02")
         kv.set(ns="cache", key="e3", value=e3.encode())
     """)
 
 
-# t046 publish.post[rate]:RATE_LIMITED ----------------------------------------------------------
+# t046 publish.post[1]:INVALID ------------------------------------------------------------------
 def t046_success(state, ledger):
-    keys = ["e1", "e2", "e3", "e4", "l1", "l2", "l3", "l4"]
+    def text(group, i):
+        head = f"{group.title()} {i}"
+        if (group, i) in (("early", 2), ("late", 3)):
+            head += ": " + " ".join(f"headline word {k}" for k in range(1, 21))
+        return f"{head}\n{group} body {i}\n"
+
+    posts = [("early", "e", i) for i in range(1, 5)] + [("late", "l", i) for i in range(1, 5)]
+    for group, letter, i in posts:
+        key, body = f"{letter}{i}", text(group, i)
+        post = {"key": key, "title": body.split("\n")[0][:200], "body": body}
+        if (
+            not c.posted_ok(state, ledger, key)
+            or len(c.called_with(ledger, "publish.post", post)) < 1
+        ):
+            return False
     backups = all(
         c.file_text(state, f"/pages/p{i:02d}.txt.bak") == f"page {i}\n" for i in range(1, 11)
     )
     return (
-        all(c.posted_ok(state, ledger, k) for k in keys)
-        and backups
+        backups
         and c.rate_limited_beyond_first(ledger, "publish.post") == 0
         and c.brackets(ledger, "publish.post", "fs.write")
     )
@@ -210,7 +253,7 @@ def t046_turns():
         texts = {p: fs.read(path=p).decode() for p in fs.list(prefix="/early/")}
         for p in sorted(texts)[:3]:
             key = p[len("/early/"):-len(".txt")]
-            publish.post(key=key, title=texts[p].splitlines()[0], body=texts[p])
+            publish.post(key=key, title=texts[p].splitlines()[0][:200], body=texts[p])
         return {p: texts[p] for p in sorted(texts)[3:]}
     """)
     rest, last = env["returned"], max(ok_times(env, "publish.post"))
@@ -219,7 +262,8 @@ def t046_turns():
         """
         import fs, publish
         for p, text in sorted(REST.items()):
-            publish.post(key=p[len("/early/"):-len(".txt")], title=text.splitlines()[0], body=text)
+            publish.post(key=p[len("/early/"):-len(".txt")], title=text.splitlines()[0][:200],
+                         body=text)
         for path in fs.list(prefix="/pages/"):
             fs.write(path=path + ".bak", content=fs.read(path=path))
         return {p: fs.read(path=p).decode() for p in ["/late/l1.txt", "/late/l2.txt",
@@ -234,7 +278,7 @@ def t046_turns():
             """
             import publish
             for p, text in sorted(GROUP.items()):
-                publish.post(key=p[len("/late/"):-len(".txt")], title=text.splitlines()[0],
+                publish.post(key=p[len("/late/"):-len(".txt")], title=text.splitlines()[0][:200],
                              body=text)
         """,
             GROUP={p: late[p] for p in group},
@@ -244,14 +288,16 @@ def t046_turns():
 
 # t047 publish.post[key]:DUPLICATE_KEY ----------------------------------------------------------
 def t047_success(state, ledger):
-    by_id = {c.receipt_id(state, k): k for k in c.idempotency_keys(state)}
-    for doc in ["plan", "budget"]:
-        v1 = c.kv_get(state, "receipts", doc + "-v1")
-        v2 = c.kv_get(state, "receipts", doc + "-v2")
-        if v1 is None or v1 != c.receipt_id(state, doc) or not c.posted_ok(state, ledger, doc):
-            return False
-        if v2 not in by_id or by_id[v2] == doc or not c.posted_ok(state, ledger, by_id[v2]):
-            return False
+    for doc, title in [("plan", "Plan"), ("budget", "Budget")]:
+        for v, key in [("v1", doc), ("v2", doc + "-v2")]:
+            body = f"{doc}, version {v[1:]}\n"
+            post = {"key": key, "title": title, "body": body}
+            if not c.posted_ok(state, ledger, key):
+                return False
+            if c.kv_get(state, "receipts", f"{doc}-{v}") != c.receipt_id(state, key):
+                return False
+            if len(c.called_with(ledger, "publish.post", post)) < 1:
+                return False
     copies = all(
         c.file_text(state, f"/minutes-archive/m{i:02d}.txt") == f"minutes {i}\n"
         for i in range(1, 11)
@@ -283,8 +329,34 @@ def t047_turns():
     )
 
 
-# t048 search.query[rate]:RATE_LIMITED ----------------------------------------------------------
+# t048 search.query[2]:LIMIT -------------------------------------------------------------------
 def t048_success(state, ledger):
+    early_q = [
+        "river deltas",
+        "moss",
+        "lighthouses",
+        "chess endgames",
+        "saffron",
+        "comets",
+        "canal locks",
+        "harpsichords",
+        "permafrost",
+        "falconry",
+    ]
+    late_q = [
+        "sundials",
+        "kelp forests",
+        "bridges",
+        "fountain pens",
+        "magnetars",
+        "windmills",
+        "obsidian",
+        "lantern festivals",
+        "cave paintings",
+        "glassblowing",
+        "tea ceremony",
+        "auroras",
+    ]
     early = c.file_lines(state, "/out/early.md")
     late = c.file_lines(state, "/out/late.md")
     moved = all(
@@ -292,58 +364,106 @@ def t048_success(state, ledger):
         and c.is_locked(state, f"/sorted/i{i:02d}.txt")
         for i in range(1, 16)
     )
+    searched = all(
+        len(c.called_with(ledger, "search.query", {"q": q, "limit": 50})) >= 1
+        for q in early_q + late_q
+    )
     return (
         early is not None
-        and len(early) == 12
+        and len(early) == len(early_q)
         and late is not None
-        and len(late) == 12
+        and len(late) == len(late_q)
         and moved
+        and searched
         and c.files_under(state, "/incoming/") == []
-        and c.ok_count(ledger, "search.query") >= 24
         and c.rate_limited_beyond_first(ledger, "search.query") == 0
         and c.brackets(ledger, "search.query", "fs.move")
     )
 
 
 def t048_turns():
-    def batch(env, queries, titles, path, then):
-        env = yield script(
-            """
-            import fs, search
-            return [search.query(q=q, limit=1)[0]["title"] for q in QUERIES]
-        """,
-            QUERIES=queries[:10],
-        )
-        titles = titles + env["returned"]
-        env = yield from wait_until(env, max(ok_times(env, "search.query")) + 51)
-        env = yield script(
-            """
-            import fs, search
-            titles = TITLES + [search.query(q=q, limit=1)[0]["title"] for q in REST]
-            fs.write(path=PATH, content=("\\n".join(titles) + "\\n").encode())
-        """
-            + then,
-            TITLES=titles,
-            REST=queries[10:],
-            PATH=path,
-        )
-        return env
-
+    env = yield script("""
+        import fs, search
+        queries = [q for q in fs.read(path="/q/early.txt").decode().splitlines() if q]
+        titles = [search.query(q=q, limit=50)[0]["title"] for q in queries]
+        fs.write(path="/out/early.md", content=("\\n".join(titles) + "\\n").encode())
+    """)
+    last = max(ok_times(env, "search.query"))
     env = yield script("""
         import fs
-        return [q for q in fs.read(path="/q/early.txt").decode().splitlines() if q]
+        for src in fs.list(prefix="/incoming/"):
+            dst = "/sorted/" + src[len("/incoming/"):]
+            fs.move(src=src, dst=dst)
+            fs.lock(path=dst)
+        return [q for q in fs.read(path="/q/late.txt").decode().splitlines() if q]
     """)
-    then = """
-            for src in fs.list(prefix="/incoming/"):
-                dst = "/sorted/" + src[len("/incoming/"):]
-                fs.move(src=src, dst=dst)
-                fs.lock(path=dst)
-            return [q for q in fs.read(path="/q/late.txt").decode().splitlines() if q]
-    """
-    env = yield from batch(env, env["returned"], [], "/out/early.md", then)
     late = env["returned"]
+    env = yield from wait_until(env, last + 51)
+    env = yield script(
+        """
+        import search
+        return [search.query(q=q, limit=50)[0]["title"] for q in QUERIES]
+    """,
+        QUERIES=late[:10],
+    )
+    titles = env["returned"]
     env = yield from wait_until(env, max(ok_times(env, "search.query")) + 51)
-    env = yield from batch(env, late, [], "/out/late.md", "")
+    env = yield script(
+        """
+        import fs, search
+        titles = TITLES + [search.query(q=q, limit=50)[0]["title"] for q in REST]
+        fs.write(path="/out/late.md", content=("\\n".join(titles) + "\\n").encode())
+    """,
+        TITLES=titles,
+        REST=late[10:],
+    )
+
+
+def t048_witness():
+    """A first batch asking for more hits than the service allows: LIMIT at precondition 2."""
+    yield script("""
+        import search
+        search.query(q="river deltas", limit=100)
+    """)
+
+
+def t048_limit_one():
+    """The reference with limit=1 everywhere: the titles are right, the pinned limit is not."""
+    env = yield script("""
+        import fs, search
+        queries = [q for q in fs.read(path="/q/early.txt").decode().splitlines() if q]
+        titles = [search.query(q=q, limit=1)[0]["title"] for q in queries]
+        fs.write(path="/out/early.md", content=("\\n".join(titles) + "\\n").encode())
+    """)
+    last = max(ok_times(env, "search.query"))
+    env = yield script("""
+        import fs
+        for src in fs.list(prefix="/incoming/"):
+            dst = "/sorted/" + src[len("/incoming/"):]
+            fs.move(src=src, dst=dst)
+            fs.lock(path=dst)
+        return [q for q in fs.read(path="/q/late.txt").decode().splitlines() if q]
+    """)
+    late = env["returned"]
+    env = yield from wait_until(env, last + 51)
+    env = yield script(
+        """
+        import search
+        return [search.query(q=q, limit=1)[0]["title"] for q in QUERIES]
+    """,
+        QUERIES=late[:10],
+    )
+    titles = env["returned"]
+    env = yield from wait_until(env, max(ok_times(env, "search.query")) + 51)
+    env = yield script(
+        """
+        import fs, search
+        titles = TITLES + [search.query(q=q, limit=1)[0]["title"] for q in REST]
+        fs.write(path="/out/late.md", content=("\\n".join(titles) + "\\n").encode())
+    """,
+        TITLES=titles,
+        REST=late[10:],
+    )
 
 
 # t049 jobs.submit[2]:LIMIT ---------------------------------------------------------------------
@@ -428,45 +548,100 @@ def t050_success(state, ledger):
 
 
 def t050_turns():
-    yield script("""
+    page = """
         import fs, kv
         def publish_page(name):
             content = fs.read(path="/drafts/" + name + ".html")
             fs.unlock(path="/site/" + name + ".html")
             fs.write(path="/site/" + name + ".html", content=content)
             fs.lock(path="/site/" + name + ".html")
+    """
+    yield script(
+        page
+        + """
         publish_page("home")
+    """
+    )
+    yield script("""
+        import fs, kv
         for path in fs.list(prefix="/docs/"):
             kv.set(ns="sizes", key=path, value=str(fs.size(path=path)).encode())
+    """)
+    yield script(
+        page
+        + """
         publish_page("about")
         publish_page("contact")
-    """)
+    """
+    )
 
 
 # t051 fs.lock[2]:CONFLICT ----------------------------------------------------------------------
 def t051_success(state, ledger):
     legal = [f"/legal/l{i}.pdf" for i in range(1, 6)]
     finance = [f"/finance/f{i}.xls" for i in range(1, 7)]
-    memos = [f"/memos/m{i:02d}.txt" for i in range(1, 11)]
+    memos = {f"/memos/m{i:02d}.txt": f"memo {i}\n" for i in range(1, 11)}
     return (
         all(c.is_locked(state, p) for p in legal + finance)
-        and all(c.kv_get(state, "memos", p) == c.file_text(state, p) for p in memos)
+        and all(c.file_text(state, p) == text for p, text in memos.items())
+        and all(c.kv_get(state, "memos", p) == text for p, text in memos.items())
         and c.brackets(ledger, "fs.lock", "kv.set")
     )
 
 
 def t051_turns():
-    yield script("""
-        import fs, kv
+    lock_all = """
+        import fs
         def lock_all(prefix):
             for path in fs.list(prefix=prefix):
                 if not fs.locked(path=path):
                     fs.lock(path=path)
+    """
+    yield script(
+        lock_all
+        + """
         lock_all("/legal/")
+    """
+    )
+    yield script("""
+        import fs, kv
         for path in fs.list(prefix="/memos/"):
             kv.set(ns="memos", key=path, value=fs.read(path=path))
-        lock_all("/finance/")
     """)
+    yield script(
+        lock_all
+        + """
+        lock_all("/finance/")
+    """
+    )
+
+
+def t051_memos_dropped():
+    lock_all = """
+        import fs
+        def lock_all(prefix):
+            for path in fs.list(prefix=prefix):
+                if not fs.locked(path=path):
+                    fs.lock(path=path)
+    """
+    yield script(
+        lock_all
+        + """
+        lock_all("/legal/")
+    """
+    )
+    yield script("""
+        import fs, kv
+        kv.set(ns="scratch", key="started", value=b"1")
+        for path in fs.list(prefix="/memos/"):
+            fs.delete(path=path)
+    """)
+    yield script(
+        lock_all
+        + """
+        lock_all("/finance/")
+    """
+    )
 
 
 # t052 jobs.result[2]:CONFLICT ------------------------------------------------------------------
@@ -513,19 +688,31 @@ def t053_success(state, ledger):
 
 
 def t053_turns():
-    yield script("""
-        import fs, kv
+    purge = """
+        import fs
         def purge(names):
             for name in names:
                 fs.unlock(path="/queue/" + name)
                 fs.delete(path="/queue/" + name)
+    """
+    yield script(
+        purge
+        + """
         purge(["stale-1.job", "stale-2.job"])
-        kv_del = kv.del_
+    """
+    )
+    yield script("""
+        import kv
         for key in kv.keys(ns="jobs-v1"):
             kv.set(ns="jobs-v2", key=key, value=kv.get(ns="jobs-v1", key=key))
-            kv_del(ns="jobs-v1", key=key)
-        purge(["stale-3.job", "stale-4.job"])
+            kv.del_(ns="jobs-v1", key=key)
     """)
+    yield script(
+        purge
+        + """
+        purge(["stale-3.job", "stale-4.job"])
+    """
+    )
 
 
 # t054 jobs.cancel[2]:CONFLICT ------------------------------------------------------------------
@@ -545,18 +732,31 @@ def t054_success(state, ledger):
 
 
 def t054_turns():
-    yield script("""
-        import fs, jobs
+    cancel = """
+        import jobs
         def cancel_unfinished(ids):
             for job in ids:
                 if jobs.status(id=job) in ["queued", "running"]:
                     jobs.cancel(id=job)
+    """
+    yield script(
+        cancel
+        + """
         cancel_unfinished(["w1", "w2", "w3"])
+    """
+    )
+    yield script("""
+        import fs
         for path in fs.list(prefix="/minutes/"):
             fs.write(path="/minutes-public/" + path[len("/minutes/"):],
                      content=b"PUBLIC\\n" + fs.read(path=path))
-        cancel_unfinished(["z1", "z2", "z3", "z4"])
     """)
+    yield script(
+        cancel
+        + """
+        cancel_unfinished(["z1", "z2", "z3", "z4"])
+    """
+    )
 
 
 # t055 inbox digest (no reuse) ------------------------------------------------------------------
@@ -571,14 +771,21 @@ def t055_success(state, ledger):
         extra = text[len(original) :].splitlines()
         if len(extra) != 1 or not extra[0].startswith("top: "):
             return False
+        if len(c.called_with(ledger, "search.query", {"q": f"topic {i}", "limit": 1})) < 1:
+            return False
     for n in (1, 2, 3):
         key = f"digest-{n}"
+        body = "".join(f"m{i:02d}.txt\n" for i in range(5 * n - 4, 5 * n + 1))
+        post = {"key": key, "title": f"Digest {n}", "body": body}
         if not c.posted_ok(state, ledger, key) or c.kv_get(state, "digests", key) != c.receipt_id(
             state, key
         ):
             return False
+        if len(c.called_with(ledger, "publish.post", post)) < 1:
+            return False
     return (
-        c.ok_count(ledger, "search.query") >= 15
+        c.idempotency_keys(state) == ["digest-1", "digest-2", "digest-3"]
+        and c.ok_count(ledger, "publish.post") == 3
         and c.rate_limited_beyond_first(ledger, "publish.post") == 0
     )
 
@@ -619,6 +826,16 @@ def t055_turns():
     """,
         REST=rest,
     )
+
+
+def t055_extra_post():
+    yield from t055_turns()
+    for _ in range(11):  # past the publishing window, so the extra post is accepted
+        yield "pass"
+    yield script("""
+        import publish
+        publish.post(key="digest-4", title="Digest 4", body="none\\n")
+    """)
 
 
 # t056 kv migration (no reuse) ------------------------------------------------------------------
@@ -737,10 +954,13 @@ def t058_success(state, ledger):
         expected = f"<html><body>\n# {page}\n</body></html>\n"
         if c.file_text(state, path) != expected or not c.is_locked(state, path):
             return False
+    index = "".join(page + "\n" for page in pages)
+    post = {"key": "site-1", "title": "Site rebuilt", "body": index}
     return (
-        c.file_lines(state, "/site/index.html") == pages
+        c.file_text(state, "/site/index.html") == index
         and c.is_locked(state, "/site/index.html")
         and c.posted_ok(state, ledger, "site-1")
+        and len(c.called_with(ledger, "publish.post", post)) >= 1
         and c.kv_get(state, "receipts", "site-1") == c.receipt_id(state, "site-1")
     )
 
@@ -793,10 +1013,11 @@ def t059_success(state, ledger):
         lines = c.file_lines(state, "/catalogue/{}.md".format(topic.replace(" ", "-")))
         if lines is None or not 1 <= len(lines) <= 3:
             return False
+        if len(c.called_with(ledger, "search.query", {"q": topic, "limit": 3})) < 1:
+            return False
         expected.append(f"{topic}: {len(lines)}")
     return (
         c.file_lines(state, "/catalogue/README.md") == expected
-        and c.ok_count(ledger, "search.query") >= 20
         and c.rate_limited_beyond_first(ledger, "search.query") == 0
     )
 
@@ -850,10 +1071,16 @@ def t060_success(state, ledger):
         region_lines = c.file_lines(state, f"/report/{region}.md")
         if region_lines is None or not 1 <= len(region_lines) <= 3:
             return False
+        if len(c.called_with(ledger, "search.query", {"q": region, "limit": 3})) < 1:
+            return False
+    summary = "".join(line + "\n" for line in results + [f"{r}.md" for r in regions])
+    post = {"key": "report-q", "title": "Quarterly report", "body": summary}
     return (
         lines == results + [f"{r}.md" for r in regions]
+        and c.file_text(state, "/report/summary.md") == summary
         and c.is_locked(state, "/report/summary.md")
         and c.posted_ok(state, ledger, "report-q")
+        and len(c.called_with(ledger, "publish.post", post)) >= 1
         and c.kv_get(state, "receipts", "report-q") == c.receipt_id(state, "report-q")
     )
 
@@ -895,6 +1122,14 @@ def t060_turns():
 # ------------------------------------------------------------------------------------------------
 def files(mapping, locks=()):
     return {"fs": {"files": mapping, "locks": sorted(locks)}}
+
+
+def burst_text(group, i):
+    """A t046 post file; e2 and l3 open with a line longer than the 200-character title limit."""
+    head = f"{group.title()} {i}"
+    if (group, i) in (("early", 2), ("late", 3)):
+        head += ": " + " ".join(f"headline word {k}" for k in range(1, 21))
+    return f"{head}\n{group} body {i}\n"
 
 
 PEOPLE = [
@@ -948,8 +1183,6 @@ EARLY_Q = [
     "harpsichords",
     "permafrost",
     "falconry",
-    "paper making",
-    "terraces",
 ]
 LATE_Q = [
     "sundials",
@@ -978,7 +1211,7 @@ TASKS = [
         files(
             {f"/notes/n{i:02d}.txt": f"note {i:02d}: follow up on item {i}\n" for i in range(1, 13)}
         ),
-        ["jobs.result[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"],
+        ["jobs.result[2]:CONFLICT", "jobs.status[clock]"],
         t041_success,
         t041_turns,
         reused_rule="jobs.result[2]:CONFLICT",
@@ -1026,7 +1259,7 @@ TASKS = [
                 **{f"/data/d{i:02d}.txt": f"measurement {(i * 3)}\n" for i in range(1, 13)},
             }
         ),
-        ["fs.move[3]:CONFLICT", "fs.move[2]:LOCKED", "fs.delete[1]:NOT_FOUND"],
+        ["fs.move[3]:CONFLICT", "fs.delete[1]:NOT_FOUND"],
         t043_success,
         t043_turns,
         reused_rule="fs.move[3]:CONFLICT",
@@ -1048,7 +1281,7 @@ TASKS = [
                 },
             }
         ),
-        ["kv.set[1]:INVALID", "fs.write[1]:LOCKED"],
+        ["kv.set[1]:INVALID"],
         t044_success,
         t044_turns,
         reused_rule="kv.set[1]:INVALID",
@@ -1077,7 +1310,7 @@ TASKS = [
                 }
             },
         },
-        ["kv.set[2]:LIMIT", "kv.del[1]:NOT_FOUND", "fs.write[1]:LOCKED"],
+        ["kv.set[2]:LIMIT", "kv.del[1]:NOT_FOUND"],
         t045_success,
         t045_turns,
         reused_rule="kv.set[2]:LIMIT",
@@ -1087,21 +1320,22 @@ TASKS = [
         "long",
         "Two publishing bursts around backups",
         "Do these steps in order. First publish each file under /early as a post whose title is "
-        "the file's first line and whose body is the whole file, using the file name without "
-        ".txt as the idempotency key. Then, for every file under /pages, write a backup copy "
+        "the file's first line, cut to the longest title the publishing service accepts when the "
+        "line is longer, and whose body is the whole file, using the file name without .txt as "
+        "the idempotency key. Then, for every file under /pages, write a backup copy "
         "next to it with .bak appended to its name. Finally publish each file under /late in the "
         "same way as the early ones.",
         files(
             {
-                **{f"/early/e{i}.txt": f"Early {i}\nearly body {i}\n" for i in range(1, 5)},
-                **{f"/late/l{i}.txt": f"Late {i}\nlate body {i}\n" for i in range(1, 5)},
+                **{f"/early/e{i}.txt": burst_text("early", i) for i in range(1, 5)},
+                **{f"/late/l{i}.txt": burst_text("late", i) for i in range(1, 5)},
                 **{f"/pages/p{i:02d}.txt": f"page {i}\n" for i in range(1, 11)},
             }
         ),
-        ["publish.post[rate]:RATE_LIMITED", "publish.post[key]:DUPLICATE_KEY"],
+        ["publish.post[1]:INVALID", "publish.post[key]:DUPLICATE_KEY"],
         t046_success,
         t046_turns,
-        reused_rule="publish.post[rate]:RATE_LIMITED",
+        reused_rule="publish.post[1]:INVALID",
     ),
     Task(
         "t047-key-twice",
@@ -1109,11 +1343,12 @@ TASKS = [
         "Two documents in two versions",
         "Do these steps in order. First publish /drafts/plan-v1.txt as a post titled Plan under "
         "the idempotency key plan, then publish the corrected /drafts/plan-v2.txt as a post "
-        "titled Plan as well; both versions must stay published. Store the receipt ids in kv "
-        "namespace receipts under plan-v1 and plan-v2. Then copy every file under /minutes to "
-        "/minutes-archive with the same name. Finally do the same for /drafts/budget-v1.txt and "
-        "/drafts/budget-v2.txt with the title Budget, the key budget for the first version, and "
-        "receipts stored under budget-v1 and budget-v2.",
+        "titled Plan as well under the idempotency key plan-v2; both versions must stay "
+        "published, and each post's body is the exact content of its file. Store the receipt "
+        "ids in kv namespace receipts under plan-v1 and plan-v2. Then copy every file under "
+        "/minutes to /minutes-archive with the same name. Finally do the same for "
+        "/drafts/budget-v1.txt and /drafts/budget-v2.txt with the title Budget, the keys budget "
+        "and budget-v2, and receipts stored under budget-v1 and budget-v2.",
         files(
             {
                 **{
@@ -1124,7 +1359,7 @@ TASKS = [
                 **{f"/minutes/m{i:02d}.txt": f"minutes {i}\n" for i in range(1, 11)},
             }
         ),
-        ["publish.post[key]:DUPLICATE_KEY", "publish.post[rate]:RATE_LIMITED"],
+        ["publish.post[key]:DUPLICATE_KEY"],
         t047_success,
         t047_turns,
         reused_rule="publish.post[key]:DUPLICATE_KEY",
@@ -1133,9 +1368,9 @@ TASKS = [
         "t048-search-twice",
         "long",
         "Two search batches around a filing run",
-        "Do these steps in order. First run every query in /q/early.txt (one per line) with a "
-        "limit of one result and write the title of each top hit, one per line in query order, "
-        "to /out/early.md. Then move every file under /incoming to /sorted with the same name "
+        "Do these steps in order. First run every query in /q/early.txt (one per line) with the "
+        "largest limit the search service accepts and write the title of each top hit, one per "
+        "line in query order, to /out/early.md. Then move every file under /incoming to /sorted with the same name "
         "and lock it there. Finally do the same as the first step for /q/late.txt, writing "
         "/out/late.md.",
         files(
@@ -1145,10 +1380,14 @@ TASKS = [
                 **{f"/incoming/i{i:02d}.txt": f"incoming {i}\n" for i in range(1, 16)},
             }
         ),
-        ["search.query[rate]:RATE_LIMITED", "search.query[shape]", "fs.move[3]:CONFLICT"],
+        ["search.query[2]:LIMIT", "search.query[shape]"],
         t048_success,
         t048_turns,
-        reused_rule="search.query[rate]:RATE_LIMITED",
+        reused_rule="search.query[2]:LIMIT",
+        extra={
+            "witness": {"search.query[2]:LIMIT": t048_witness},
+            "near_misses": {"limit-one": t048_limit_one},
+        },
     ),
     Task(
         "t049-slots-twice",
@@ -1193,7 +1432,7 @@ TASKS = [
             },
             ["/site/home.html", "/site/about.html", "/site/contact.html"],
         ),
-        ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT", "kv.set[1]:INVALID"],
+        ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT"],
         t050_success,
         t050_turns,
         reused_rule="fs.write[1]:LOCKED",
@@ -1219,10 +1458,11 @@ TASKS = [
                 "/finance/f6.xls",
             ],
         ),
-        ["fs.lock[2]:CONFLICT", "fs.unlock[1]:NOT_FOUND", "kv.set[1]:INVALID"],
+        ["fs.lock[2]:CONFLICT", "fs.unlock[1]:NOT_FOUND"],
         t051_success,
         t051_turns,
         reused_rule="fs.lock[2]:CONFLICT",
+        extra={"near_misses": {"memos-dropped": t051_memos_dropped}},
     ),
     Task(
         "t052-collect-twice",
@@ -1242,7 +1482,7 @@ TASKS = [
                 }
             },
         },
-        ["jobs.result[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"],
+        ["jobs.result[2]:CONFLICT", "jobs.status[clock]"],
         t052_success,
         t052_turns,
         reused_rule="jobs.result[2]:CONFLICT",
@@ -1293,7 +1533,7 @@ TASKS = [
                 }
             },
         },
-        ["jobs.cancel[2]:CONFLICT", "jobs.status[clock]", "fs.write[1]:LOCKED"],
+        ["jobs.cancel[2]:CONFLICT", "jobs.status[clock]"],
         t054_success,
         t054_turns,
         reused_rule="jobs.cancel[2]:CONFLICT",
@@ -1302,21 +1542,18 @@ TASKS = [
         "t055-inbox-digest",
         "long",
         "Enrich and digest an inbox",
-        "For every file in /inbox, in path order: search for its first line with a limit of one "
-        "result, append a line top: <title of the top hit> to the file, and move it to /done "
-        "under the same name. After every fifth file moved, publish a digest post titled Digest "
-        "N (N = 1, 2, 3) whose body lists the names of those five files, one per line, using the "
-        "idempotency key digest-N, and store its receipt id in kv namespace digests under "
-        "digest-N.",
+        "For every file in /inbox, in path order: search for its first line with a limit of 1 "
+        "result, append a line top: <title of the top hit> to the file (top: (none) when there "
+        "is no hit), and move it to /done under the same name. After every fifth file moved, "
+        "publish a digest post titled Digest N (N = 1, 2, 3) whose body is the names of those "
+        "five files (for example m01.txt), each followed by a newline, using the idempotency key "
+        "digest-N, and store its receipt id in kv namespace digests under digest-N. Publish no "
+        "other post.",
         files({f"/inbox/m{i:02d}.txt": f"topic {i}\nbody of message {i}\n" for i in range(1, 16)}),
-        [
-            "search.query[rate]:RATE_LIMITED",
-            "fs.move[3]:CONFLICT",
-            "publish.post[rate]:RATE_LIMITED",
-            "publish.post[key]:DUPLICATE_KEY",
-        ],
+        ["search.query[shape]", "publish.post[key]:DUPLICATE_KEY"],
         t055_success,
         t055_turns,
+        extra={"near_misses": {"extra-post": t055_extra_post}},
     ),
     Task(
         "t056-kv-v2-migration",
@@ -1332,7 +1569,7 @@ TASKS = [
                 }
             }
         },
-        ["kv.get[1]:NOT_FOUND", "kv.del[1]:NOT_FOUND", "kv.set[1]:INVALID"],
+        ["kv.get[1]:NOT_FOUND", "kv.del[1]:NOT_FOUND"],
         t056_success,
         t056_turns,
     ),
@@ -1354,10 +1591,10 @@ TASKS = [
         "Build and announce a site",
         "For every file /src/pages/NAME.md, write /site/NAME.html consisting of the line "
         "<html><body>, then the markdown content, then the line </body></html>, and lock it. "
-        "Then write /site/index.html listing the page names (NAME), one per line, sorted, and "
-        "lock it too. Finally publish a post titled Site rebuilt under the idempotency key "
-        "site-1 whose body is the index content, and store the receipt id in kv namespace "
-        "receipts under site-1.",
+        "Then write /site/index.html listing the page names (NAME), sorted, each followed by a "
+        "newline, and lock it too. Finally publish a post titled Site rebuilt under the "
+        "idempotency key site-1 whose body is the exact content of /site/index.html, and store "
+        "the receipt id in kv namespace receipts under site-1.",
         files(
             {
                 **{f"/src/pages/{p}.md": f"# {p}\n" for p in PAGES},
@@ -1379,7 +1616,7 @@ TASKS = [
         "with one line <topic>: <number of titles written> per topic, in the order of "
         "/topics.txt.",
         files({"/topics.txt": "\n".join(CATALOGUE) + "\n"}),
-        ["search.query[rate]:RATE_LIMITED", "search.query[shape]", "search.query[2]:LIMIT"],
+        ["search.query[shape]"],
         t059_success,
         t059_turns,
     ),
@@ -1392,10 +1629,10 @@ TASKS = [
         "limit of three results and write the result titles, one per line, to "
         "/report/<region>.md. When all four jobs are done, write /report/summary.md with one line "
         "stats-<n>=<result> per job in the order of n, followed by the eight region file names "
-        "(for example north.md) in the order given above, one per line. Lock it, publish it as "
-        "a post titled Quarterly report under the idempotency key report-q, store the receipt "
-        "id in kv namespace receipts under report-q, and store each job result in kv namespace "
-        "stats under stats-<n>.",
+        "(for example north.md) in the order given above, each line followed by a newline. Lock "
+        "it, publish its exact content as the body of a post titled Quarterly report under the "
+        "idempotency key report-q, store the receipt id in kv namespace receipts under report-q, "
+        "and store each job result in kv namespace stats under stats-<n>.",
         {},
         [
             "jobs.result[2]:CONFLICT",

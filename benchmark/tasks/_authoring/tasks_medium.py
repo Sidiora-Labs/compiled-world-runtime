@@ -11,6 +11,8 @@ def t021_success(state, ledger):
     golf = c.file_lines(state, "/reports/golf.md")
     tennis = c.file_lines(state, "/reports/tennis.md")
     sports = c.file_lines(state, "/reports/sports.md")
+    body = c.file_text(state, "/reports/sports.md")
+    post = {"key": "sports-1", "title": "Sports roundup", "body": body}
     return (
         golf is not None
         and tennis is not None
@@ -20,7 +22,10 @@ def t021_success(state, ledger):
         and c.is_locked(state, "/reports/sports.md")
         and c.posted_ok(state, ledger, "sports-1")
         and c.kv_get(state, "receipts", "sports-1") == c.receipt_id(state, "sports-1")
-        and c.ok_count(ledger, "search.query") >= 2
+        and len(c.called_with(ledger, "search.query", {"q": "golf", "limit": 3})) >= 1
+        and len(c.called_with(ledger, "search.query", {"q": "tennis", "limit": 3})) >= 1
+        and body is not None
+        and len(c.called_with(ledger, "publish.post", post)) >= 1
     )
 
 
@@ -39,16 +44,33 @@ def t021_turns():
     """)
 
 
+def t021_body_without_newline():
+    yield script("""
+        import fs, kv, search, publish
+        golf = [h["title"] for h in search.query(q="golf", limit=3)]
+        tennis = [h["title"] for h in search.query(q="tennis", limit=3)]
+        fs.write(path="/reports/golf.md", content=("\\n".join(golf) + "\\n").encode())
+        fs.write(path="/reports/tennis.md", content=("\\n".join(tennis) + "\\n").encode())
+        body = "\\n".join(golf + tennis) + "\\n"
+        fs.write(path="/reports/sports.md", content=body.encode())
+        fs.lock(path="/reports/sports.md")
+        receipt = publish.post(key="sports-1", title="Sports roundup", body=body.strip())
+        kv.set(ns="receipts", key="sports-1", value=receipt["id"].encode())
+    """)
+
+
 # t022 ------------------------------------------------------------------------------------------
 def t022_success(state, ledger):
-    by_id = {c.receipt_id(state, k): k for k in c.idempotency_keys(state)}
-    keys = []
     for name in ["notice-v1", "notice-v2", "notice-v3"]:
-        value = c.kv_get(state, "receipts", name)
-        if value not in by_id or not c.posted_ok(state, ledger, by_id[value]):
+        body = c.file_text(state, "/posts/" + name + ".txt")
+        post = {"key": name, "title": "Maintenance notice", "body": body}
+        if body is None or not c.posted_ok(state, ledger, name):
             return False
-        keys.append(by_id[value])
-    return len(set(keys)) == 3 and c.ok_count(ledger, "publish.delete") == 0
+        if c.kv_get(state, "receipts", name) != c.receipt_id(state, name):
+            return False
+        if len(c.called_with(ledger, "publish.post", post)) < 1:
+            return False
+    return c.ok_count(ledger, "publish.delete") == 0
 
 
 def t022_turns():
@@ -57,6 +79,16 @@ def t022_turns():
         for v in ["v1", "v2", "v3"]:
             body = fs.read(path="/posts/notice-" + v + ".txt").decode()
             receipt = publish.post(key="notice-" + v, title="Maintenance notice", body=body)
+            kv.set(ns="receipts", key="notice-" + v, value=receipt["id"].encode())
+    """)
+
+
+def t022_other_keys():
+    yield script("""
+        import fs, kv, publish
+        for v in ["v1", "v2", "v3"]:
+            body = fs.read(path="/posts/notice-" + v + ".txt").decode()
+            receipt = publish.post(key="notice-" + v + "-x", title="Maintenance notice", body=body)
             kv.set(ns="receipts", key="notice-" + v, value=receipt["id"].encode())
     """)
 
@@ -224,13 +256,13 @@ def t028_turns():
 def t029_success(state, ledger):
     topics = ["chess openings", "tide tables", "sourdough", "bike repair", "jazz", "orbits"]
     names = [t.replace(" ", "-") + ".md" for t in topics]
-    for name in names:
+    for topic, name in zip(topics, names, strict=True):
         lines = c.file_lines(state, "/digest/" + name)
         if lines is None or not 1 <= len(lines) <= 5:
             return False
-    return (
-        c.file_lines(state, "/digest/index.md") == names and c.ok_count(ledger, "search.query") >= 6
-    )
+        if len(c.called_with(ledger, "search.query", {"q": topic, "limit": 5})) < 1:
+            return False
+    return c.file_lines(state, "/digest/index.md") == names
 
 
 def t029_turns():
@@ -251,11 +283,28 @@ def t029_turns():
 
 # t030 ------------------------------------------------------------------------------------------
 def t030_success(state, ledger):
+    queries = [
+        "mountain huts",
+        "rust borrow checker",
+        "fermentation",
+        "kite surfing",
+        "lichens",
+        "tram networks",
+        "ceramics glazes",
+        "solar sails",
+        "origami",
+        "beekeeping",
+        "glacier retreat",
+        "typesetting",
+    ]
     lines = c.file_lines(state, "/sweep/top.md")
+    searched = all(
+        len(c.called_with(ledger, "search.query", {"q": q, "limit": 2})) >= 1 for q in queries
+    )
     return (
         lines is not None
         and len(lines) == 12
-        and c.ok_count(ledger, "search.query") >= 12
+        and searched
         and c.rate_limited_beyond_first(ledger, "search.query") == 0
     )
 
@@ -439,14 +488,22 @@ def t035_turns():
 def t036_success(state, ledger):
     if not all(c.posted_ok(state, ledger, k) for k in ["a", "b", "c"]):
         return False
-    deletes = c.calls(ledger, "publish.delete", status="ok")
+    ids = {k: c.receipt_id(state, k) for k in ["a", "b", "c"]}
+    deleted = {
+        k: c.called_with(ledger, "publish.delete", {"post_id": ids[k]})
+        for k in ids
+        if isinstance(ids[k], str)
+    }
     b_seq = c.idempotency_entry_seq(state, "b")
     return (
-        len(deletes) >= 1
+        len(deleted) == 3
+        and len(deleted["b"]) >= 1
         and b_seq is not None
-        and deletes[0]["seq"] > b_seq
-        and c.kv_get(state, "receipts", "a") == c.receipt_id(state, "a")
-        and c.kv_get(state, "receipts", "c") == c.receipt_id(state, "c")
+        and deleted["b"][0]["seq"] > b_seq
+        and deleted["a"] == []
+        and deleted["c"] == []
+        and c.kv_get(state, "receipts", "a") == ids["a"]
+        and c.kv_get(state, "receipts", "c") == ids["c"]
         and not c.kv_has(state, "receipts", "b")
     )
 
@@ -459,6 +516,19 @@ def t036_turns():
             body = fs.read(path="/outbox/" + name + ".txt").decode()
             receipts[name] = publish.post(key=name, title=name + ".txt", body=body)["id"]
         publish.delete(post_id=receipts["b"])
+        kv.set(ns="receipts", key="a", value=receipts["a"].encode())
+        kv.set(ns="receipts", key="c", value=receipts["c"].encode())
+    """)
+
+
+def t036_delete_a():
+    yield script("""
+        import fs, kv, publish
+        receipts = {}
+        for name in ["a", "b", "c"]:
+            body = fs.read(path="/outbox/" + name + ".txt").decode()
+            receipts[name] = publish.post(key=name, title=name + ".txt", body=body)["id"]
+        publish.delete(post_id=receipts["a"])
         kv.set(ns="receipts", key="a", value=receipts["a"].encode())
         kv.set(ns="receipts", key="c", value=receipts["c"].encode())
     """)
@@ -581,20 +651,21 @@ TASKS = [
         "t021-sports-report",
         "medium",
         "Sports roundup",
-        "Search for golf and for tennis, three results each. Write the golf result titles to "
-        "/reports/golf.md and the tennis result titles to /reports/tennis.md, one title per "
-        "line, and both lists, golf first, to /reports/sports.md. Lock /reports/sports.md, "
-        "publish its content as the body of a post titled Sports roundup under the idempotency "
-        "key sports-1, and store the receipt id in kv namespace receipts under the key sports-1.",
+        "Search for golf and for tennis, each with a limit of 3 results. Write the golf result "
+        "titles to /reports/golf.md and the tennis result titles to /reports/tennis.md, and both "
+        "lists, golf first, to /reports/sports.md; in every file each title is followed by a "
+        "newline and nothing else is written. Lock /reports/sports.md, publish its exact content "
+        "as the body of a post titled Sports roundup under the idempotency key sports-1, and "
+        "store the receipt id in kv namespace receipts under the key sports-1.",
         {},
         [
             "search.query[shape]",
             "fs.lock[2]:CONFLICT",
             "publish.post[key]:DUPLICATE_KEY",
-            "kv.set[1]:INVALID",
         ],
         t021_success,
         t021_turns,
+        extra={"near_misses": {"body-without-newline": t021_body_without_newline}},
     ),
     Task(
         "t022-notice-versions",
@@ -602,8 +673,10 @@ TASKS = [
         "Publish three notice versions",
         "Three versions of a maintenance notice are in /posts/notice-v1.txt, /posts/notice-v2.txt "
         "and /posts/notice-v3.txt. Publish each version as its own post titled Maintenance notice "
-        "with the file content as the body, and store each receipt id in kv namespace receipts "
-        "under notice-v1, notice-v2 and notice-v3. All three posts must remain published.",
+        "with the exact file content as the body, using the file name without .txt (notice-v1, "
+        "notice-v2, notice-v3) as the idempotency key, and store each receipt id in kv namespace "
+        "receipts under notice-v1, notice-v2 and notice-v3. All three posts must remain "
+        "published.",
         {
             "fs": {
                 "files": {
@@ -613,9 +686,10 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["publish.post[key]:DUPLICATE_KEY", "publish.post[rate]:RATE_LIMITED"],
+        ["publish.post[key]:DUPLICATE_KEY"],
         t022_success,
         t022_turns,
+        extra={"near_misses": {"other-keys": t022_other_keys}},
     ),
     Task(
         "t023-batch-archive",
@@ -644,7 +718,7 @@ TASKS = [
         "Run three jobs of kind render with n = 5, n = 12 and n = 20, and store their results "
         "in kv namespace results under render-5, render-12 and render-20.",
         {},
-        ["jobs.result[2]:CONFLICT", "jobs.submit[1]:INVALID"],
+        ["jobs.result[2]:CONFLICT"],
         t024_success,
         t024_turns,
     ),
@@ -697,7 +771,7 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["publish.post[rate]:RATE_LIMITED", "publish.post[key]:DUPLICATE_KEY"],
+        ["publish.post[key]:DUPLICATE_KEY"],
         t027_success,
         t027_turns,
     ),
@@ -721,7 +795,7 @@ TASKS = [
         "t029-topic-digest",
         "medium",
         "Topic digest",
-        "For each topic listed in /topics.txt (one per line), search for it with at most five "
+        "For each topic listed in /topics.txt (one per line), search for it with a limit of 5 "
         "results and write the result titles, one per line, to /digest/<topic>.md, where <topic> "
         "is the topic with spaces replaced by hyphens. Then write /digest/index.md listing those "
         "file names (for example jazz.md), one per line, in the order of /topics.txt.",
@@ -746,7 +820,7 @@ TASKS = [
         "the title of the top hit of each, one per line in the same order as the queries, to "
         "/sweep/top.md.",
         {"fs": {"files": {"/queries.txt": "\n".join(QUERIES) + "\n"}, "locks": []}},
-        ["search.query[rate]:RATE_LIMITED", "search.query[shape]"],
+        ["search.query[shape]"],
         t030_success,
         t030_turns,
     ),
@@ -802,7 +876,7 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["fs.size[1]:NOT_FOUND", "kv.set[1]:INVALID"],
+        ["fs.size[1]:NOT_FOUND"],
         t033_success,
         t033_turns,
     ),
@@ -824,7 +898,7 @@ TASKS = [
                 "locks": ["/config/app.ini"],
             }
         },
-        ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT", "kv.set[1]:INVALID"],
+        ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT"],
         t034_success,
         t034_turns,
     ),
@@ -861,9 +935,10 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["publish.post[key]:DUPLICATE_KEY", "publish.post[1]:INVALID", "kv.del[1]:NOT_FOUND"],
+        ["publish.post[key]:DUPLICATE_KEY", "kv.del[1]:NOT_FOUND"],
         t036_success,
         t036_turns,
+        extra={"near_misses": {"delete-a": t036_delete_a}},
     ),
     Task(
         "t037-copy-tree",
@@ -937,7 +1012,7 @@ TASKS = [
                 "locks": [],
             }
         },
-        ["world.random[stream]", "kv.set[1]:INVALID"],
+        ["world.random[stream]", "fs.read[1]:NOT_FOUND"],
         t040_success,
         t040_turns,
     ),

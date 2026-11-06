@@ -180,6 +180,11 @@ pub struct AdapterGateway {
     evidence: Option<Value>,
     /// Every call this gateway handled, in order.
     pub notes: Vec<CallNote>,
+    /// The turn's wall-clock deadline; no host exchange outlasts it.
+    turn_deadline: Option<std::time::Instant>,
+    /// The last send of the current call found no cassette entry (replay mode). The service never
+    /// saw the request, so a key adapter's slot is released rather than filled with UNAVAILABLE.
+    replay_miss: bool,
 }
 
 /// Service-traffic ordinals per (adapter, request hash) already in a ledger: the sequence the
@@ -272,7 +277,19 @@ impl AdapterGateway {
             ordinals,
             evidence: None,
             notes: Vec::new(),
+            turn_deadline: None,
+            replay_miss: false,
         })
+    }
+
+    /// The deadline of one host exchange: `timeout_ms` from now, but never past the turn's
+    /// wall-clock deadline.
+    fn exchange_deadline(&self, timeout_ms: u64) -> Deadline {
+        let d = Deadline::after_ms(timeout_ms);
+        match self.turn_deadline {
+            Some(t) => d.capped(t),
+            None => d,
+        }
     }
 
     /// The mode the gateway was opened in.
@@ -331,11 +348,15 @@ impl AdapterGateway {
         ev.insert("via".into(), json!("service"));
         ev.insert("seq".into(), json!(seq));
         let raw = match self.mode {
-            Mode::Replay => self
-                .cassette
-                .as_ref()
-                .and_then(|k| k.get(&c.name, &rh, seq))
-                .map(|e| e.response.clone()),
+            Mode::Replay => {
+                let found = self
+                    .cassette
+                    .as_ref()
+                    .and_then(|k| k.get(&c.name, &rh, seq))
+                    .map(|e| e.response.clone());
+                self.replay_miss = found.is_none();
+                found
+            }
             Mode::Live | Mode::Record => {
                 let endpoint = c.raw.get("endpoint").and_then(Value::as_str).unwrap_or("");
                 let timeout_ms = contract_timeout_ms(&c.raw).ok_or_else(|| {
@@ -355,7 +376,7 @@ impl AdapterGateway {
                             &target,
                             canonical_json(payload).as_bytes(),
                             &headers,
-                            &Deadline::after_ms(timeout_ms),
+                            &self.exchange_deadline(timeout_ms),
                         )
                     }
                 };
@@ -458,7 +479,10 @@ impl AdapterGateway {
         let mut sends = 0u32;
         let mut answer: Option<Normalised> = None;
         let mut send_error: Option<String> = None;
-        let budget = Duration::from_millis(contract_timeout_ms(&c.raw).unwrap_or(1000) + 5000);
+        let mut budget = Duration::from_millis(contract_timeout_ms(&c.raw).unwrap_or(1000) + 5000);
+        if let Some(t) = self.turn_deadline {
+            budget = budget.min(t.saturating_duration_since(std::time::Instant::now()));
+        }
         let reply = {
             let this = &mut *self;
             worker.request(&json!({"op": "call", "adapter": c.name, "args": args}), budget, &mut |cb| {
@@ -675,6 +699,7 @@ impl Gateway for AdapterGateway {
             }
         }
         // Steps 3 and 4: run, normalise, shape.
+        self.replay_miss = false;
         let mut outcome = self.run(c, &rules, &consts, pmap, world_time, &mut ev);
         if let GatewayOutcome::Ok(v) = &outcome {
             if check_shape(v, &c.returns, &self.records).is_err() || has_bad_tag(v) {
@@ -684,6 +709,9 @@ impl Gateway for AdapterGateway {
         // Step 5: store the first outcome, or release the key after a defect.
         if let Some((key, ph)) = key_slot {
             let r = match &outcome {
+                // A replay request with no cassette entry never reached the service: the key was
+                // not consumed, so the slot is released and a corrected call can still use it.
+                _ if self.replay_miss => self.store.clear(&c.name, &key),
                 GatewayOutcome::Ok(v) => {
                     self.store
                         .complete(&c.name, &key, &ph, &rh, &Stored::Ok(v.clone()))
@@ -723,6 +751,10 @@ impl Gateway for AdapterGateway {
         }
         self.evidence = Some(Value::Object(ev));
         outcome
+    }
+
+    fn set_deadline(&mut self, deadline: std::time::Instant) {
+        self.turn_deadline = Some(deadline);
     }
 
     fn evidence(&mut self) -> Option<Value> {

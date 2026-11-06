@@ -1,2 +1,1 @@
-publish.post[rate]:RATE_LIMITED
 publish.post[key]:DUPLICATE_KEY

@@ -45,3 +45,19 @@ def turns():
             receipt = publish.post(key="notice-" + v, title="Maintenance notice", body=body)
             kv.set(ns="receipts", key="notice-" + v, value=receipt["id"].encode())
     """)
+
+
+def near_miss_other_keys():
+    yield script("""
+        import fs, kv, publish
+        for v in ["v1", "v2", "v3"]:
+            body = fs.read(path="/posts/notice-" + v + ".txt").decode()
+            receipt = publish.post(key="notice-" + v + "-x", title="Maintenance notice", body=body)
+            kv.set(ns="receipts", key="notice-" + v, value=receipt["id"].encode())
+    """)
+
+
+# Near misses: each drops or changes one step; the predicate is false after each.
+NEAR_MISSES = {
+    "other-keys": near_miss_other_keys,
+}

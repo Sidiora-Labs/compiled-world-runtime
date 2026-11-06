@@ -1,2 +1,2 @@
 world.random[stream]
-fs.write[1]:LOCKED
+fs.read[1]:NOT_FOUND

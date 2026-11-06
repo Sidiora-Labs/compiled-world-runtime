@@ -3,4 +3,5 @@
 
 # Note the top tennis hit
 
-Write the title of the top search hit for "tennis", on a single line, to /notes/tennis.md.
+Search for "tennis" with a limit of 1 result and write the title of the top hit, on a single line,
+to /notes/tennis.md.

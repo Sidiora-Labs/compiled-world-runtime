@@ -57,7 +57,9 @@ that:
 
 - every turn ends `ok` with no failing call;
 - the predicate is true, evaluated twice on deep copies with equal results and unchanged inputs;
-- the predicate is false when nothing was done;
+- the predicate is false when nothing was done, on the reference cut before its last working turn,
+  and on every near miss the task declares (`NEAR_MISSES` in the solution file);
+- every listed rule is one the starting state can trigger (`unwitnessed_rules`);
 - primitive counts fall inside the bin and are equal across seeds;
 - a solution uses at most 200 turns;
 - rule-reuse tasks have the required shape.
@@ -92,9 +94,10 @@ it from the ledger with `common.brackets(ledger, reused_primitive, middle_primit
 middle primitive appears only in the middle phase.
 
 The reused rules are `jobs.result[2]:CONFLICT` (twice), `fs.delete[2]:LOCKED` (twice),
-`fs.move[3]:CONFLICT`, `kv.set[1]:INVALID`, `kv.set[2]:LIMIT`, `publish.post[rate]:RATE_LIMITED`,
-`publish.post[key]:DUPLICATE_KEY`, `search.query[rate]:RATE_LIMITED`, `jobs.submit[2]:LIMIT`,
-`fs.write[1]:LOCKED`, `fs.lock[2]:CONFLICT` and `jobs.cancel[2]:CONFLICT`.
+`fs.move[3]:CONFLICT`, `kv.set[1]:INVALID`, `kv.set[2]:LIMIT`, `publish.post[1]:INVALID`,
+`publish.post[key]:DUPLICATE_KEY`, `search.query[2]:LIMIT`, `jobs.submit[2]:LIMIT`,
+`fs.write[1]:LOCKED`, `fs.lock[2]:CONFLICT` and `jobs.cancel[2]:CONFLICT`. Each phase of a
+rule-reuse instruction is its own reference turn.
 
 ## Rule identifiers
 
@@ -104,7 +107,7 @@ A rule identifier has the form `<module>.<primitive>[<selector>][:<CODE>]` and i
 | Selector | Meaning |
 | --- | --- |
 | `[N]:CODE` | Declared precondition N (one-based, in catalogue order) failing with CODE. Only these rules can be targeted by a `--x-drift` Build. |
-| `[rate]:RATE_LIMITED` | The stub-side rate limit |
+| `[rate]:RATE_LIMITED` | The stub-side rate limit. No task lists one: replay mode does not enforce the stub limits, so the rule cannot fire in a campaign. |
 | `[key]:DUPLICATE_KEY` | Idempotency-key reuse at the adapter gateway |
 | `[shape]` | The interface shape guarantee |
 | `[clock]` | Job transitions on world time |
@@ -122,9 +125,13 @@ Predicates read the state view documented at the top of `common.py`:
 | `kv` | Namespaces |
 | `jobs` | Jobs, with `status` as of the final world time and `result` once done |
 | `world` | World time and turn |
-| `gateway` | `idempotency[adapter][key] = {receipt, payload_hash, seq}`, where `seq` is the ledger sequence number of the call that produced the receipt |
+| `gateway` | `idempotency[adapter][key] = {receipt, payload_hash, seq}`, where `seq` is the ledger sequence number of the service call that produced the stored outcome |
 
-Without the `gateway` section, every publish predicate fails closed. `cwr instance create --initial`
+Without the `gateway` section, every publish predicate fails closed. Adapter records carry the
+gateway's `request_hash`, so `common.called_with(ledger, adapter, params)` checks that a call used the
+parameters `task.md` pins (limits, keys, titles and exact bodies) without reading any parameter or
+payload. Replay answers only recorded requests, which is why every adapter task pins them. A
+predicate may use only the names in `common.PREDICATE_API`. `cwr instance create --initial`
 loads the state that `common.kernel_initial_state` derives from `initial.kvx`, and
 `common.state_view_from_instance` builds the view from `cwr instance state`, the ledger and the
 gateway key store (`common.read_key_store`) only. A job `result` is the value refworld's

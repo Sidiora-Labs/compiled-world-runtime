@@ -9,7 +9,8 @@
 # (`--freeze`). The notice texts keep {hash_a} and {hash_b}: the driver substitutes the hashes of
 # the Builds it compiles, because a hash changes with the compiler revision. This file is an
 # expectation, not evidence; evidence is the driver's run.
-# [pair.UN] is read by benchmark/analyse.py (task, changed_primitives, misuse_code, predicate).
+# [pair.UN] is read by benchmark/analyse.py (task, changed_primitives, misuse_code, misuse_scope,
+# predicate); misuse_scope is the argument of benchmark/harness/metrics.py post_upgrade_misuse_rate.
 
 [meta]
 format = "cwr.upgrades"
@@ -21,7 +22,7 @@ pairs = ["U1", "U2", "U3", "U4", "U5", "U6"]
 status = "authored; driven on the real compiler and kernel by tests/cwr/cases/4_3.py"
 driver = "tests/cwr/cases/4_3.py"
 hash_rule = "build_a and build_b are the hashes the driver observed at its last --freeze, each pair compiled into its own Build root with B built --previous A; they identify the compiler revision of that run and are recorded, not asserted."
-sandbox_refusals = "On the kernel as built, the U2 pre-upgrade call to the removed fs.move and the U5 pre-upgrade kv.get without ns are refused inside the sandbox before any RPC: the turn ends error INVALID with primitive turn.script and the exception naming the SDK function, and no primitive record names fs.move or kv.get. The driver attributes those failures by the exception text; a misuse rate that needs a ledger record naming the primitive is not computable for U2 and U5 until the SDK reports them as call records (README item 4)."
+sandbox_refusals = "On the kernel as built, the U2 pre-upgrade call to the removed fs.move and the U5 pre-upgrade kv.get without ns are refused inside the sandbox before any RPC: the turn ends error INVALID with primitive turn.script and the SDK's exception text, and no record names fs.move or kv.get. pre_failure freezes that observed record (detail_contains holds the exception text) and the driver compares it for equality. The post-upgrade misuse rate of U2 and U5 needs a ledger record naming the primitive, so it is not computable (misuse_scope not_computable; spec/cwr/qualification.kvx finding task_4_3_sandbox_refusal_misuse) until the SDK reports such calls as ledger call records."
 generator = "examples/refworld-upgrades/pairs.py"
 diff_layout = "spec/cwr/compiler.md section 5: entries sorted by target then field; kind null marks a params entry, for which world-source.md section 11 has no change kind"
 coverage_rule_params = "A params entry is covered by a state_shape change whose target is the primitive's module in the same release (the convention of examples/refworld 0.2.0 change kv_namespaces). Open for task 1.2."
@@ -54,6 +55,7 @@ misuse_code = "LOCKED"
 after_turn = 1
 model_visible_effect = "Before the upgrade fs.delete removes a locked file. After it, fs.delete on a locked path fails with LOCKED at precondition 2 and the manual lists 'not fs.locked(path) else LOCKED'; the model must call fs.unlock first. State is unchanged by the upgrade."
 misuse_definition = "An fs.delete record with code LOCKED after the upgrade record."
+misuse_scope = "call"
 
 [diff.U1]
 previous = "{hash_a}"
@@ -111,7 +113,8 @@ changed_primitives = ["fs.move"]
 misuse_code = "INVALID"
 after_turn = 1
 model_visible_effect = "After the upgrade fs.move is absent from the manual and the SDK; a call to it is a closure refusal (INVALID naming fs.move) and nothing executes. The model must rename with fs.read, fs.write and fs.delete. State is unchanged by the upgrade."
-misuse_definition = "A record naming fs.move with code INVALID after the upgrade record. Measurable only if the kernel records a closure refusal of an absent primitive as a ledger record naming it (open issue for tasks 2.2 and 2.5)."
+misuse_definition = "A record naming fs.move with code INVALID after the upgrade record. Not computable: the kernel refuses the call to the absent SDK function inside the sandbox (turn.script) and writes no record naming fs.move, so the misuse rate is reported as undefined, never 0."
+misuse_scope = "not_computable"
 
 [diff.U2]
 previous = "{hash_a}"
@@ -141,7 +144,7 @@ upgrade_after_turn = 1
 first_half = ["solutions/a1.py"]
 post_upgrade = ["solutions/post2.py"]
 pre_upgrade = ["solutions/pre2.py"]
-pre_failure = {"primitive": "fs.move", "code": "INVALID", "precondition": null}
+pre_failure = {"code": "INVALID", "detail_contains": "AttributeError: module 'fs' has no attribute 'move'", "precondition": null, "primitive": "turn.script"}
 reference_primitive_count = 11
 count_source = "kernel"
 post_success = true
@@ -169,7 +172,8 @@ changed_primitives = ["jobs.result"]
 misuse_code = "CONFLICT"
 after_turn = 2
 model_visible_effect = "Before the upgrade a not-done job's jobs.result fails with NOT_FOUND, so scripts catch NOT_FOUND as 'not ready'. After it the same call fails with CONFLICT; a handler that catches only NOT_FOUND lets the exception escape and the turn ends in error. State is unchanged by the upgrade."
-misuse_definition = "A jobs.result record with code CONFLICT after the upgrade record."
+misuse_definition = "A post-upgrade turn whose turn record ends in error with code CONFLICT and whose last call record is a jobs.result failing with CONFLICT: the old handler caught only NOT_FOUND and let the new not-ready code escape. A caught CONFLICT is the documented not-ready signal on Build B and is correct use."
+misuse_scope = "uncaught_turn"
 
 [diff.U3]
 previous = "{hash_a}"
@@ -228,6 +232,7 @@ misuse_code = "INVALID"
 after_turn = 1
 model_visible_effect = "After the upgrade a kv.set of a value between 513 and 1024 bytes fails with INVALID at precondition 1; values stored before the upgrade keep their length. The model must split at 512 bytes. State is unchanged by the upgrade."
 misuse_definition = "A kv.set record with code INVALID after the upgrade record."
+misuse_scope = "call"
 
 [diff.U4]
 previous = "{hash_a}"
@@ -286,7 +291,8 @@ misuse_code = "INVALID"
 misuse_secondary = {"primitive": "kv.get", "code": "NOT_FOUND"}
 after_turn = 1
 model_visible_effect = "The upgrade migrates every flat key into namespace default. After it every kv primitive takes ns first: an old-style kv.get(key=...) fails parameter validation with INVALID, and a guessed namespace such as receipts fails with NOT_FOUND at precondition 1. Only a model that reads the notice knows the old keys are under default."
-misuse_definition = "A record of any kv primitive with code INVALID after the upgrade record (old-style call without ns). A NOT_FOUND on kv.get with a guessed namespace is the secondary signature, recorded in misuse_secondary."
+misuse_definition = "A record of any kv primitive with code INVALID after the upgrade record (old-style call without ns). Not computable: the old-style call fails the SDK function signature inside the sandbox (turn.script) and writes no kv record, so the misuse rate is reported as undefined, never 0. A NOT_FOUND on kv.get with a guessed namespace is the secondary signature, recorded in misuse_secondary."
+misuse_scope = "not_computable"
 
 [diff.U5]
 previous = "{hash_a}"
@@ -316,7 +322,7 @@ upgrade_after_turn = 1
 first_half = ["solutions/a1.py"]
 post_upgrade = ["solutions/post2.py"]
 pre_upgrade = ["solutions/pre2.py"]
-pre_failure = {"primitive": "kv.get", "code": "INVALID", "precondition": null}
+pre_failure = {"code": "INVALID", "detail_contains": "TypeError: get() missing 1 required positional argument: 'ns'", "precondition": null, "primitive": "turn.script"}
 pre_upgrade_adapted = ["solutions/pre2_adapted.py"]
 pre_adapted_failure = {"primitive": "kv.get", "code": "NOT_FOUND", "precondition": 1}
 reference_primitive_count = 6
@@ -347,6 +353,7 @@ misuse_code = null
 after_turn = 1
 model_visible_effect = "No rule changes. The notice and the manual's fs.write entry change wording only; the pre-upgrade and post-upgrade solutions are identical and both succeed. This is the H4 notice-noise control."
 misuse_definition = "None: no call can fail differently after the upgrade."
+misuse_scope = "call"
 
 [diff.U6]
 previous = "{hash_a}"

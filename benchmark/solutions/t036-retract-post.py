@@ -48,3 +48,22 @@ def turns():
         kv.set(ns="receipts", key="a", value=receipts["a"].encode())
         kv.set(ns="receipts", key="c", value=receipts["c"].encode())
     """)
+
+
+def near_miss_delete_a():
+    yield script("""
+        import fs, kv, publish
+        receipts = {}
+        for name in ["a", "b", "c"]:
+            body = fs.read(path="/outbox/" + name + ".txt").decode()
+            receipts[name] = publish.post(key=name, title=name + ".txt", body=body)["id"]
+        publish.delete(post_id=receipts["a"])
+        kv.set(ns="receipts", key="a", value=receipts["a"].encode())
+        kv.set(ns="receipts", key="c", value=receipts["c"].encode())
+    """)
+
+
+# Near misses: each drops or changes one step; the predicate is false after each.
+NEAR_MISSES = {
+    "delete-a": near_miss_delete_a,
+}

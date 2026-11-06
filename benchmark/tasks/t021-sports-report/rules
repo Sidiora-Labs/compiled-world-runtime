@@ -1,4 +1,3 @@
 search.query[shape]
 fs.lock[2]:CONFLICT
 publish.post[key]:DUPLICATE_KEY
-kv.set[1]:INVALID

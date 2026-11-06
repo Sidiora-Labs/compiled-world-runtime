@@ -12,6 +12,8 @@ def success(state, ledger):
     golf = c.file_lines(state, "/reports/golf.md")
     tennis = c.file_lines(state, "/reports/tennis.md")
     sports = c.file_lines(state, "/reports/sports.md")
+    body = c.file_text(state, "/reports/sports.md")
+    post = {"key": "sports-1", "title": "Sports roundup", "body": body}
     return (
         golf is not None
         and tennis is not None
@@ -21,5 +23,8 @@ def success(state, ledger):
         and c.is_locked(state, "/reports/sports.md")
         and c.posted_ok(state, ledger, "sports-1")
         and c.kv_get(state, "receipts", "sports-1") == c.receipt_id(state, "sports-1")
-        and c.ok_count(ledger, "search.query") >= 2
+        and len(c.called_with(ledger, "search.query", {"q": "golf", "limit": 3})) >= 1
+        and len(c.called_with(ledger, "search.query", {"q": "tennis", "limit": 3})) >= 1
+        and body is not None
+        and len(c.called_with(ledger, "publish.post", post)) >= 1
     )

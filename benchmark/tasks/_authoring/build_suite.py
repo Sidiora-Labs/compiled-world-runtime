@@ -20,7 +20,9 @@ It writes, for every task defined in tasks_short.py, tasks_medium.py and tasks_l
 and checks with the authoring model in refsim.py (not the kernel) that every reference solution
 ends every turn ok with no failing call, satisfies its predicate twice with equal results, falls in
 its declared bin, keeps within 200 turns and the per-turn budgets, and that every predicate is false
-on a world where nothing was done. Rule-reuse tasks must place the reused primitive in the first
+on a world where nothing was done, on the reference cut before its last working turn, and on every
+near miss the task declares (task.extra["near_misses"], emitted into the solution file as
+NEAR_MISSES). Every listed rule must be one the starting state can trigger (unwitnessed_rules). Rule-reuse tasks must place the reused primitive in the first
 quarter, nowhere in the middle half, and again in the last quarter, at least ten calls apart.
 Every generated .kvx file is parsed with parse_kvx from spec/cwr/tools/validate_spec.py.
 """
@@ -133,6 +135,24 @@ def solution_py(task, count=None, turns=None, source="authoring-model") -> str:
         "kernel-ledger": "measured from kernel replay ledgers by tests/cwr/cases/4_2.py",
     }[source]
     stats = "" if count is None else f"PRIMITIVES = {count}  # {origin}\nTURNS = {turns}\n"
+    near = near_misses(task)
+    tail = ""
+    if near:
+        # A near miss may extend the reference; in the solution file the reference is turns().
+        tail = "".join(
+            "\n\n"
+            + extract(fn, f"near_miss_{label.replace('-', '_')}").replace(
+                f"{task.turns.__name__}()", "turns()"
+            )
+            for label, fn in near.items()
+        )
+        entries = "".join(
+            f'    "{label}": near_miss_{label.replace("-", "_")},\n' for label in near
+        )
+        tail += (
+            "\n\n# Near misses: each drops or changes one step; the predicate is false after each."
+            "\nNEAR_MISSES = {\n" + entries + "}\n"
+        )
     return (
         HEADER + f'"""Reference solution for {task.id} ({task.bin}). Never shown to the model.\n\n'
         "Protocol: turns() is a generator. The driver calls next() for the first turn script "
@@ -140,8 +160,55 @@ def solution_py(task, count=None, turns=None, source="authoring-model") -> str:
         "body of\nexactly one fenced python block; the driver wraps it in a ```python fence and "
         "submits it\nwith `cwr instance turn`. The helpers below run on the driver side only.\n"
         '"""\n\nimport textwrap\n\n'
-        f'TASK = "{task.id}"\n' + stats + "\n\n" + PREAMBLE + "\n\n" + extract(task.turns, "turns")
+        f'TASK = "{task.id}"\n'
+        + stats
+        + "\n\n"
+        + PREAMBLE
+        + "\n\n"
+        + extract(task.turns, "turns")
+        + tail
     )
+
+
+def near_misses(task) -> dict:
+    """Label to turns() generator of each mutated reference solution declared for ``task``."""
+    return dict(task.extra.get("near_misses", {}))
+
+
+def truncated(turns_factory, keep: int):
+    """The reference solution cut after its first ``keep`` turns (a missing final step)."""
+
+    def run():
+        gen = turns_factory()
+        script = next(gen)
+        for _ in range(keep - 1):
+            script = gen.send((yield script))
+        yield script
+
+    return run
+
+
+def recording(turns_factory, sink: list):
+    """``turns_factory`` with every yielded turn script appended to ``sink``."""
+
+    def run():
+        gen = turns_factory()
+        script = next(gen)
+        while True:
+            sink.append(script)
+            env = yield script
+            try:
+                script = gen.send(env)
+            except StopIteration:
+                return
+
+    return run
+
+
+def last_work_turn(scripts: list) -> int:
+    """Number of turns up to and excluding the last turn that does any work (not "pass")."""
+    work = [i for i, body in enumerate(scripts) if body.strip() != "pass"]
+    return work[-1] if len(work) >= 2 else 0
 
 
 def task_md(task) -> str:
@@ -213,6 +280,123 @@ def reuse_shape(positions, total):
     }
 
 
+# Size and range preconditions: a task lists one only when its data can break it.
+MAGNITUDE = {
+    ("fs.write", 2): ("content", 1048576),
+    ("kv.set", 1): ("value", 1024),
+    ("publish.post", 1): ("title", 200),
+    ("search.query", 2): ("limit", 50),
+    ("jobs.submit", 1): ("n", 1000),
+}
+
+
+def _starting_strings(task) -> list:
+    init = task.initial
+    files = list((init.get("fs") or {}).get("files", {}).values())
+    values = [
+        v for ns in ((init.get("kv") or {}).get("namespaces") or {}).values() for v in ns.values()
+    ]
+    return [v for v in files + values if isinstance(v, str)]
+
+
+def unwitnessed_rules(task, world) -> list:
+    """Rules of ``task`` that its starting state cannot trigger, with the reason.
+
+    A rule is kept only when the task can meet it (experiments.md section 8):
+
+    * ``[rate]`` rules are refused: the stub-side rate limits are not enforced in replay mode, so
+      no campaign can observe them (spec/cwr/qualification.kvx, finding
+      task_4_2_rate_limits_not_replayed).
+    * A lock rule (a precondition on ``fs.locked``) needs a lock in the starting state or an
+      ``fs.lock`` call in the reference solution.
+    * A move-target rule (``not fs.exists(dst)``) needs a reference move whose target exists in
+      the starting state.
+    * A size or range rule (``MAGNITUDE``) needs a reference call that breaks it when evaluated on
+      the starting state, or a starting file or kv value, or for titles a first line, past the
+      bound; ``jobs.submit[1]`` needs a reference call out of range.
+    * ``jobs.submit[2]:LIMIT`` needs more jobs active at tick 0 plus reference submissions than
+      the eight slots.
+    * Existence rules (NOT_FOUND) and job-status rules (CONFLICT on a job not yet done) are hazards
+      of naming and timing that every task touching the primitive meets; they are kept.
+
+    The re-evaluation on the starting state is the mutation that removes every guarding step
+    (unlock, delete, evict, chunk) the reference solution takes before the call.
+    """
+    start = refsim.World(task.initial, seed=1)
+    start._cat = start.catalogue()
+    calls = world.calls_made
+    locks = (task.initial.get("fs") or {}).get("locks") or []
+    problems = []
+    for rule in task.rules:
+        parts = common.parse_rule(rule)
+        primitive, selector = parts["primitive"], parts["selector"]
+        if selector == "rate":
+            problems.append(f"{rule}: rate limits are not enforced in replay mode")
+            continue
+        if not selector.isdigit():
+            continue
+        index = int(selector)
+        spec = start._cat.get(primitive)
+        if spec is None or index > len(spec["pre"]):
+            problems.append(f"{rule}: no precondition {index} on {primitive}")
+            continue
+        expr, code, check = spec["pre"][index - 1]
+        if code != parts["code"]:
+            problems.append(f"{rule}: precondition {index} of {primitive} fails with {code}")
+            continue
+        witness = task.extra.get("witness", {}).get(rule)
+        if witness is not None:
+            # A mutated solution that the instruction itself invites: it must fail exactly so.
+            mutated, _ = refsim.run_solution(task.initial, witness, seed=1)
+            fired = any(
+                r["primitive"] == primitive
+                and r["outcome"]["code"] == code
+                and any(p["index"] == index and not p["passed"] for p in r["preconditions"])
+                for r in common.calls(mutated.ledger, status="error")
+            )
+            if not fired:
+                problems.append(f"{rule}: the declared witness does not fail with {code}")
+            continue
+        mine = [params for name, params in calls if name == primitive]
+
+        def breaks_on_start(mine=mine, check=check):
+            for params in mine:
+                try:
+                    if not check(params):
+                        return True
+                except (KeyError, TypeError):
+                    continue
+            return False
+
+        if "fs.locked" in expr and expr.startswith("not "):
+            if not locks and not any(name == "fs.lock" for name, _ in calls):
+                problems.append(f"{rule}: nothing is locked at the start and nothing gets locked")
+        elif expr == "not fs.exists(dst)":
+            if not breaks_on_start():
+                problems.append(
+                    f"{rule}: no reference move targets a path that exists at the start"
+                )
+        elif (primitive, index) in MAGNITUDE:
+            field, bound = MAGNITUDE[(primitive, index)]
+            data = _starting_strings(task)
+            if field == "title":
+                data = [text.split("\n", 1)[0] for text in data]
+            by_data = field != "limit" and field != "n" and any(len(v) > bound for v in data)
+            if not breaks_on_start() and not by_data:
+                problems.append(f"{rule}: neither the data nor the reference calls exceed {expr}")
+        elif (primitive, index) == ("jobs.submit", 2):
+            active = sum(
+                1
+                for job in ((task.initial.get("jobs") or {}).get("jobs") or {}).values()
+                if job.get("cancelled_at") is None
+                and job.get("fail_at") is None
+                and job["submitted_at"] + job["n"] > 0
+            )
+            if active + len(mine) <= 8:
+                problems.append(f"{rule}: {active} active jobs and {len(mine)} submissions fit")
+    return problems
+
+
 def check_task(task, problems):
     rendered = render(task)
     for rule in task.rules:
@@ -227,17 +411,20 @@ def check_task(task, problems):
     if issues:
         problems.append(f"{task.id}: predicate audit: {issues}")
         return None
-    namespace = {"__builtins__": __builtins__}
+    # The predicate sees only the predicate API, as it does when loaded by common.load_predicate.
     predicate_ns = {}
     exec(
         compile(src.replace("import common as c", ""), "<success>", "exec"),
-        {"c": common, **namespace},
+        {"c": common.predicate_api(), "__builtins__": __builtins__},
         predicate_ns,
     )
     predicate = predicate_ns.get("success")
-    turns = load_turns(rendered[SOLUTIONS / f"{task.id}.py"])
+    scripts = []
+    turns = recording(load_turns(rendered[SOLUTIONS / f"{task.id}.py"]), scripts)
     world, envelopes = refsim.run_solution(task.initial, turns, seed=1, max_turns=MAX_TURNS)
     state, ledger = world.state_view(), world.ledger
+    for problem in unwitnessed_rules(task, world):
+        problems.append(f"{task.id}: rule {problem}")
     bad_turns = [e for e in envelopes if e["status"] != "ok"]
     if bad_turns:
         problems.append(f"{task.id}: reference turn not ok: {bad_turns[0]['error']}")
@@ -264,6 +451,17 @@ def check_task(task, problems):
     idle, _ = refsim.run_solution(task.initial, lambda: (yield "pass"), seed=1)
     if common.evaluate_twice(predicate, idle.state_view(), idle.ledger):
         problems.append(f"{task.id}: predicate true when nothing was done")
+    keep = last_work_turn(scripts)
+    if keep:
+        cut, _ = refsim.run_solution(
+            task.initial, truncated(load_turns(rendered[SOLUTIONS / f"{task.id}.py"]), keep), seed=1
+        )
+        if common.evaluate_twice(predicate, cut.state_view(), cut.ledger):
+            problems.append(f"{task.id}: predicate true without the last working turn")
+    for label, fn in near_misses(task).items():
+        mutated, _ = refsim.run_solution(task.initial, fn, seed=1, max_turns=MAX_TURNS)
+        if common.evaluate_twice(predicate, mutated.state_view(), mutated.ledger):
+            problems.append(f"{task.id}: predicate true on near miss {label}")
     reuse = None
     if task.reused_rule:
         if task.bin != "long":

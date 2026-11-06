@@ -47,9 +47,9 @@ max_tokens_per_turn = 16000
 token_budget_per_instance = null
 # Amended 2026-11-06 by task 5.2 before any H1 or H2 result: task 4.2 revised the suite after the
 # first registration; H1 and H2 run on a frozen copy of this suite (benchmark/campaigns/h1.kvx).
-suite_digest = "sha256:7c4f31a3d56a7218148b2212d97b9cdca450cf33c09653993b9053367ab244eb"
-cassette_digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
-upgrades_digest = "sha256:98b134b79674229a553fae5e798e82d5fcfb13a8adde7f308882dc4771305500"
+suite_digest = "sha256:21b81c446b254856196c794bfd9ae5c63fa874c9670f0cbfc0a5bf58e8cc5233"
+cassette_digest = "sha256:c4d99f432d3f4fe76a04e5b3d8fc3d2db0d50785d3acfdaaaa9d2013234418e9"
+upgrades_digest = "sha256:c747146352344d9af52f401682b853f06d1fb8ffe9d4daf2b9fc1f5ba10830bd"
 stop_rule = "stop after the first turn whose success predicate holds over the exported state and ledger, at the turn limit, on budget exhaustion, on a model error or on INVARIANT_VIOLATION"
 note = "Turn limits per bin follow verification.md section 3; turn_limit_max is the 200-turn cap of experiments.md section 2. No sampling parameter is sent unless [campaign].sampling names it."
 
@@ -195,3 +195,11 @@ primary = "post_upgrade_misuse_rate"
 secondary = ["turns_to_first_correct_use", "task_success", "proposals_after_upgrade"]
 directions = [{"id": "H4.misuse.changelog-vs-version-only", "metric": "post_upgrade_misuse_rate", "a": "changelog", "b": "version-only", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.misuse.version-only-vs-silent", "metric": "post_upgrade_misuse_rate", "a": "version-only", "b": "silent", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.first-use.changelog-vs-version-only", "metric": "turns_to_first_correct_use", "a": "changelog", "b": "version-only", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.first-use.version-only-vs-silent", "metric": "turns_to_first_correct_use", "a": "version-only", "b": "silent", "expect": "a<b", "groups": ["pooled"]}, {"id": "H4.U6.misuse.changelog-vs-silent", "metric": "post_upgrade_misuse_rate", "a": "changelog", "b": "silent", "expect": "a=b", "groups": ["U6"]}, {"id": "H4.U6.success.changelog-vs-silent", "metric": "task_success", "a": "changelog", "b": "silent", "expect": "a=b", "groups": ["U6"]}]
 note = "pooled is U1 to U5; U6, the documentation-only pair, is the notice-noise control and is reported separately. Whether a proposal names the changed primitive is not computable from the ledger (proposal records carry a text hash) and is not registered."
+
+# Deviation recorded 2026-11-06 by the review of the task suite, the predicates and the upgrade
+# pairs, before any result under these digests. Results recorded under the earlier suite, cassette
+# and upgrades digests belong to the earlier registration and are not pooled with later ones.
+[deviation.suite_review_2026_11_06]
+suite = "Rules the starting state cannot trigger were pruned and every [rate] rule removed (replay does not enforce stub rate limits); t046 now reuses publish.post[1]:INVALID and t048 search.query[2]:LIMIT with ten early queries; adapter parameters are pinned in task.md; predicates bind pinned requests by request hash; the rule-reuse tasks t042, t043, t044, t045, t050, t051, t053 and t054 run one phase per turn. suite_digest and the suite cassette digest were re-frozen from the regenerated suite and a full re-recording."
+drift = "34 short and medium tasks keep a one-turn reference solution, so H1 injects their drift before the first call (spec/cwr/qualification.kvx finding task_4_2_single_turn_drift). benchmark/campaigns/h1.kvx and h2.kvx must be re-registered from the regenerated suite.kvx (rules and turns changed) before H1 or H2 runs."
+h4 = "post_upgrade_misuse_rate follows the pair's misuse_scope in benchmark/upgrades.kvx: U3 counts only an uncaught jobs.result CONFLICT; U2 and U5 are not computable and are excluded from the pooled estimate. upgrades_digest was re-frozen."

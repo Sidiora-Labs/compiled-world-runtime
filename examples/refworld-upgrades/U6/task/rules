@@ -1,2 +1,1 @@
-fs.write[1]:LOCKED
-fs.write[2]:LIMIT
+fs.read[1]:NOT_FOUND

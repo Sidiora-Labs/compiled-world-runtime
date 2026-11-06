@@ -3,8 +3,7 @@
 
 # Writing a World Source
 
-Status: CWR has not yet passed qualification. This guide describes what the current World Compiler
-and `cwr` binary do.
+> **Implemented, not yet qualified (CWR-002, CWR-003, CWR-004, CWR-005).** CWR has not yet passed qualification. This guide describes what the current [World Compiler](../../crates/cwr-compiler/src/lib.rs) and [`cwr` binary](../../crates/cwr-cli/src/main.rs) do.
 
 A World Source is the directory of rules a human writes for a CWR world. The World Compiler turns
 it into a Build: an immutable, content-addressed directory that holds the manual the model reads,
@@ -502,7 +501,7 @@ world [examples/refworld](../../examples/refworld/world.kvx) uses every feature 
 | `fixtures/<module>/*.kvx` | Contract-test cases for every declared failure | Yes |
 | `manual/intro.md`, `conventions.md`, `types.md`, `examples.md` | Prose merged into the generated manual | Yes |
 | `adapters/<module>.kvx`, `adapters/<module>/live.py` | Adapter contracts and their gateway-side mapping | When the world calls outside services |
-| `migrations/<from>_<to>_<name>.py` | Pure state functions between versions | When a state shape changes |
+| `migrations/<name>.py` | Pure state functions between versions, named `<from>_<to>_<name>.py` by convention | When a state shape changes |
 
 Any other file, section or key is an error (CWR-C001). Keep a README outside the source directory.
 
@@ -580,7 +579,9 @@ There are exactly eleven failure codes. A world cannot add one.
 | `INVARIANT_VIOLATION` | Never declared. The kernel raises it when a Build breaks its own contract. |
 
 A failure carries `code`, `primitive`, `precondition_index`, `retry_after`, `limit` and `detail`.
-`detail` is free text. It is content, not interface.
+`limit` is set on every `LIMIT` failure: the per-turn budget or process limit by name, or
+`precondition:<index>` when a declared precondition raised `LIMIT`. `detail` is free text. It is
+content, not interface.
 
 ### Adapters
 
@@ -611,10 +612,11 @@ socket of its own. See [examples/refworld/adapters/publish.kvx](../../examples/r
 
 | File | May import |
 |---|---|
-| `lib/<module>.py`, `adapters/<module>/live.py` | `cwr_state`, `cwr`, `typing`, `dataclasses`, `json`, `re`, `math`, `collections`, `itertools` |
+| `lib/<module>.py`, `adapters/<module>/live.py` | `cwr_state`, `typing`, `dataclasses`, `json`, `re`, `math`, `collections`, `itertools` |
 | `migrations/*.py` | The same, without `cwr_state` |
 
-Every other import is CWR-L001, with file and line. So are `exec`, `eval`, `open`, `getattr` and
+Every other import is CWR-L001, with file and line, including the generated SDK `cwr`: it is the
+turn scripts' interface, and World Source code runs beside the kernel, not in the sandbox. So are `exec`, `eval`, `open`, `getattr` and
 the other reflective builtins. Time and randomness come from the state handle, never from the host.
 
 A `lib/` function raises only the codes its contract declares. Anything else fails the contract
@@ -661,16 +663,19 @@ increment satisfies a derived major bump and a patch increment satisfies a deriv
 
 ### Migrations
 
-A migration is a pure function `migrate(state: dict) -> dict` in
-`migrations/<from>_<to>_<name>.py`. It receives the whole prior state as plain data and returns
-the new state without mutating its argument. It must be idempotent. It runs inside the upgrade
-transaction, and an exception rolls the Instance back. See
+A migration is a pure function `migrate(state: dict) -> dict` in a file under `migrations/`. The
+changelog entry's `migration` path names the file, and that path is what binds a migration to its
+change; the compiler does not read versions from the file name. Name the file
+`<from>_<to>_<name>.py` by convention, as the upgrade pairs do. The refworld example predates the
+convention and names only its target version. A migration receives the whole prior state as plain
+data and returns the new state without mutating its argument. It must be idempotent. It runs
+inside the upgrade transaction, and an exception rolls the Instance back. See
 [examples/refworld/migrations/0_2_0_kv_namespaces.py](../../examples/refworld/migrations/0_2_0_kv_namespaces.py).
 
 ### cwr build and cwr lint
 
 ```text
-cwr build <source> [--out <dir>] [--previous <hash>] [--allow-example] [--json]
+cwr build <source> [--out <dir>] [--previous <hash>] [--debug-effects] [--allow-example] [--json]
                    [--x-drift <file> | --x-silent-change | --x-version-only | --x-one-primitive]
 cwr lint  <source> [--allow-example] [--json]
 ```
@@ -679,6 +684,7 @@ cwr lint  <source> [--allow-example] [--json]
 |---|---|
 | `--out <dir>` | Build root. Default `build/` in the working directory. |
 | `--previous <hash>` | Build to diff against. Default: the newest Build of the same world under the Build root. |
+| `--debug-effects` | Accepted and leaves the Build unchanged. Contract tests always assert declared effects. To assert them on every call of a turn, pass `--debug-effects` to `cwr instance turn`. |
 | `--allow-example` | Accept a source marked `meta.example = true` |
 | `--json` | Print the report as JSON |
 | `--x-*` | Build an experimental Build under `xbuild/`. One flag per Build. See [experiments.md](experiments.md). |

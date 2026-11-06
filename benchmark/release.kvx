@@ -16,52 +16,53 @@ schema_version = 2
 status = "pinned; no release claim until closure and owner acceptance (task 6.2)"
 release = "0.1.0"
 date = "2026-11-06"
-spec_sha256 = null
+spec_sha256 = "sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9"
 owner = "release"
 tasks = ["6.1", "6.2"]
 
 [pin.contract]
 crate = "cwr-contract"
 path = "crates/cwr-contract"
-revision = null
+revision = "sha256:58bc3f162425c67088d25bf3d8444b474fe7dd5e041ce671c6c605f1cb580b4a"
 diagnostic = "CWR-R016"
 
 [pin.compiler]
 crate = "cwr-compiler"
 path = "crates/cwr-compiler"
-revision = null
+revision = "sha256:ac8bde9c995e6a62bf4312c40d800e0f53d3a0436cbb040158d54b4b3c59677d"
 diagnostic = "CWR-R001"
 
 [pin.kernel]
 crate = "cwr-kernel"
 path = "crates/cwr-kernel"
-revision = null
+revision = "sha256:d5b2423b8192d7634dd2fe05866f661e948b18a5e568c270fd23d916696746f1"
 diagnostic = "CWR-R002"
 
 [pin.sdk]
 package = "cwr-sdk"
 path = "sdk/python"
-revision = null
+revision = "sha256:ffd5886dfb4eeffcc2ec59571b33209cddd6e1f7bd71d97abdb15ed7c9aa2bdc"
 diagnostic = "CWR-R003"
 
 [pin.cli]
 crate = "cwr-cli"
 path = "crates/cwr-cli"
-revision = null
+revision = "sha256:061262d0b4327763fef97e4587be376f4f814ec6c19da98bce449fec4717c3e6"
 diagnostic = "CWR-R004"
 
 # Every crate dependency is pinned by Cargo.lock; packaging builds with cargo --locked.
 [dependencies]
-cargo_lock = null
+cargo_lock = "sha256:cef33bd52b4e5cef1c89b10156df96b37557c0b63ae7673dd3b259059f607739"
 diagnostic = "CWR-R017"
 
 # The control Build every arm is measured against: built into an empty Build root. It must equal
-# the control_build registered by every campaign file listed in "campaigns" that exists.
+# the control_build registered by every campaign file listed in "campaigns"; a listed file that is
+# missing or unreadable is a diagnostic, never a skipped comparison.
 [build.refworld_control]
 source = "examples/refworld"
 flag = null
 campaigns = ["benchmark/campaigns/h1.kvx", "benchmark/campaigns/h2.kvx", "benchmark/campaigns/h3.kvx", "benchmark/campaigns/h4.kvx"]
-hash = null
+hash = "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e"
 diagnostic = "CWR-R005"
 
 # Experimental Builds compiled from the control source, one per task and drift arm registered in
@@ -72,7 +73,7 @@ source = "examples/refworld"
 flag = "--x-drift"
 arms = ["drift-1", "drift-3"]
 schedules = "benchmark/campaigns/h1.kvx"
-hashes = null
+hashes = {"t001-copy-readme/drift-1": "sha256:57c87cb7e531976aa242af386bc32e8889c69003efa12b9278f1410f2d63a1b0", "t001-copy-readme/drift-3": "sha256:92d5f71dee80b1c166530ef293ef785a8eaf153068ec85604a48f2461cff83cf", "t002-remove-old-log/drift-1": "sha256:f5db20e322a712a7fa78cd9152127313ce969f65e7e8640ff0fe0fe730317840", "t002-remove-old-log/drift-3": "sha256:5b5c3401fdd3fbcb3ebac8249fd88d60765b3ac5d387c97b935450da5e656ab3", "t003-tennis-note/drift-1": "sha256:6dd2f7d23c74d381ab99d640ca1b461a3c53e1fb1b6a61953fb5e206c97b9a77", "t003-tennis-note/drift-3": "sha256:b5ea1f05dfba3158128c3b5bf51098c6b77c98b2e35c5cb52a5ce97c13103197", "t004-rename-key/drift-1": "sha256:938ce8aafd63340a6954684b5c9402eb117055f225f7892e3d881f05cb900694", "t004-rename-key/drift-3": "sha256:4de557b0c127555dd44bd331956ec5b6104c68fbbedbd5b8376711dd610a9252", "t005-archive-report/drift-1": "sha256:b4fa18b1ce853b5496dddf65fb36f7a98763c49425af3fa8177eee1dc05a7e3d", "t005-archive-report/drift-3": "sha256:674e6df795645c1c8e896810235cde920a76b2c098a25cd6f7f8342044fcf160", "t006-thumbnail-job/drift-1": "sha256:829bcdc052eb67247bf2ebbdb159b613dac9a14a17112e997abbd670b0427118", "t006-thumbnail-job/drift-3": "sha256:d3b47d43eec7cfc1c43f92dd5566140027335584f6e611ccce97beca84bba5fb", "t007-lock-swap/drift-1": "sha256:2b5acfcd81418b3a8ebd7e38bf31542ccd646738e48f8ae6ddf5bd386ffc9bb1", "t007-lock-swap/drift-3": "sha256:a3c078e2eb5eacf30a1d353cb9d9392b5e69ddc8b7cff96f35db60435e4e14c8", "t008-publish-release/drift-1": "sha256:75833ce7e492e43f424297d9791e061e6f57fb42624f129d499f2dcf7039fbab", "t008-publish-release/drift-3": "sha256:90ca52e0b4fa9de598a5690c9efae9047101d11008dab72016920418dd3a110e", "t009-cancel-unfinished/drift-1": "sha256:384a75080a3fddf6b56768b3bfddb027c8d54101ee3211912ec2fd9710eb66e6", "t009-cancel-unfinished/drift-3": "sha256:e0ee46247b2c4ed81444f67e5b8698ea8c1494a7d28e2956517e2b8460244252", "t010-essay-post/drift-1": "sha256:260f2d97cb7fa989a32d630d7cb6a91b071771f06fa957715306da1ea3c7f24d", "t010-essay-post/drift-3": "sha256:d509fb63f6abc4cfb0c197fd1e46475e8c47a737bf9392fbdd7a75de1a2a594c", "t011-split-blob/drift-1": "sha256:f6518507e372864ebe1286fe9e5ed85a101479a20e63c369f9b656a3db91a478", "t011-split-blob/drift-3": "sha256:c50d4f66c7bf906c1617d3719eca7382cf9fe958fb0fc08fc74d55e05406c2b9", "t012-config-fallback/drift-1": "sha256:964db6dd437b10eb39fe774643567f48010a553c0c9857a743af427f8c25c39a", "t012-config-fallback/drift-3": "sha256:59b722584f7eaa0de5a2c5474537679adcc3351e2d3e9f7756413af3aeb90372", "t013-clear-cache/drift-1": "sha256:3525853055ccc9a9907dcd97b20af2fe985b13f669eafa72b25006049249629c", "t013-clear-cache/drift-3": "sha256:37e7986476719b5034d3c1a562bd69f6ce3fdde356e925d1eb545ff3d0b2330b", "t014-report-slot/drift-1": "sha256:5c0436fa123f33ffded23700ee3c09ed0ee9a7e2197f04ec98f84441e6fbf6f6", "t014-report-slot/drift-3": "sha256:1d02b0890d5817f8a9d81d4681a7bb06cbf21cefa0c5f9097470cd607d31a53c", "t015-clear-session/drift-1": "sha256:7d133a2f39aba7f27727ae806c1cb6259e84fe3bc3ec44760d597ddd279958d6", "t015-clear-session/drift-3": "sha256:1a3b1b7a980894d62a1c3bb64727c2f11bb0fab83c598fa8ba7bd554ba9474d8", "t016-finish-queue-item/drift-1": "sha256:e153a65f438071027b481f90ba86c8c907ca7f4985305ca95352acefe3cc6278", "t016-finish-queue-item/drift-3": "sha256:297f7bc8f146e456dcfc096b0cd719952b7cd41028e3dd91719fd683c0fb0e3d", "t017-raffle/drift-1": "sha256:8c32dd44c5ab9eeed7a2c3bb092b4d715f44413b0805a1a56fe25b99561c3a27", "t017-raffle/drift-3": "sha256:c5097d51147622a5a2b9c2bf26b60481f69e991cb97166cf3f2e68438194651b", "t018-replace-site-index/drift-1": "sha256:e48e88469a82072f719cef622ea57cfdbac0fece7925ce9dc9311620de6e8c24", "t018-replace-site-index/drift-3": "sha256:5c0b6a7c633565f6e2050a6c01c3412a1c6b73e3200522d0590236f733d5c228", "t019-import-outcome/drift-1": "sha256:78e9a1b6a98a2809f549379afda9a3c91ec594e4abe2ff36e788f2d3769a3755", "t019-import-outcome/drift-3": "sha256:353d3a62cb6e81859bdc7b327e4d8f5eccd8f4ef16fc7577958355a668a6bed1", "t020-unlock-shared/drift-1": "sha256:b23305a346e10272f62c8a60b2ed8bd30acf247ee7292fc9c98962eb6064a570", "t020-unlock-shared/drift-3": "sha256:f8019d30c46cce37ccd6141bda4afb9e613a9ba140a1f6a23a780c55072b427d", "t021-sports-report/drift-1": "sha256:cd853043425c00f13d40cb78327f902bf0b544f86530cc7d78778eb65676940e", "t021-sports-report/drift-3": "sha256:dd1e6f188c2d954dabec5035a502905db5117c13b92688e0bea367ce921142ed", "t022-notice-versions/drift-1": "sha256:388a907d24dfbf0f773d22b184d824a6d8e8722ae1e872ac914d59dbff520a6d", "t022-notice-versions/drift-3": "sha256:f2a99a1f595a71e8d1267115be7ab316ca55a44b440f6f45f71bc4fd3d357119", "t023-batch-archive/drift-1": "sha256:04638478fd38ab4cc55579bc68d726a6f95d26d8b3b30d7d0894c476f0e37585", "t023-batch-archive/drift-3": "sha256:f875475126725df9b4a78d450d20bd2bc6d5cc2afc4ad37cd9297fe80d75be9b", "t024-render-trio/drift-1": "sha256:4ec4d30c7480b68d8f9aba7c67a46ca0f738db12cbf40eba408173c98ddd5f48", "t024-render-trio/drift-3": "sha256:d63860a535f3cebd34d8010e285401716778cc9662db5691328ff457d97d81bb", "t025-kv-migrate/drift-1": "sha256:77181602643005c2c7e415da038b27fc13a1e3a8bfc22c7c81efff8a21c1573d", "t025-kv-migrate/drift-3": "sha256:87129ed23da91c86f476db5794782c7961cfe3ecf86bd8e6f28c08d2cc698c24", "t026-cache-eviction/drift-1": "sha256:c21d061c6865dd1ec42dfa7bfc87a17052aec7921ca814083d653c5322bc2c80", "t026-cache-eviction/drift-3": "sha256:c940b87730dc3df6d9ebe4ea80617422ba654839ccab3b2c572b11a335859811", "t027-publish-burst/drift-1": "sha256:8513f1e63c3827796daec943c574418435568bb8c752af1e49b2c48a45fee130", "t027-publish-burst/drift-3": "sha256:2718eafb4eb801ee5cb71b97590a8e8ef588af43b972d30c9f56631a142c7f4a", "t028-dedupe-photos/drift-1": "sha256:42abc183877735465edf34f7a733e238744d96711a50176b7a36de4953770853", "t028-dedupe-photos/drift-3": "sha256:dc834e3c2f6fb1635da7ce8447fdf1e5025ece3989fb0630f1365bd15b955a7d", "t029-topic-digest/drift-1": "sha256:892d786ceabaf1a145c3343e2b00840f6e8064b790522332c65a2bd4ef9a4308", "t029-topic-digest/drift-3": "sha256:bc363c5e984329a44665ad146df7f06a598b39cf7225a5c1b3c9f68eddefa1b9", "t030-search-sweep/drift-1": "sha256:96063bd8d530c3e4e8f9eecbba710ae7cf8948bcc4737e509f5be199cb9d47b3", "t030-search-sweep/drift-3": "sha256:6b1b9ebd1cae7453b29f1ee1ed06d1b8e6342761d0814c5fe963b545d3f9cb47", "t031-resubmit-jobs/drift-1": "sha256:de9e980d2d6571b67e77843861c7ceb5453162bd0fdee58de16af4eb8baf8173", "t031-resubmit-jobs/drift-3": "sha256:263406da89da575e6f636cb2df580a9095beccb4696dc706a78ee62914f139cf", "t032-rotate-logs/drift-1": "sha256:c451b98c129e56fa1bc21826bc2ed37279651a174e9d48613236f01c9539a8fa", "t032-rotate-logs/drift-3": "sha256:1e44e16d08ec96553910b65fb19b3b06c7f12996422ab85df8abba731355ea75", "t033-size-index/drift-1": "sha256:b56abdc22b2bedb142ed74a81a179e263aaf7618dedc2c254ad944de87d8f5bd", "t033-size-index/drift-3": "sha256:750f12bd94b2c3f89739bc42c697fd570e19f98fa991e5734e069ec29ce6d232", "t034-config-merge/drift-1": "sha256:2c02e128a6ff1e5fef1e227790e850f8a10136d0599cf667b7443b8299ebd6f8", "t034-config-merge/drift-3": "sha256:c8d6b8ab30163e75a55672ec2344ad4a72e89afba87e59b66b914e8d9fb80b0e", "t035-job-slots/drift-1": "sha256:4b1a1819527a039992b6732a22155f1370e39f3a5ea485cacd5254e49769cedb", "t035-job-slots/drift-3": "sha256:2121aad094aceceb016f67b1cec004ea1b58d6c458380d6cf140787c77a5c2cd", "t036-retract-post/drift-1": "sha256:dd73fe48836a4bb0311625ff668dc4dfd18abbb18ddfa29a991ed2d6372addaf", "t036-retract-post/drift-3": "sha256:9a4a5798be699a0d1212676409337c7a65f561ca47ad7f2e7202cfd9a998c8d8", "t037-copy-tree/drift-1": "sha256:ec8d23024a26962c7c45b1e6d2caf148758160d713af8f72bc86ccc39d5435a8", "t037-copy-tree/drift-3": "sha256:5a00da5868ecc6b03b954324d3c4f05ed5a51366c6d265a49ddc421c0b24a11d", "t038-chunk-files/drift-1": "sha256:8086cc01c9a23a828267a344039b1a38b4546b34401727b33ac44c8346bd00fc", "t038-chunk-files/drift-3": "sha256:79b866e80e4a1bbf92971c50ee4709ce775c3c9b83a572025927647743921e1f", "t039-lock-audit/drift-1": "sha256:320923c73bbe99476d4fc162dc84f0fef18ce121d1d862fc8ae7d3d184216fae", "t039-lock-audit/drift-3": "sha256:a0e1c31cfe57df65eb63d454056833ab9bd75fdaae7355402327e92075d32f15", "t040-assign-reviewers/drift-1": "sha256:aa88adc8a3d4c81ada2ba75df28278a15104f64ba1c4fa7a684b134b83f28adf", "t040-assign-reviewers/drift-3": "sha256:0eb830f0a064bd935ff3b1a97ea023bbb1c56c2472f68b253bb8fa68d80162e1", "t041-poll-then-reuse/drift-1": "sha256:b6816074d0a0dc26f2afa8ee5309ca6af5797c220fca2eb5cbbdc646fb9b7b54", "t041-poll-then-reuse/drift-3": "sha256:8fdc02e878262b031ee9fb80131722d05fdb85bda923008d64bfc9605883abcc", "t042-cleanup-twice/drift-1": "sha256:c14311401289a3ea560d80bac7f0a34759d6356d4ecf38ccb00e6b4e9b9b5cc0", "t042-cleanup-twice/drift-3": "sha256:d144211f54d8f005be53d790b90898b1ac8edc3c7825111488885621ff2da1df", "t043-archive-twice/drift-1": "sha256:6fcba10c7ff6d4ea0d622155b4b5b519d3f772c3403967e1d71628d90dbe1ec9", "t043-archive-twice/drift-3": "sha256:aca68f56a0456a8c8552d1ded44a05f1930e70c5bf913b3fd80ae34cd2bef83c", "t044-chunks-twice/drift-1": "sha256:64254442503647c871ae97d8cab1380dbb13cb798269311a726b8f28a7675fb5", "t044-chunks-twice/drift-3": "sha256:80b3461c7c63af7639bac690a8a9886e1f526c53251d2d93562b466a36256cfc", "t045-quota-twice/drift-1": "sha256:f56fc5316407ff4421135dd5a57272002c1f639500d30d4533b286c37e4b45d5", "t045-quota-twice/drift-3": "sha256:96154b843aece8485f5a95f8f9d22d01c98ce453d9db8e94676fb7d2933712f3", "t046-burst-twice/drift-1": "sha256:c826256bf24a1836c7114ff2a1763f7fd89ba45f5aa18258c82748fbba283e54", "t046-burst-twice/drift-3": "sha256:8902fb021af5388ff3a21e34c22f9d4d4986c08292653e295a5e3b85ce6d6803", "t047-key-twice/drift-1": "sha256:8612468bdf443bf275579cd118195b0eb6a50691bb75725a7aa94544f450d85b", "t047-key-twice/drift-3": "sha256:775defbbd70c5f1a651efdaddfe4ac949becf7b98819425cadd1bf2c9e7f3e3e", "t048-search-twice/drift-1": "sha256:ad8d015369ddb6c4878dc302e336f7e7f0124e8ea7fa054fec413abd34e0ae9a", "t048-search-twice/drift-3": "sha256:a247374a8f3bf92bb15f4d73e481d5c08ac8c79be28e7d1017704edc58f56d8f", "t049-slots-twice/drift-1": "sha256:3d343fa6516dc19f17d78d3d48bb20803a8b9e5edfb65586bd1ac16d029bc648", "t049-slots-twice/drift-3": "sha256:0d55aa4b5ee8ff15482312bb98409b9097d462c855800d1df85413fafa0a6a76", "t050-locked-pages-twice/drift-1": "sha256:882e77ffbcb8c01ebebb47c36c96449d5c32092a9dcf6b794022ea563e1c8664", "t050-locked-pages-twice/drift-3": "sha256:27c1b4ef8c39927611c970a49d9cd6a7337caa9dacc6756f6aec91f0c6d2afba", "t051-lock-sets-twice/drift-1": "sha256:5213e7808239f7c21bcca607460b0d718092ea3e3cba33f2516fda7077d2aea8", "t051-lock-sets-twice/drift-3": "sha256:b3c6b5dd40330291de336ac27cf19ccf8fc1755fe069cc8b3cd75b1de3a33f57", "t052-collect-twice/drift-1": "sha256:c1bba37d158cfdb8bb8c63f761d8f9719fc248de0173d92457910fab7671c367", "t052-collect-twice/drift-3": "sha256:58738fe4db721fa57a7164a29f1dcb8540084078ed1b18fee9078bdca7da1370", "t053-purge-twice/drift-1": "sha256:191f6f0e0ec163ca1e9a074bdead538bef8603ccef204e77a8241ded15da7c89", "t053-purge-twice/drift-3": "sha256:1000a9781b265d14fd666749d99f4afeb0667fff2df623f2fd3c9a723506ffa9", "t054-cancel-twice/drift-1": "sha256:5a710110fc75e72e4a2c09f3b3bd897ed55dfd4f34a1042ad3796f526673b158", "t054-cancel-twice/drift-3": "sha256:411d701e4167330be3ea3eb690091602f824039b3f9010ed94384d78cd94eb34", "t055-inbox-digest/drift-1": "sha256:157609c0ebcf4fa5054521c30b7158108cdd57ae12a80a3bf7e88f9ab8133709", "t055-inbox-digest/drift-3": "sha256:6409ac2534b5d57128942a0426e005134b8dee87da667493ecdc1cc1391d88e9", "t056-kv-v2-migration/drift-1": "sha256:fdccc360ae026875120676122d156bc688307dd9f4903a5e4ac6815bd35c2780", "t056-kv-v2-migration/drift-3": "sha256:15719d7c67f0764d5773a6002ceb14f33e99d2383ccfcc102ff10090311d62be", "t057-job-farm/drift-1": "sha256:8f34f4449e3dc0bbde0fe514c7482120e6084753a2ece0676dc73cb538949887", "t057-job-farm/drift-3": "sha256:eff086f18fe2d5ed989a156b500a3fe199fddc804b8d98ba07385ba1aa0112cf", "t058-site-build/drift-1": "sha256:b32d8b35cd0cb53036f3636461193a169794136f510312e9fce39a8a387cabe4", "t058-site-build/drift-3": "sha256:3c52603a3c0ce96fe6e552e337d9cfa2acd6602c93ba9fbe6d023dee57a819f0", "t059-search-catalogue/drift-1": "sha256:c33451068465551b8a03569828a7b01e13ad8ca0d5e14b2299e2fb6b0d70483d", "t059-search-catalogue/drift-3": "sha256:70e65bee4962346e6a2c4b0e753f405ef4a2a2b7eacd9a4a67db7a2541c70d46", "t060-report-pipeline/drift-1": "sha256:332af559ba990d798977f0d9b10f66127934cdd26b8f1102ca27e95fbdad9e43", "t060-report-pipeline/drift-3": "sha256:9c730eb9a5b0448f0d1871cb9adc3a557e86353b25028689c0ff93ca5d295065"}
 diagnostic = "CWR-R006"
 
 [build.x_one_primitive]
@@ -80,7 +81,7 @@ source = "examples/refworld"
 flag = "--x-one-primitive"
 arms = ["one-primitive"]
 registered_in = "benchmark/campaigns/h2.kvx"
-hash = null
+hash = "sha256:5e97e87c8d542fb292961962e2fc055cf1b6d2ee8da925c8a49b000e7c851f1f"
 diagnostic = "CWR-R007"
 
 # Notice ablations: side B of each upgrade pair built with the flag and --previous <side A hash>.
@@ -88,54 +89,57 @@ diagnostic = "CWR-R007"
 source = "examples/refworld-upgrades"
 flag = "--x-version-only"
 arms = ["version-only"]
-hashes = null
+hashes = {"U1": "sha256:02b712cea08a60a73592b4196b531e13e4748421e711493ff0f775c673bb16c8", "U2": "sha256:0bfcd7ec9e07d9f249420cf1d9a6487a14593d2ab1b8d6c0853a98bf022fd116", "U3": "sha256:ef441e74375175fe4695f1cbfb8be4e86146de7c4b42bd5502bb31d07517e4aa", "U4": "sha256:59607d9d5eea8bba541742e84d9b0dd29af7382ab9015c5fb11f35967baa6180", "U5": "sha256:060929f9a41f7ebb580a652ddf26281b525b7b91f89356073e59752ca25c2158", "U6": "sha256:3f12ee852c2af9666b351a8c819ccd248b12996691df110361782db99400bdd4"}
 diagnostic = "CWR-R008"
 
 [build.x_silent_change]
 source = "examples/refworld-upgrades"
 flag = "--x-silent-change"
 arms = ["silent"]
-hashes = null
+hashes = {"U1": "sha256:117fb6b9afca76bcc071ea7efa601a4661f77485b769e831d20c83c05bcd8deb", "U2": "sha256:3561d8113b44964718904c4ce2b1d804eb12008afa3f29606dd54c3a8bdd9698", "U3": "sha256:97bf3ca5d3c7e802d164c6fd40908b6438d13a28c1a0e1c8a793b00c64a14111", "U4": "sha256:65ec477d03893099e69bfd23e4ff8ccb0ac4ec2108f0f6d7b5d0fda4c075f5dd", "U5": "sha256:6978437352efaf95e1ed559410fcbafd863e4c4e549351c48a88ffd8d421c588", "U6": "sha256:014c9247088df8300902c63790b8af5308bf033761d15848b577a06afb3fca34"}
 diagnostic = "CWR-R009"
 
 # Both sides of each upgrade pair: A into an empty Build root, then B with --previous <A hash>.
+# Each side and each notice ablation must equal the Build registered in "registered_in".
 [build.upgrade_pairs]
 source = "examples/refworld-upgrades"
 expectations = "benchmark/upgrades.kvx"
+registered_in = "benchmark/campaigns/h4.kvx"
 pairs = ["U1", "U2", "U3", "U4", "U5", "U6"]
-hashes = null
+hashes = {"U1": {"a": "sha256:9bcc02e11dc3602ff880b1b3f6d9f7db3c756778abd8d5ff062627283b18a743", "b": "sha256:06e00c9b48d91f9cecfd232bcb79143dee1f01ddbcf042a6dc5fccaeb59cc08b"}, "U2": {"a": "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e", "b": "sha256:aa34586ff807cb9c5ccdff65a7b4965d98889992ed35d75f6b06317005687bf1"}, "U3": {"a": "sha256:baae898c50ed6d9f00adafcd6db82a28ced11cbf1ff40c060a485ca750087639", "b": "sha256:d2f5359a4eeea6008805ab2c71d01d719940a4a1c2efddf6806ed0f704d27136"}, "U4": {"a": "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e", "b": "sha256:a34c41bce04b44ee074c0ae844c495d07d483cf2f82f940901566c95205f6e63"}, "U5": {"a": "sha256:698d70fc85c7bbaf1b8d0fa9856137f684eaa4c62cad0a0f3f342fd5ac882197", "b": "sha256:c0dfab46247dd108a4174ee5541cf68e38c7227fe209268360663605c602281d"}, "U6": {"a": "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e", "b": "sha256:6abbbdb1a3206afdb873e1f8354c918ebe83ff90c63742a523157e0fcfeaa95a"}}
 diagnostic = "CWR-R010"
 
-# The cassette set digest (benchmark/cassettes/FORMAT.md section 5); must equal the value frozen in
-# benchmark/suite.kvx.
+# The digest of the suite cassette set (benchmark/cassettes/FORMAT.md section 5) that every campaign
+# replays; must equal the cassette_digest frozen in benchmark/suite.kvx.
 [cassettes]
-path = "benchmark/cassettes"
+path = "benchmark/cassettes/suite"
+sets = "benchmark/cassettes/refworld.kvx"
 frozen_in = "benchmark/suite.kvx"
-digest = null
+digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
 diagnostic = "CWR-R011"
 
 [suite]
 path = "benchmark/tasks"
 frozen_in = "benchmark/suite.kvx"
 tasks = 60
-digest = null
+digest = "sha256:390026249d91d96f6ffa4ee833a153c5c3e43a88daa8a3a2f8f16c89a1547e20"
 diagnostic = "CWR-R012"
 
 # Packaged artifacts (RELEASE.md, "Package"): path relative to the repository root and checksum.
 [artifact.cli]
 path = "artifacts/cwr-0.1.0-x86_64-linux-gnu"
-sha256 = null
+sha256 = "sha256:5dcad7132d6fad7435c0e2395f9ba1f406d4f925f375316da0163a4479e3d172"
 diagnostic = "CWR-R013"
 
 [artifact.sdk]
 path = "artifacts/cwr_sdk-0.1.0-py3-none-any.whl"
-sha256 = null
+sha256 = "sha256:fa1f4b977ea32a38852e283b05103c2a51195d6091bb71757da06d95d4cc29ae"
 diagnostic = "CWR-R014"
 
 # Campaign results: tree digest of each hypothesis result directory.
 [results]
 paths = {"h1": "benchmark/results/h1", "h2": "benchmark/results/h2", "h3": "benchmark/results/h3", "h4": "benchmark/results/h4"}
-digests = null
+digests = {"h1": "sha256:862faccaa7cd37c193008cfadb66ca5a1754222b8d1f2eb432cfb91e8e44909c", "h2": "sha256:a6b8c113bce98c5e6f7c193a38cb6796de9be788d4f56a5f1365686d7ce4aa48", "h3": "sha256:d33a0c95b48e8ec3f9c338132e13d20e836b6fe95e366be12d7301ae1e1afe1f", "h4": "sha256:94ac01bb9657fda9dd66d92732874961372fe38fd9479c5cf97f83d5853f83eb"}
 diagnostic = "CWR-R018"
 
 # Evidence the release claim depends on. Closure and owner acceptance are produced by task 6.2 and
@@ -143,7 +147,7 @@ diagnostic = "CWR-R018"
 [evidence]
 registry = "tests/cwr/registry.kvx"
 preregistration = "benchmark/preregistration.kvx"
-preregistration_sha256 = null
+preregistration_sha256 = "sha256:b4e4b71f26866110fb340fbf6b22df2de36dc3d8bcade514c12f97e4ba8d5552"
 reports = ["research/h1-stability.md", "research/h2-direct-action.md", "research/h3-long-context.md", "research/h4-controlled-change.md"]
 closure = null
 owner_acceptance = null

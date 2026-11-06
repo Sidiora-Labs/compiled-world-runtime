@@ -3,7 +3,7 @@
 
 # CWR user guides
 
-> **Implemented, not yet qualified.** CWR has no release and has not yet passed qualification. The guides describe the shipped [World Compiler](../../crates/cwr-compiler/src/lib.rs), [World Kernel](../../crates/cwr-kernel/src/lib.rs), [Model Surface](../../crates/cwr-kernel/src/surface/context.rs) and [experiment harness](../../benchmark/harness/run.py).
+> **Implemented, not yet qualified (CWR-020).** CWR has no release and has not yet passed qualification. The guides describe the shipped [World Compiler](../../crates/cwr-compiler/src/lib.rs), [World Kernel](../../crates/cwr-kernel/src/lib.rs), [Model Surface](../../crates/cwr-kernel/src/surface/context.rs) and [experiment harness](../../benchmark/harness/run.py).
 
 The Compiled World Runtime (CWR) is the runtime in which an AI model acts by running scripts inside
 a compiled, rule-governed world. A human writes the rules as World Source. The World Compiler turns

@@ -3,8 +3,7 @@
 
 # Running a world: the World Kernel
 
-Status: CWR has not yet passed qualification. This guide describes what the current World Kernel,
-its Model Surface and the `cwr` binary do.
+> **Implemented, not yet qualified (CWR-006, CWR-007, CWR-008, CWR-009, CWR-010, CWR-011, CWR-012).** CWR has not yet passed qualification. This guide describes what the current [World Kernel](../../crates/cwr-kernel/src/lib.rs), its [Model Surface](../../crates/cwr-kernel/src/surface/context.rs) and the [`cwr` binary](../../crates/cwr-cli/src/main.rs) do.
 
 The World Kernel runs Instances of a Build. Each turn it executes one Python script in a sandbox,
 checks every primitive call against the Build's contracts, records every action in an append-only,
@@ -17,7 +16,7 @@ The kernel guarantees:
 | Closure | A script reaches only the SDK of its Build. No network, host filesystem or host clock. |
 | Atomic primitives | Every call happens completely or not at all, and a refusal names one of eleven codes. |
 | A frozen Build | An Instance stays on its Build until an operator upgrades it. The kernel refuses a Build whose bytes do not match its hash. |
-| An honest ledger | Every call, turn, upgrade and recovery is a ledger record. A tampered or truncated ledger is refused. |
+| An honest ledger | Every call, turn, upgrade and recovery is a ledger record. A truncated, reordered or edited ledger is refused unless the editor also recomputed the hash chain. See [Read the ledger](#read-the-ledger) for what the chain does not protect against. |
 | Reproducible turns | Replaying recorded scripts with recorded adapter responses produces an identical ledger. |
 | Mediated side effects | Adapter calls follow their declared timeout, idempotency and failure rules, and are never retried silently. |
 
@@ -83,17 +82,20 @@ cwr instance state "$ID"
 
 | Option | Meaning |
 |---|---|
-| `--seed N` | Seed of the Instance's random stream |
+| `--seed N` | Seed of the Instance's random stream. Default 0, so every Instance created without `--seed` draws the same stream. |
 | `--tail K` or `--tail full` | Ledger records shown to the model each turn. Default 20. |
 | `--initial <state.json>` | Initial state, a JSON object of module states |
-| `--from-snapshot <file>` | Start from a snapshot, with its seed, state, clock and turn |
+| `--from-snapshot <file>` | Start from a snapshot, with its seed, state, clock and turn. The file must keep its name, `<sha256>.json`. |
 | `--arm <label>`, `--model <name>` | Labels written to the ledger header for experiments |
+| `--cassette-digest sha256:<hex>` | Digest of the cassette set an experiment replays, written to the ledger header |
 | `--allow-experimental` | Required for an experimental Build |
 
 ## Run a turn
 
 `cwr instance turn` reads a script from `--script <file>` or from standard input. A top-level
-`return` becomes the turn's `returned` value.
+`return` becomes the turn's `returned` value. Standard input whose first non-blank line opens a
+code fence is treated as a model message and goes through the turn protocol described in
+[Model messages](#model-messages).
 
 ```sh
 cwr instance turn "$ID" <<'SCRIPT'
@@ -129,10 +131,18 @@ SCRIPT
 | Status | Meaning |
 |---|---|
 | `ok` | The script finished without an uncaught exception |
-| `error` | An uncaught exception or a limit ended the turn, and nothing changed |
-| `partial` | An uncaught exception or a limit ended the turn after at least one mutating or external call succeeded. Those effects stand. |
+| `error` | An uncaught exception, a limit or a return value the SDK cannot encode ended the turn, and nothing changed |
+| `partial` | An uncaught exception, a limit or a return value the SDK cannot encode ended the turn after at least one mutating or external call succeeded. Those effects stand. |
 
 The command exits 0 for all three statuses. A non-zero exit means the kernel did not run the turn.
+
+A turn requested while another command holds the Instance, or while the Instance is not `idle`,
+is refused before anything runs. The command prints a refusal envelope with `CONFLICT` naming
+`kernel.instance`, records nothing and exits 8:
+
+```text
+{"error":{"code":"CONFLICT","detail":"instance .../01M6RJAB... is busy (lock held by another operation)","limit":null,"precondition_index":null,"primitive":"kernel.instance","retry_after":null},"resources":{"adapter_calls":0,"cpu_ms":0,...},"returned":null,"status":"error","trace":[],...}
+```
 
 ### Model messages
 
@@ -201,6 +211,13 @@ executed and fails with `LIMIT` naming the limit. CPU, wall-clock and memory lim
 `cwr instance ledger` checks sequence numbers, the hash chain and truncation, and prints a summary.
 A failed check is an error.
 
+The chain is an unkeyed sha256 over each record and the record before it. It detects accidental
+corruption, truncation, reordering and edits made without recomputing the chain. It does not
+detect an edit by someone with write access to the Instance directory who also recomputes the
+chain and updates `instance.json`, and the Instance id is not part of the chain. Protect the
+Instance store with file permissions. Replay is the stronger check: a re-chained edit cannot
+survive `cwr instance replay`, because the replay produces what the world actually does.
+
 ```sh
 cwr instance ledger "$ID"
 ```
@@ -227,6 +244,10 @@ outcome and the result of each precondition evaluated:
 | `upgrade` | The Instance moves to another Build |
 | `drift` | An experimental drift Build changes a rule |
 | `recovery` | The Instance is restored or recovered |
+
+A turn run with `--diagnostic-no-language-guard` switches off the sandbox's in-interpreter layer.
+Every record that turn appends carries `"language_guard": false`, so such a ledger is never
+mistaken for one produced with full closure.
 
 Records hold hashes of parameters and returned values, not the values. The state lives in the
 Instance's content-addressed object store.
@@ -289,13 +310,19 @@ timestamps, durations and the Instance id are ignored.
 cwr instance replay "$SID" --cassette search.jsonl --into-home replayed
 ```
 
+`--into <new-id>` names the new Instance, a ULID that is not yet in the store. Without it the
+kernel picks a fresh id. `--build <dir>` or `--builds <root>` names the Build when the ledger is
+not in an Instance directory.
+
 ```text
 {"divergence":null,"identical":true,"ignored_fields":["host_ts","duration_us","instance"],"into":"01M6RJJ2...","original":"01M6RJHR...","records":3,"state_digest":"sha256:504be005...","turns":1}
 ```
 
 It exits 0 when the ledgers are identical and 7 on the first divergence, which it prints. Replay
-reproduces script turns. It refuses a ledger that holds a probe turn, a refused message turn or a
-lifecycle record such as an upgrade.
+reproduces script turns, message turns and probe turns from the inputs the kernel records with
+each turn. A message turn is replayed from the raw message, so a protocol refusal is reproduced
+too. Replay refuses, before it creates anything, a ledger that holds a lifecycle record such as
+an upgrade or a recovery, and names the record.
 
 `cwr instance compare <ledger-a> <ledger-b>` compares two ledgers field by field with the same
 rules and the same exit codes.
@@ -311,6 +338,10 @@ cwr instance restore "$ID" "$SNAP"
 
 `restore` rolls the Instance back and appends a `recovery` record. The records after the snapshot
 are retained in the Instance directory, not deleted.
+
+A snapshot file is named `<sha256>.json`, the hash of its bytes. The name is its integrity anchor,
+so `restore` and `create --from-snapshot` refuse a copy under another name with exit 2 and print
+the name it must have.
 
 A snapshot file can also start a new Instance:
 
@@ -406,7 +437,11 @@ cwr instance outbox "$UP"
 ## Destroy an Instance
 
 `destroy` releases the state and seals the ledger. The ledger stays readable and verifiable. A
-later turn is refused.
+later turn is refused. Only an `idle` Instance can be destroyed. An Instance a crash left in a turn
+is recovered first. `destroy` removes the state store, snapshots, the adapter gateway's
+idempotency store, the recorded turn inputs, stored notices and the last result envelope. It keeps
+the ledger, the metadata, retained ledger lineages and the proposal outbox. Instance ids are
+ULIDs. Every command refuses any other id.
 
 ```sh
 cwr instance destroy "$RID"
@@ -423,9 +458,10 @@ destroyed 01M6RJ... (ledger sealed and retained)
 |---|---|---|
 | `cwr instance create` | Create an Instance | 0; 2 Build hash mismatch; 3 experimental Build without the flag |
 | `cwr instance show`, `state`, `tail` | Print metadata, state or the model's ledger tail | 0; 1 error |
+| `cwr instance keys` | Print the adapter gateway's key idempotency store, one `done` entry per stored key | 0; 1 error |
 | `cwr instance ledger` | Check and summarise the ledger | 0; 1 tampered or truncated |
-| `cwr instance turn` | Run one turn | 0 for `ok`, `error` and `partial`; 1 kernel error; 2 hash mismatch; 3 experimental; 4 protocol refusal |
-| `cwr instance probe <id> <call>...` | Run a kernel-direct turn of `world` read calls, for diagnostics | 0; 1 error |
+| `cwr instance turn` | Run one turn | 0 for `ok`, `error` and `partial`; 1 kernel error; 2 hash mismatch; 3 experimental; 4 protocol refusal; 8 `CONFLICT` |
+| `cwr instance probe <id> <call>...` | Run a kernel-direct turn of `world` calls, for diagnostics. It is a real turn: it advances the turn counter and world time, draws from the random stream and appears in the model's ledger tail. | 0; 1 error |
 | `cwr instance context` | Print the next turn's context | 0; 1 error; 2 hash mismatch |
 | `cwr instance snapshot`, `restore` | Snapshot and roll back | 0; 1 error; 2 hash mismatch |
 | `cwr instance recover` | Recover after a crash | 0; 1 error |
@@ -434,7 +470,7 @@ destroyed 01M6RJ... (ledger sealed and retained)
 | `cwr instance upgrade` | Move to another Build | 0; 5 refused; 6 rolled back |
 | `cwr instance notice` | Print a pending recompile notice | 0 |
 | `cwr instance outbox` | Print the proposal outbox | 0 |
-| `cwr instance destroy` | Seal the ledger and release state | 0 |
+| `cwr instance destroy` | Seal the ledger and release state | 0; 1 error; 8 not idle or busy |
 
 | Turn option | Meaning |
 |---|---|
@@ -445,6 +481,8 @@ destroyed 01M6RJ... (ledger sealed and retained)
 | `--cassette-label <label>` | Header label of a new cassette |
 | `--stub NAME=URL` | Base URL of a `stub://NAME` endpoint |
 | `--debug-effects` | Assert every declared effect after each successful mutating call |
+| `--builds <dir>` | Refuse the turn unless the Instance's Build lies in this Build root. Repeatable. |
+| `--diagnostic-no-language-guard` | Switch off the in-interpreter sandbox layer. Records carry `"language_guard": false`. Never for a model turn. |
 
 The normative contract is [spec/cwr/kernel.md](../../spec/cwr/kernel.md) for the kernel and
 [spec/cwr/model-surface.md](../../spec/cwr/model-surface.md) for what the model receives.

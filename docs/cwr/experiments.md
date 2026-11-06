@@ -3,8 +3,7 @@
 
 # Running experiments
 
-Status: CWR has not yet passed qualification, and no campaign has a result because the
-pre-registration is still a draft.
+> **Implemented, not yet qualified (CWR-013, CWR-017, CWR-018).** CWR has not yet passed qualification. The campaign pre-registration is registered, a campaign result counts only once its qualification case passes, and this guide describes what the current [experiment harness](../../benchmark/harness/run.py) and the experimental Builds of `cwr` do.
 
 CWR rests on three pillars: stable rules, direct action through scripts, and change only by human
 recompilation. Each experiment removes one pillar from an otherwise identical world and measures
@@ -245,11 +244,14 @@ by the stop rule. It never compiles a Build.
 | `gateway` | The registered model. Credentials are read from the environment. |
 | `stub` | A deterministic offline player that replays the task's reference solution and opens no socket. Use it to test the pipeline. |
 
-`--allow-unregistered` runs under the draft registration and marks each attempt
-`registered = false`. This pilot runs two seeds of both H2 arms with the stub player:
+`--allow-unregistered` runs under a draft registration and marks each attempt
+`registered = false`. The pilot uses a scratch draft copy of the pre-registration, passed with
+`--prereg`, so its attempts can never be pooled with a campaign. It runs two seeds of both H2 arms
+with the stub player:
 
 ```sh
-pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --cassettes "$REPO/benchmark/cassettes/suite" --results results --home runs "$@"; }
+sed 's/^status = "registered"$/status = "draft"/' "$REPO/benchmark/preregistration.kvx" > draft.kvx
+pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --prereg draft.kvx --cassettes "$REPO/benchmark/cassettes/suite" --results results --home runs "$@"; }
 pilot --arm script --seed 1 --builds build --build "$CONTROL"
 pilot --arm script --seed 2 --builds build --build "$CONTROL"
 pilot --arm one-primitive --seed 1 --builds xbuild --build "$ONE"
@@ -272,8 +274,9 @@ Each cell writes one directory:
 results/h2/script/t003-tennis-note/1/
   ledger.jsonl          the Instance's ledger
   final_state.kvx       the final state as the success predicate sees it
-  states/turn_0001.kvx  the state after each turn
-  attempt.kvx           Build, Instance, seed, cassette digest, model, revisions, timing, exit status, token counts, metrics
+  messages/turn_0001.md the model message submitted as each turn, the input analyse.py replays
+  kernel.log            the kernel's stderr of each turn
+  attempt.kvx           Build, Instance, seed, cassette digest, model, revisions, log path, registration digests, timing, exit status, token counts, metrics
 ```
 
 ## Metrics
@@ -308,8 +311,8 @@ registered direction `consistent`, `inconsistent` or `inconclusive` from the int
 difference.
 
 ```sh
-python3 "$REPO/benchmark/analyse.py" --results results --draft-ok
-python3 "$REPO/benchmark/analyse.py" --results results --draft-ok --check results/analysis.json
+python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --draft-ok
+python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --draft-ok --check results/analysis.json
 ```
 
 ```text
@@ -319,11 +322,12 @@ report equals the recomputation from ledgers
 
 The analysis never pools bins, cassette digests or live and replay runs. It excludes, and reports,
 unregistered attempts, Instances with an `INVARIANT_VIOLATION` record and attempts that ended in a
-model or kernel error. Without `--draft-ok` it refuses a draft registration:
+model or kernel error. Without `--draft-ok` it refuses a draft registration, such as the pilot's
+scratch copy:
 
 ```text
-$ python3 "$REPO/benchmark/analyse.py" --results results
-analyse.py refused: pre-registration is a draft; missing: campaign.model, campaign.sampling, campaign.suite_digest, campaign.cassette_digest, campaign.upgrades_digest, arms.control.build, arms.h2.one-primitive.build, meta.status (must be "registered")
+$ python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx
+analyse.py refused: pre-registration is a draft; missing: meta.status (must be "registered")
 ```
 
 | Exit | Meaning |
@@ -387,6 +391,8 @@ The checker also runs on its own and reports the recorded status of a case:
 ```sh
 python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019
 ```
+
+> **Verified (CWR-019).** The evidence registry and its false-success traps hold an accepted attempt: [20261106T143532Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T143532Z-1.json).
 
 A hypothesis result needs the complete arm matrix with the pre-registered metric definitions; a
 component attempt never implies one, and a run containing `INVARIANT_VIOLATION` is excluded.

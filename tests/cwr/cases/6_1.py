@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright Sidiora Labs Inc. CWR® 2026-2027
-# SPDX-License-Identifier: Sidiora DEV OSS-1.0
+# SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
 """Task 6.1 driver: documentation and reproducible release artifacts.
 
 Case CWR-020 (assertions a4 and a5). Exercises clauses 14.2 and 14.3 against the real release:
@@ -14,10 +14,13 @@ Case CWR-020 (assertions a4 and a5). Exercises clauses 14.2 and 14.3 against the
    only the installed `cwr` on PATH and a private HOME. RELEASE.md packages the CLI and SDK from the
    bundle's own sources, runs `cwr release pin --write` (which must leave benchmark/release.kvx
    byte-identical: the pins reproduce) and `cwr release check` (which must exit 0).
-3. Checks every relative link of the documentation set, the status marker of every behavioural
-   section against the evidence registry (a Verified marker must link the registry's accepted attempt
-   record for its case; an Implemented marker must link existing source; a Proposed marker must list
-   source that does not exist yet), and that no line claims a PASS without an attempt record.
+3. Checks every relative link of the documentation set and the status markers against the evidence
+   registry. The shape is fixed: every top-level document and guide carries exactly one marker line,
+   the first prose line under its title, naming its qualification cases; the experiments guide also
+   carries the Verified marker of the evidence registry case in its qualification section; no other
+   marker exists. A Verified marker must link the registry's accepted attempt record for its case,
+   an Implemented marker must link existing source and a Proposed marker must list source that does
+   not exist yet. No line claims a PASS without an attempt record.
 4. Re-runs `cwr release check --json` in the bundle, then on a tampered copy of the release file in
    which every pin is nulled, altered or pointed at a missing input, and requires each diagnostic code
    by name; the codes and messages must equal the [diagnostic.*] sections and the RELEASE.md table.
@@ -46,7 +49,7 @@ sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "core"))
 
-from cwr_core import kvx  # noqa: E402
+from cwr_core import kvx  # noqa: E402  importable only after the sys.path insert above
 
 CASE = "CWR-020"
 CLAUSES = ["14.2", "14.3"]
@@ -62,6 +65,12 @@ RUN_ORDER = [
 ]
 DOC_SET = [doc for doc, _ in RUN_ORDER] + ["docs/cwr/README.md", "CHANGELOG.md"]
 GUIDES = ["docs/cwr/world-source.md", "docs/cwr/kernel.md", "docs/cwr/experiments.md"]
+# Documents that carry exactly one status marker, the first prose line under the title, naming
+# their qualification cases.
+MARKED = ["README.md", "RELEASE.md", "docs/cwr/README.md", *GUIDES]
+# The one marker allowed below a title: the qualification section of the experiments guide carries
+# the Verified marker of the evidence registry case.
+SECTION_MARKERS = {"docs/cwr/experiments.md": ["CWR-019"]}
 # Source areas the documentation must describe with links (clause 14.2).
 AREAS = {
     "compiler": "crates/cwr-compiler/",
@@ -251,7 +260,9 @@ def run_document(doc: str, cwd: Path, env: dict[str, str], log: Path) -> list[di
             {"doc": doc, "line": start, "command": command, "exit": exit_code, "output": output}
         )
     if code != 0 and not results:
-        results.append({"doc": doc, "line": 0, "command": "<shell>", "exit": code, "output": stderr})
+        results.append(
+            {"doc": doc, "line": 0, "command": "<shell>", "exit": code, "output": stderr}
+        )
     return results
 
 
@@ -295,16 +306,55 @@ def registry_cases() -> dict[str, dict]:
     return {name[5:]: body for name, body in sections.items() if name.startswith("case.")}
 
 
+def title_line(text: str) -> int:
+    """Line number of the document title (the first ATX level-one heading), or 0."""
+    for number, line in prose_lines(text):
+        if line.startswith("# "):
+            return number
+    return 0
+
+
+def check_marker_shape(doc: str, text: str, problems: list[str]) -> list[tuple[int, str]]:
+    """Returns the marker lines of `doc` after checking their placement; records any problem."""
+    prose = prose_lines(text)
+    markers = []
+    for number, line in prose:
+        if MARKER.match(line):
+            markers.append((number, line))
+        elif re.match(r"^> \*\*(Pending|Verified|Implemented|Proposed)", line):
+            problems.append(f"{doc}:{number} malformed status marker")
+    title = title_line(text)
+    below = [(n, line) for n, line in prose if n > title and line.strip()]
+    top = below[0] if below and MARKER.match(below[0][1]) else None
+    allowed = SECTION_MARKERS.get(doc, [])
+    if doc in MARKED:
+        if top is None:
+            problems.append(f"{doc} does not open with a status marker under its title")
+        elif not CASE_ID.search(top[1]):
+            problems.append(f"{doc}:{top[0]} status marker names no qualification case")
+    elif top is not None:
+        problems.append(f"{doc}:{top[0]} carries a status marker but is not a marked document")
+    extra = [(n, line) for n, line in markers if top is None or n != top[0]]
+    sections = [
+        (n, line) for n, line in extra if line.startswith("> **Verified") and CASE_ID.findall(line)
+    ]
+    if sorted({c for _, line in sections for c in CASE_ID.findall(line)}) != sorted(allowed):
+        problems.append(
+            f"{doc} section markers {[n for n, _ in sections]} must be exactly the Verified "
+            f"markers of {allowed or 'no case'}"
+        )
+    for number, line in extra:
+        if (number, line) not in sections:
+            problems.append(f"{doc}:{number} status marker below the title")
+    return markers
+
+
 def check_markers(results: Results) -> None:
     cases = registry_cases()
     problems, counts, areas = [], {"Verified": 0, "Implemented": 0, "Proposed": 0}, set()
     for doc in DOC_SET:
         text = (REPO / doc).read_text(encoding="utf-8")
-        for number, line in prose_lines(text):
-            if line.startswith("> **") and not MARKER.match(line):
-                if re.match(r"^> \*\*(Pending|Verified|Implemented|Proposed)", line):
-                    problems.append(f"{doc}:{number} malformed status marker")
-                continue
+        for number, line in check_marker_shape(doc, text, problems):
             match = MARKER.match(line)
             if not match:
                 continue
@@ -313,7 +363,7 @@ def check_markers(results: Results) -> None:
             where = f"{doc}:{number}"
             links = [(t, resolve_link(doc, t)) for t in LINK.findall(line)]
             links = [(t, p) for t, p in links if p is not None]
-            named = CASE_ID.findall(line)
+            named = sorted(set(CASE_ID.findall(line)))
             for target, path in links:
                 rel = path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else ""
                 for area, prefix in AREAS.items():
@@ -357,13 +407,13 @@ def check_markers(results: Results) -> None:
                         problems.append(f"{where} lists {path} as proposed but it exists")
     missing_areas = sorted(set(AREAS) - areas)
     if missing_areas:
-        problems.append(f"no section links source for: {', '.join(missing_areas)}")
+        problems.append(f"no marker links source for: {', '.join(missing_areas)}")
     results.check(
         "14.2",
         not problems,
         f"status markers consistent with {REGISTRY}: {counts['Verified']} Verified, "
-        f"{counts['Implemented']} Implemented, {counts['Proposed']} Proposed; source linked for "
-        f"{', '.join(sorted(areas))}"
+        f"{counts['Implemented']} Implemented, {counts['Proposed']} Proposed; one marker under "
+        f"each title of {len(MARKED)} documents; source linked for {', '.join(sorted(areas))}"
         if not problems
         else "marker problems: " + "; ".join(problems[:25]),
         "a5",
@@ -539,7 +589,11 @@ def write_attempt(pins: list) -> None:
     for key in ("build.upgrade_pairs.hashes",):
         for pair in (values.get(key) or {}).values():
             builds += [pair.get("a"), pair.get("b")]
-    for key in ("build.x_drift.hashes", "build.x_version_only.hashes", "build.x_silent_change.hashes"):
+    for key in (
+        "build.x_drift.hashes",
+        "build.x_version_only.hashes",
+        "build.x_silent_change.hashes",
+    ):
         builds += list((values.get(key) or {}).values())
     one = values.get("build.x_one_primitive.hash")
     if isinstance(one, str):
@@ -647,7 +701,8 @@ def drive(results: Results, target: Path, scratch: Path) -> int:
         )
         if doc == "README.md":
             installed = home / ".local/bin/cwr"
-            pinned = pins.get("artifact.cli", {}).get("sha256")
+            shipped = kvx.load(bundle / RELEASE_KVX) if (bundle / RELEASE_KVX).is_file() else {}
+            pinned = shipped.get("artifact.cli", {}).get("sha256")
             same = installed.is_file() and sha256_file(installed) == pinned
             results.check(
                 "14.3",

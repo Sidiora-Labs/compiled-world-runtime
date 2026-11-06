@@ -1,7 +1,9 @@
 # Copyright Sidiora Labs Inc. CWR® 2026-2027
 # SPDX-License-Identifier: LicenseRef-Sidiora-DEV-OSS-1.0
-# Recorded authoring runs for the CWR specification pack. No compiler, kernel, model or driver has run.
-# Every entry states product_evidence = false while all cases are UNRUN.
+# Recorded runs for the CWR specification pack: authoring validation, every task driver run
+# through tests/cwr/qualify.py, blocked tasks and the owner's acceptance journey.
+# product_evidence is true only where an entry names an attempt record that
+# tests/cwr/check_evidence.py accepts; everything else states product_evidence = false.
 
 [progress.authoring_validation]
 revision = "working-tree spec/cwr 2026-11-06"
@@ -13,6 +15,7 @@ assumption = "Authoring consistency only. No Build hash exists, no Instance has 
 product_evidence = false
 
 # Deviation of task 2.3 (clause 7.4) from the literal text of kernel.md section 7.
+
 [finding.task_2_3_rate_limited_key_release]
 revision = "working-tree crates/cwr-kernel/src/gateway/idempotency.rs 2026-11-06"
 command = "python3 tests/cwr/cases/2_3.py"
@@ -21,3 +24,55 @@ log = "stdout of python3 tests/cwr/cases/2_3.py, line CLAUSE 7.4"
 observed = "For a key adapter the gateway stores the first outcome per (adapter, key, payload hash), ok or declared failure, except RATE_LIMITED: a RATE_LIMITED outcome releases the key, so an identical repeat is sent to the service again. kernel.md section 7 says the stored outcome is the ok result or the declared failure the call produced and that only a defect releases the key, under which a declared RATE_LIMITED would be stored."
 assumption = "RATE_LIMITED means the service declined to process the request and names in retry_after when the same call may be repeated (clause 7.3). Storing it would answer every same-key retry with a stale rate limit. The refworld manual (manual/examples.md, same-key publish.post at retry_at) and the reference simulator (benchmark/tasks/_authoring/refsim.py) both rely on the release. Resolving the deviation needs kernel.md section 7 to name RATE_LIMITED as releasing the key, or the gateway, manual and simulator to store it."
 product_evidence = false
+
+# Deviation of task 2.4 (clauses 8.4 and 8.5) from the literal text of kernel.md section 2.
+
+[finding.task_2_4_replay_ignores_instance]
+revision = "working-tree crates/cwr-kernel/src/replay.rs 2026-11-06"
+command = "python3 tests/cwr/cases/2_4.py"
+exit_code = 0
+log = "stdout of cwr instance replay and cwr instance compare: ignored_fields"
+observed = "cwr instance replay and cwr instance compare compare ledgers ignoring host_ts, duration_us and instance. kernel.md section 2 names only host_ts and duration_us. Every record carries the id of the Instance that wrote it, and a replay writes a new Instance (the id given by --into, or a fresh ULID), so the field differs by construction. The chain and world.history exclude it, so no world-visible value depends on it."
+assumption = "The instance field identifies the writer, not the world. Resolving the deviation needs kernel.md section 2 to list instance among the ignored fields, or the ledger to keep the writer's id outside the compared record."
+product_evidence = false
+
+# Deviation of the qualification machinery (task 0.2) from tests/cwr/registry.kvx and verification.md section 5.
+
+[finding.qualification_oracles_missing]
+revision = "working-tree tests/cwr 2026-11-06"
+command = "python3 tests/cwr/check_evidence.py --status CWR-NNN"
+exit_code = 0
+log = "recomputed_assertions of every attempt record: UNVERIFIED, no independent oracle"
+observed = "No case except CWR-019 has its independent oracle tests/cwr/oracles/CWR_NNN.py. Every registered assertion of CWR-001, CWR-002, CWR-003, CWR-004, CWR-005, CWR-006, CWR-007, CWR-008, CWR-009, CWR-010, CWR-011, CWR-012, CWR-013, CWR-014, CWR-015, CWR-016, CWR-017, CWR-018, CWR-020 is recomputed UNVERIFIED, so none of these cases can be PASS. The drivers report their assertions through tests/cwr/cases/protocol.py, but most do not yet name the Builds, Instances, ledgers and final state an oracle would recompute from."
+assumption = "An oracle rederives each assertion from the ledgers and final state alone, so it needs the drivers to hand those artifacts to the runner first. Resolving the deviation needs, per case, the owning task's driver to declare its Instances through protocol.py and an oracle module that passes the checker's separation audit; tests/cwr/cases/0_2.py fails while a case has neither an oracle nor an entry here."
+product_evidence = false
+
+# Deviation of the qualification records (task 0.2) from the publication rule of CLAUDE.md.
+
+[finding.qualification_records_host_name]
+revision = "working-tree tests/cwr/evidence 2026-11-06"
+command = "python3 tests/cwr/qualify.py --case CWR-NNN"
+exit_code = 0
+log = "host.hostname and copied driver logs of every attempt record with schema_version 1"
+observed = "Attempt records written under evidence schema version 1 store the machine's host name in host.hostname, and their copied driver logs carry absolute machine paths. Records are immutable, so the committed version 1 records keep both."
+assumption = "Schema version 2 records name no host and copy driver logs with the repository root and home directory replaced by <repo> and <home>. Version 1 records are stale and are never evidence; resolving the deviation needs every case re-qualified, after which the version 1 records can be retired by the owner."
+product_evidence = false
+
+[finding.task_6_1_stale_cassette_and_campaign_bindings]
+revision = "working-tree benchmark/release.kvx 2026-11-06"
+command = "python3 tests/cwr/cases/6_1.py"
+exit_code = 1
+log = "stdout of cwr release check, diagnostics CWR-R005 to CWR-R011 and CWR-R018"
+observed = "cwr release pin --write recorded every pin that reproduced: component revisions, Cargo.lock, the control and experimental Build hashes of the refworld source at the time of pinning, the suite cassette digest (benchmark/cassettes/suite, equal to the cassette_digest frozen in benchmark/suite.kvx), the task suite digest, the artifact checksums and the campaign result digests. The refworld World Source changed after the cassette sets were recorded (header lines and lint fixes), so the cassette sets name a Build that is not the campaign control Build, the campaigns are still writing results, and cwr release check names the Build, cassette and result pins as not reproducing."
+assumption = "The bindings are stale, not wrong: no pin was edited by hand. Resolving the deviation needs one reconciliation pass after the last unit lands: re-record both cassette sets against the frozen refworld Build, re-register control_build in benchmark/campaigns/h1.kvx to h4.kvx, rerun tasks 5.1 to 5.3, then cwr release pin --write and python3 tests/cwr/cases/6_1.py."
+product_evidence = false
+
+[progress.acceptance_journey]
+revision = "compiler sha256:2e172fe765a55f99b7caaa0e1d3ad77aac4f1a17c09993abae2e6dbf929f5e8c; kernel sha256:7ee124a087ee4139543a16d89768d76727795db183007a57ca907a49dc366da5; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
+command = "python3 tests/cwr/closure.py --journey"
+exit_code = 1
+log = "spec/cwr/qualification.kvx"
+observed = "acceptance journey incomplete: build refworld: exit 0; create Instance: exit 0; run long task t041-poll-then-reuse: exit 0; build U1 side A: exit 0; build U1 side B: exit 0; upgrade across U1: exit 0; replay the pre-upgrade ledger: exit 2"
+assumption = "The journey is recorded for the owner to accept; it is not owner acceptance and not a checker-accepted record."
+product_evidence = false
+builds = ["sha256:06e00c9b48d91f9cecfd232bcb79143dee1f01ddbcf042a6dc5fccaeb59cc08b", "sha256:9bcc02e11dc3602ff880b1b3f6d9f7db3c756778abd8d5ff062627283b18a743", "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e"]

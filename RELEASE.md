@@ -3,15 +3,13 @@
 
 # Releasing CWR
 
+> **Implemented, not yet qualified (CWR-020).** No version has been released; [benchmark/release.kvx](benchmark/release.kvx) holds the pins for 0.1.0, and `cwr release check` names every pin that does not reproduce from the tree.
+
 A CWR release is a source bundle from which every Build, ledger and published result can be
 reproduced, together with a release file that pins every input by digest. A release is cut only
 when every qualification case has an accepted attempt and the owner has accepted the result. This
 document states how versions are numbered, what a release contains, how a release is cut and how
 anyone can verify one.
-
-Status: no version has been released. The release file for 0.1.0,
-[benchmark/release.kvx](benchmark/release.kvx), does not yet record the Build hashes, the cassette
-digest or the campaign results, so `cwr release check` names those pins as failing.
 
 ## Versions
 
@@ -117,15 +115,20 @@ exits 1 when it refuses and 2 on a usage error. It refuses, listing every reason
 ## Packaging the CLI and SDK
 
 Two artifacts are pinned besides the bundle. The CLI is the release `cwr` binary built with the
-locked dependencies of `Cargo.lock`; it is byte-reproducible from the same sources whatever the
-cargo target directory. The SDK is the `cwr-sdk` wheel built from
+locked dependencies of `Cargo.lock`. Built as below, with the same toolchain, the same sources and
+the same dependency source (crates.io registry or `vendor/cargo`), it is byte-reproducible whatever
+the cargo target directory, `CARGO_HOME` or checkout path: the two `--remap-path-prefix` flags
+replace the only host paths the compiler would otherwise embed. `python3 tools/cli_repro.py`
+proves it on one host by building twice, under two `CARGO_HOME` values, two checkout paths and two
+target directories, and comparing the hashes. The SDK is the `cwr-sdk` wheel built from
 [sdk/python/pyproject.toml](sdk/python/pyproject.toml) with the pinned build backend
 (setuptools 68.1.2 and wheel 0.42.0, used offline without build isolation) and a fixed
 `SOURCE_DATE_EPOCH`, which makes it byte-reproducible too. Run from the repository root or from an
 unpacked bundle:
 
 ```sh
-cargo build --release --locked -p cwr-cli
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+RUSTFLAGS="--remap-path-prefix=$CARGO_HOME=/cargo --remap-path-prefix=$PWD=/cwr" cargo build --release --locked -p cwr-cli
 mkdir -p artifacts
 cp "${CARGO_TARGET_DIR:-target}/release/cwr" artifacts/cwr-0.1.0-x86_64-linux-gnu
 rm -rf sdk/python/build sdk/python/cwr_sdk.egg-info

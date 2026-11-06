@@ -3,8 +3,7 @@
 
 # Compiled World Runtime
 
-Status: CWR is in development. It has no release and has not yet passed qualification; see
-[Status](#status).
+> **Implemented, not yet qualified (CWR-020).** CWR is in development: it has no release and has not yet passed qualification; see [Status](#status). This document describes the shipped [`cwr` binary](crates/cwr-cli/src/main.rs).
 
 The Compiled World Runtime (CWR) is a runtime in which an AI model acts by running scripts inside a
 compiled, rule-governed world. A human writes the rules as World Source. The World Compiler turns
@@ -20,7 +19,7 @@ service. The rules change only when a human recompiles.
 | Predictable failure | Every call either succeeds or fails with one of eleven failure envelope codes, and the outcome depends only on conditions the model can query. |
 | One contract | The manual the model reads, the SDK it calls and the table the kernel enforces are generated from one compiled contract, so documentation and enforcement cannot diverge. |
 | Immutability | A Build is content-addressed. Any change to its bytes changes its identity, and the kernel refuses a Build whose bytes do not match its hash. |
-| Ledger integrity | The ledger is append-only and hash-chained. Replaying it with recorded adapter responses reproduces the same state, and the kernel refuses a tampered ledger. |
+| Ledger integrity | The ledger is append-only and hash-chained. The kernel refuses a truncated ledger and any edit made without recomputing the chain. The chain is unkeyed, so file permissions must protect the Instance store from re-chained edits. Replaying the ledger with recorded adapter responses reproduces the same state, and a re-chained edit does not survive replay. |
 | Mediated side effects | Every external call passes through the adapter gateway. Failures map to declared codes, idempotency keys prevent duplicate side effects, and nothing is retried silently. |
 | Controlled change | A rule changes only through a human recompilation with a changelog and a version bump. An Instance moves to the new Build only by an explicit upgrade, and the model receives a recompile notice. |
 
@@ -142,7 +141,7 @@ cwr instance tail "$ID"
 cwr instance ledger "$ID"
 ```
 
-`cwr instance tail` prints the ledger tail the model sees on its next turn. `cwr instance ledger` verifies the ledger's sequence numbers and hash chain. `cwr help` lists every subcommand; the guides below give every option and exit code.
+`cwr instance tail` prints the ledger tail the model sees on its next turn. `cwr instance ledger` verifies the ledger's sequence numbers and hash chain. `cwr help` lists every subcommand, and `cwr instance` with no command lists every Instance command; the guides below give every option and exit code.
 
 ## Build from source
 
@@ -186,7 +185,7 @@ specification disagree, the specification wins.
 | `tools/` | Repository tooling: source headers, code map and release checks |
 | `research/` | One report per hypothesis, H1 to H4 |
 | `scripts/` | Operator scripts: host setup, campaigns and release |
-| `vendor/` | Target of `make vendor` for offline, reproducible builds |
+| `vendor/` | Target of `make vendor`. Builds read it only after the source replacement in [vendor/README.md](vendor/README.md) is added. |
 | `artifacts/` | Release bundles written by `make release` |
 
 ## Status

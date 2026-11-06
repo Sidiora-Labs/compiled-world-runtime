@@ -737,22 +737,35 @@ pub fn validate_params(
     params: &Value,
     records: &Records,
 ) -> std::result::Result<Vec<Value>, String> {
+    validate_param_list(&c.params, params, records)
+}
+
+/// Step 1 over a declared parameter list, for a caller that holds the parameters without a
+/// compiled [`Contract`] (the compiler's ephemeral Instance). Refuses exactly what
+/// [`validate_params`] refuses, with the same reasons, and returns the arguments in declared order.
+pub fn validate_param_list(
+    declared_params: &[(String, TypeExpr)],
+    params: &Value,
+    records: &Records,
+) -> std::result::Result<Vec<Value>, String> {
     let Some(obj) = params.as_object() else {
         return Err("parameters must be an object".into());
     };
-    let declared: BTreeSet<&str> = c.params.iter().map(|(n, _)| n.as_str()).collect();
+    let declared: BTreeSet<&str> = declared_params.iter().map(|(n, _)| n.as_str()).collect();
     let given: BTreeSet<&str> = obj.keys().map(String::as_str).collect();
     if declared != given {
         let missing: Vec<&&str> = declared.difference(&given).collect();
         let extra: Vec<&&str> = given.difference(&declared).collect();
         return Err(format!(
             "parameters must be exactly {:?}; missing {missing:?}, unknown {extra:?}",
-            c.params.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            declared_params.iter().map(|(n, _)| n).collect::<Vec<_>>()
         ));
     }
     let mut args = Vec::new();
-    for (n, ty) in &c.params {
-        let v = &obj[n];
+    for (n, ty) in declared_params {
+        let v = obj
+            .get(n)
+            .ok_or_else(|| format!("parameter {n} is missing"))?;
         if has_bad_tag(v) {
             return Err(format!("parameter {n} holds a value outside the SDK codec"));
         }
@@ -760,6 +773,94 @@ pub fn validate_params(
         args.push(v.clone());
     }
     Ok(args)
+}
+
+/// The verdict of step 2 of the atomic contract check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreconditionVerdict {
+    /// Every precondition held; the call proceeds to step 3.
+    Passed,
+    /// The precondition at one-based `index` was false; the call fails with its declared `code`.
+    Failed {
+        /// One-based position of the false precondition.
+        index: usize,
+        /// The code that precondition declares.
+        code: Code,
+    },
+    /// The precondition at one-based `index` could not be evaluated, for `reason`.
+    Unevaluable {
+        /// One-based position of the precondition.
+        index: usize,
+        /// Why evaluation failed.
+        reason: String,
+    },
+}
+
+/// Step 2: evaluates the preconditions in declared order and stops at the first one that is false
+/// or cannot be evaluated. Returns one [`PreconditionEval`] per precondition that produced a
+/// value, in order, and the verdict. The kernel's [`Checker`] and the compiler's ephemeral
+/// Instance both run step 2 through this function, so they agree on order and on which
+/// precondition decides the call.
+pub fn check_preconditions<'p>(
+    preconditions: impl IntoIterator<Item = (&'p str, &'p Expr, Code)>,
+    params: &Map<String, Value>,
+    read_only: &mut ReadOnlyCall<'_>,
+) -> (Vec<PreconditionEval>, PreconditionVerdict) {
+    let mut evals = Vec::new();
+    for (i, (src, ast, code)) in preconditions.into_iter().enumerate() {
+        match eval_expr(ast, params, None, read_only) {
+            Ok(v) => {
+                let passed = truthy(&v);
+                evals.push(PreconditionEval {
+                    index: u32::try_from(i + 1).unwrap_or(u32::MAX),
+                    expr_hash: expr_hash(src),
+                    passed,
+                });
+                if !passed {
+                    return (evals, PreconditionVerdict::Failed { index: i + 1, code });
+                }
+            }
+            Err(reason) => {
+                return (
+                    evals,
+                    PreconditionVerdict::Unevaluable {
+                        index: i + 1,
+                        reason,
+                    },
+                )
+            }
+        }
+    }
+    (evals, PreconditionVerdict::Passed)
+}
+
+/// Step 4: evaluates the declared effects of `name` after an ok outcome with `result` bound, in
+/// declared order. Returns the defect text of the first effect that does not hold or cannot be
+/// evaluated, or `None` when every effect holds. Shared by the kernel's [`Checker`] and the
+/// compiler's ephemeral Instance.
+pub fn check_effects<'p>(
+    name: &str,
+    effects: impl IntoIterator<Item = (&'p str, &'p Expr)>,
+    params: &Map<String, Value>,
+    result: &Value,
+    read_only: &mut ReadOnlyCall<'_>,
+) -> Option<String> {
+    for (src, ast) in effects {
+        match eval_expr(ast, params, Some(result), read_only) {
+            Ok(v) if truthy(&v) => {}
+            Ok(_) => {
+                return Some(format!(
+                    "effect `{src}` of {name} does not hold after an ok outcome"
+                ))
+            }
+            Err(m) => {
+                return Some(format!(
+                    "effect `{src}` of {name} could not be evaluated: {m}"
+                ))
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1327,11 +1428,6 @@ impl<'a> Checker<'a> {
         Err(format!("{target} has no lib/ implementation"))
     }
 
-    fn eval_expr(&mut self, e: &Expr, env: &Env) -> std::result::Result<Value, String> {
-        let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
-        eval_expr(e, env.params, env.result, &mut read_only)
-    }
-
     fn record(
         &mut self,
         head: CallHead<'_>,
@@ -1486,59 +1582,65 @@ impl<'a> Checker<'a> {
         };
         let pmap = params.as_object().cloned().unwrap_or_default();
         // Step 2: preconditions in declared order.
-        let mut evals = Vec::new();
-        for (i, (src, ast, code)) in c.preconditions.iter().enumerate() {
-            let env = Env {
-                params: &pmap,
-                result: None,
-            };
-            match self.eval_expr(ast, &env) {
-                Ok(v) => {
-                    let passed = truthy(&v);
-                    evals.push(PreconditionEval {
-                        index: (i + 1) as u32,
-                        expr_hash: expr_hash(src),
-                        passed,
-                    });
-                    if !passed {
-                        let f = Failure::precondition(
-                            *code,
-                            name,
-                            i + 1,
-                            format!("precondition {} `{src}` was false", i + 1),
-                        );
-                        return self.refuse(
-                            CallHead::new(kind, name, phash, evals, started),
-                            f,
-                            shape,
-                            side,
-                            cg,
-                        );
-                    }
-                }
-                Err(_) if self.wall_expired => {
-                    return self.wall_limit(
-                        CallHead::new(kind, name, phash, evals, started),
-                        rng_at_call,
-                        shape,
-                        side,
-                        cg,
-                    );
-                }
-                Err(m) => {
-                    let f = Failure::new(
-                        Code::InvariantViolation,
-                        name,
-                        format!("precondition {} `{src}` could not be evaluated: {m}", i + 1),
-                    );
-                    return self.refuse(
-                        CallHead::new(kind, name, phash, evals, started),
-                        f,
-                        shape,
-                        side,
-                        cg,
-                    );
-                }
+        let (evals, verdict) = {
+            let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
+            check_preconditions(
+                c.preconditions
+                    .iter()
+                    .map(|(src, ast, code)| (src.as_str(), ast, *code)),
+                &pmap,
+                &mut read_only,
+            )
+        };
+        match verdict {
+            PreconditionVerdict::Passed => {}
+            PreconditionVerdict::Failed { index, code } => {
+                let src = c
+                    .preconditions
+                    .get(index - 1)
+                    .map(|(s, _, _)| s.as_str())
+                    .unwrap_or("");
+                let f = Failure::precondition(
+                    code,
+                    name,
+                    index,
+                    format!("precondition {index} `{src}` was false"),
+                );
+                return self.refuse(
+                    CallHead::new(kind, name, phash, evals, started),
+                    f,
+                    shape,
+                    side,
+                    cg,
+                );
+            }
+            PreconditionVerdict::Unevaluable { .. } if self.wall_expired => {
+                return self.wall_limit(
+                    CallHead::new(kind, name, phash, evals, started),
+                    rng_at_call,
+                    shape,
+                    side,
+                    cg,
+                );
+            }
+            PreconditionVerdict::Unevaluable { index, reason } => {
+                let src = c
+                    .preconditions
+                    .get(index - 1)
+                    .map(|(s, _, _)| s.as_str())
+                    .unwrap_or("");
+                let f = Failure::new(
+                    Code::InvariantViolation,
+                    name,
+                    format!("precondition {index} `{src}` could not be evaluated: {reason}"),
+                );
+                return self.refuse(
+                    CallHead::new(kind, name, phash, evals, started),
+                    f,
+                    shape,
+                    side,
+                    cg,
+                );
             }
         }
         if c.is_adapter {
@@ -1632,27 +1734,14 @@ impl<'a> Checker<'a> {
         // Step 4: effects (debug mode).
         let mut effect_failed = false;
         if defect.is_none() && fail.is_none() && self.debug_effects && !c.effects.is_empty() {
-            for (src, ast) in &c.effects {
-                let env = Env {
-                    params: &pmap,
-                    result: Some(&value),
-                };
-                match self.eval_expr(ast, &env) {
-                    Ok(v) if truthy(&v) => {}
-                    Ok(_) => {
-                        defect = Some(format!(
-                            "effect `{src}` of {name} does not hold after an ok outcome"
-                        ));
-                        break;
-                    }
-                    Err(m) => {
-                        defect = Some(format!(
-                            "effect `{src}` of {name} could not be evaluated: {m}"
-                        ));
-                        break;
-                    }
-                }
-            }
+            let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
+            defect = check_effects(
+                name,
+                c.effects.iter().map(|(src, ast)| (src.as_str(), ast)),
+                &pmap,
+                &value,
+                &mut read_only,
+            );
             effect_failed = defect.is_some();
         }
         if self.wall_expired {
@@ -2070,5 +2159,59 @@ mod tests {
             .collect()
         );
         assert_eq!(v["primitive"], json!(""));
+    }
+
+    #[test]
+    fn steps_two_and_four_stop_at_the_first_deciding_expression() {
+        let parse = |src: &str| cwr_contract::precondition::parse(src).expect("expression");
+        let srcs = ["len(q) > 0", "limit <= 50", "missing > 0"];
+        let asts: Vec<Expr> = srcs.iter().map(|s| parse(s)).collect();
+        let pcs = |codes: [Code; 3]| {
+            srcs.iter()
+                .zip(asts.iter())
+                .zip(codes)
+                .map(|((s, a), c)| (*s, a, c))
+                .collect::<Vec<_>>()
+        };
+        let codes = [Code::Invalid, Code::Limit, Code::NotFound];
+        let mut calls = 0usize;
+        let mut ro = |_: &str, _: Vec<Value>| -> std::result::Result<Value, String> {
+            calls += 1;
+            Ok(Value::Null)
+        };
+        let params = json!({"q": "x", "limit": 51});
+        let p = params.as_object().cloned().unwrap_or_default();
+        let (evals, verdict) = check_preconditions(pcs(codes), &p, &mut ro);
+        assert_eq!(
+            verdict,
+            PreconditionVerdict::Failed {
+                index: 2,
+                code: Code::Limit
+            }
+        );
+        assert_eq!(
+            evals
+                .iter()
+                .map(|e| (e.index, e.passed))
+                .collect::<Vec<_>>(),
+            vec![(1, true), (2, false)]
+        );
+        let ok = json!({"q": "x", "limit": 5});
+        let p = ok.as_object().cloned().unwrap_or_default();
+        let (evals, verdict) = check_preconditions(pcs(codes), &p, &mut ro);
+        assert!(matches!(
+            verdict,
+            PreconditionVerdict::Unevaluable { index: 3, .. }
+        ));
+        assert_eq!(evals.len(), 2);
+        let effects = [("limit <= 50", &asts[1]), ("len(q) > 0", &asts[0])];
+        let big = json!({"q": "", "limit": 51});
+        let p = big.as_object().cloned().unwrap_or_default();
+        let d = check_effects("search.query", effects, &p, &Value::Null, &mut ro);
+        assert_eq!(
+            d.as_deref(),
+            Some("effect `limit <= 50` of search.query does not hold after an ok outcome")
+        );
+        assert_eq!(calls, 0);
     }
 }

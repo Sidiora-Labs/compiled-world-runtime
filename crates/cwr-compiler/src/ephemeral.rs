@@ -17,12 +17,15 @@
 //! 5. advance world time by `tick_per_primitive`;
 //! 6. append an in-memory ledger record (the shape of manual `LedgerRecord`).
 //!
-//! Rule logic (parameter validation, precondition order, effects, the closed envelope, shape
-//! checks, the clock and the RNG draws) lives here in Rust; world code runs in one Python 3.12
-//! worker process per suite run, spoken to over JSON lines on stdin/stdout. The value checks
-//! ([`check_shape`], [`truthy`], [`has_bad_tag`]), the record table ([`Records`]) and the
-//! precondition and effect evaluator ([`cwr_kernel::contract_check::eval_expr`]) are the
-//! kernel's own, so a contract test and the run-time check of the same Build agree. The worker
+//! Rule logic lives in Rust; world code runs in one Python 3.12 worker process per suite run,
+//! spoken to over JSON lines on stdin/stdout. Step 1
+//! ([`cwr_kernel::contract_check::validate_param_list`]), step 2
+//! ([`cwr_kernel::contract_check::check_preconditions`]) and step 4
+//! ([`cwr_kernel::contract_check::check_effects`]) are the kernel checker's own functions, as are
+//! the value checks ([`check_shape`], [`truthy`], [`has_bad_tag`]) and the record table
+//! ([`Records`]), so a contract test and the run-time check of the same Build agree on order and
+//! verdicts. Step 3 differs by construction: the kernel runs a committed Instance and a live or
+//! replaying gateway, the ephemeral Instance runs fixture state and a replay-only gateway. The worker
 //! holds the Instance state, implements the state handle methods the refworld convention
 //! defines (`module(name)`, `world_time()`, `random()`, `seed()`, `build_version()`,
 //! `limits()`, `history(n)`, `propose(text)`) and a `cwr_state` module with
@@ -52,11 +55,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
-use cwr_contract::{Adapter, Code, Expr, Expression, Primitive, TypeExpr};
+use cwr_contract::{Adapter, Code, Expression, Primitive, TypeExpr};
+use cwr_kernel::contract_check;
 use serde_json::{json, Map, Value};
 
 /// Named record types from `manual/types.md`, parsed by the kernel's own reader so that the
@@ -87,7 +91,9 @@ fn records_value(records: &Records) -> Value {
 /// The Python worker that executes world code for one suite run.
 pub struct Worker {
     child: Child,
-    stdin: ChildStdin,
+    /// Request lines for the writer thread, which owns the worker's stdin; a request is therefore
+    /// bounded by the host deadline even when the worker stops reading and the pipe fills.
+    requests: Sender<Vec<u8>>,
     lines: Receiver<std::io::Result<String>>,
     deadline: Duration,
     dead: Option<String>,
@@ -197,6 +203,15 @@ impl Worker {
             let _ = child.wait();
             return Err("cannot open the contract-test worker's stdin and stdout pipes".into());
         };
+        let (requests, pending) = mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let mut stdin = stdin;
+            for buf in pending {
+                if stdin.write_all(&buf).and_then(|_| stdin.flush()).is_err() {
+                    break;
+                }
+            }
+        });
         let (tx, lines) = mpsc::channel();
         std::thread::spawn(move || {
             let mut r = BufReader::new(stdout);
@@ -218,7 +233,7 @@ impl Worker {
         });
         let mut w = Worker {
             child,
-            stdin,
+            requests,
             lines,
             deadline: HOST_DEADLINE,
             dead: None,
@@ -248,10 +263,11 @@ impl Worker {
         }
         let mut line = serde_json::to_string(req).map_err(|e| e.to_string())?;
         line.push('\n');
-        self.stdin
-            .write_all(line.as_bytes())
-            .and_then(|_| self.stdin.flush())
-            .map_err(|e| format!("contract-test worker: {e}"))?;
+        // The write happens on the writer thread, so a worker that stops reading cannot block the
+        // compiler: the response wait below covers the write as well.
+        self.requests
+            .send(line.into_bytes())
+            .map_err(|_| "contract-test worker closed its stdin".to_string())?;
         let resp = match self.lines.recv_timeout(self.deadline) {
             Ok(Ok(resp)) => resp,
             Ok(Err(e)) => return Err(format!("contract-test worker: {e}")),
@@ -455,11 +471,6 @@ pub struct Ephemeral<'a> {
 /// Number of RNG draws made available to one case.
 const DRAWS: usize = 64;
 
-struct Env<'e> {
-    params: &'e Map<String, Value>,
-    result: Option<&'e Value>,
-}
-
 impl<'a> Ephemeral<'a> {
     /// Creates an ephemeral Instance over a fresh worker.
     pub fn new(
@@ -591,11 +602,6 @@ impl<'a> Ephemeral<'a> {
         Err(format!("{target} has no lib/ implementation"))
     }
 
-    fn eval_expr(&mut self, e: &Expr, env: &Env) -> Result<Value, String> {
-        let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
-        cwr_kernel::contract_check::eval_expr(e, env.params, env.result, &mut read_only)
-    }
-
     fn record(
         &mut self,
         t: &Target,
@@ -627,49 +633,45 @@ impl<'a> Ephemeral<'a> {
         let Some(t) = self.targets.get(name).copied() else {
             return CallOutcome::fail(Code::Invalid, None);
         };
-        // Step 1: parameters.
-        let declared: BTreeSet<&str> = t.params().iter().map(|(n, _)| n.as_str()).collect();
-        let given: BTreeSet<&str> = params.keys().map(String::as_str).collect();
-        let mut invalid = declared != given;
-        if !invalid {
-            for (n, ty) in t.params() {
-                let v = params.get(n).unwrap_or(&Value::Null);
-                if has_bad_tag(v) || check_shape(v, ty, self.records).is_err() {
-                    invalid = true;
-                }
-            }
-        }
-        if invalid {
+        // Steps 1 and 2 are the kernel's own, so their order and verdicts cannot drift.
+        let given = Value::Object(params.clone());
+        if contract_check::validate_param_list(t.params(), &given, self.records).is_err() {
             let out = CallOutcome::fail(Code::Invalid, None);
             self.record(&t, params, Vec::new(), &out);
             return out;
         }
-        // Step 2: preconditions in declared order.
-        let mut evaluated = Vec::new();
-        for (i, (expr, code)) in t.preconditions().into_iter().enumerate() {
-            let env = Env {
+        let preconditions = t.preconditions();
+        let (evals, verdict) = {
+            let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
+            contract_check::check_preconditions(
+                preconditions
+                    .iter()
+                    .map(|(expr, code)| (expr.source(), expr.ast(), *code)),
                 params,
-                result: None,
-            };
-            match self.eval_expr(expr.ast(), &env) {
-                Ok(v) => {
-                    let passed = truthy(&v);
-                    evaluated.push(json!({"index": i + 1, "expr_hash": format!("sha256:{}", cwr_kernel::sha256_hex(expr.source().as_bytes())), "passed": passed}));
-                    if !passed {
-                        let out = CallOutcome::fail(code, Some(i + 1));
-                        self.record(&t, params, evaluated, &out);
-                        return out;
-                    }
-                }
-                Err(m) => {
-                    let out = CallOutcome::defect(format!(
-                        "precondition {} `{}` of {name} could not be evaluated: {m}",
-                        i + 1,
-                        expr.source()
-                    ));
-                    self.record(&t, params, evaluated, &out);
-                    return out;
-                }
+                &mut read_only,
+            )
+        };
+        let evaluated: Vec<Value> = evals
+            .iter()
+            .map(|e| json!({"index": e.index, "expr_hash": e.expr_hash, "passed": e.passed}))
+            .collect();
+        match verdict {
+            contract_check::PreconditionVerdict::Passed => {}
+            contract_check::PreconditionVerdict::Failed { index, code } => {
+                let out = CallOutcome::fail(code, Some(index));
+                self.record(&t, params, evaluated, &out);
+                return out;
+            }
+            contract_check::PreconditionVerdict::Unevaluable { index, reason } => {
+                let src = preconditions
+                    .get(index - 1)
+                    .map(|(expr, _)| expr.source())
+                    .unwrap_or("");
+                let out = CallOutcome::defect(format!(
+                    "precondition {index} `{src}` of {name} could not be evaluated: {reason}"
+                ));
+                self.record(&t, params, evaluated, &out);
+                return out;
             }
         }
         // Step 3: execute.
@@ -702,27 +704,19 @@ impl<'a> Ephemeral<'a> {
             }
         };
         out.executed = true;
-        // Step 4: effects after ok.
+        // Step 4: effects after ok, always (not only in debug mode), through the kernel's step 4.
         if out.code.is_none() {
             let result = out.returned.clone().unwrap_or(Value::Null);
-            for e in t.effects() {
-                let env = Env {
-                    params,
-                    result: Some(&result),
-                };
-                match self.eval_expr(e.ast(), &env) {
-                    Ok(v) if truthy(&v) => {}
-                    Ok(_) => out.defects.push(format!(
-                        "effect `{}` of {name} does not hold after an ok outcome",
-                        e.source()
-                    )),
-                    Err(m) => out.defects.push(format!(
-                        "effect `{}` of {name} could not be evaluated: {m}",
-                        e.source()
-                    )),
-                }
-            }
-            if !out.defects.is_empty() {
+            let effects = t.effects();
+            let mut read_only = |target: &str, args: Vec<Value>| self.read_only(target, args);
+            if let Some(d) = contract_check::check_effects(
+                name,
+                effects.iter().map(|e| (e.source(), e.ast())),
+                params,
+                &result,
+                &mut read_only,
+            ) {
+                out.defects.push(d);
                 out.code = Some(Code::InvariantViolation);
             }
         }
@@ -843,12 +837,13 @@ STEP_SECONDS = 20
 # World code has no network or process capability (clause 7.1), cannot write outside the
 # scratch directory, signal other processes, change the environment or raise its own resource
 # limits. Audit hooks cannot be removed once added.
-_DENIED = ("socket.", "ctypes.", "subprocess.", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork", "os.forkpty", "_winapi.", "os.kill", "os.killpg", "signal.pthread_kill", "os.putenv", "os.unsetenv")
+_DENIED = ("socket.", "ctypes.", "subprocess.", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork", "os.forkpty", "_winapi.", "os.kill", "os.killpg", "signal.pthread_kill", "os.putenv", "os.unsetenv", "_thread.start_new_thread")
 _NATIVE = (".so", ".pyd", ".dylib", ".dll")
 # Modules that start processes or interpreters without raising any audit event of their own.
 _NO_IMPORT = ("_posixsubprocess", "_xxsubinterpreters", "_xxinterpchannels", "_interpreters", "_interpchannels", "_testcapi", "_testinternalcapi", "_testmultiphase", "_testsinglephase", "_testimportmultiple")
-# Events that change the filesystem, with the positions of their path arguments.
-_FS_EVENTS = {"os.remove": (0,), "os.rmdir": (0,), "os.mkdir": (0,), "os.chmod": (0,), "os.chown": (0,), "os.truncate": (0,), "os.utime": (0,), "os.rename": (0, 1), "os.link": (0, 1), "os.symlink": (0, 1), "shutil.rmtree": (0,), "shutil.copyfile": (1,), "shutil.copymode": (1,), "shutil.copystat": (1,), "shutil.copytree": (1,), "shutil.move": (0, 1), "shutil.chown": (0,), "shutil.make_archive": (0,), "shutil.unpack_archive": (1,)}
+# Events that change the filesystem: per path argument, its position and the position of the
+# dir_fd argument it is relative to (None where the event has none).
+_FS_EVENTS = {"os.remove": ((0, 1),), "os.rmdir": ((0, 1),), "os.mkdir": ((0, 2),), "os.chmod": ((0, 2),), "os.chown": ((0, 3),), "os.truncate": ((0, None),), "os.utime": ((0, 3),), "os.rename": ((0, 2), (1, 3)), "os.link": ((0, 2), (1, 3)), "os.symlink": ((0, None), (1, 2)), "os.setxattr": ((0, None),), "os.removexattr": ((0, None),), "shutil.rmtree": ((0, None),), "shutil.copyfile": ((1, None),), "shutil.copymode": ((1, None),), "shutil.copystat": ((1, None),), "shutil.copytree": ((1, None),), "shutil.move": ((0, None), (1, None)), "shutil.chown": ((0, None),), "shutil.make_archive": ((0, None),), "shutil.unpack_archive": ((1, None),)}
 _WRITE_FLAGS = 3 | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 SCRATCH = [None]
 IN_WORLD = [False]
@@ -858,13 +853,38 @@ def _native(path):
         path = path.decode("utf-8", "replace")
     return isinstance(path, str) and path.lower().endswith(_NATIVE)
 
-def _inside(path):
-    if isinstance(path, int):
-        return True
+# Where /proc is mounted (always outside bubblewrap, whose view has none), a file descriptor
+# names its file through /proc/self/fd. Inside bubblewrap the read-only view itself refuses
+# writes outside scratch, and descriptors and dir_fd arguments are taken as they were opened.
+_PROC_FD = os.path.isdir("/proc/self/fd")
+
+def _fd_path(fd):
     try:
-        p = os.path.realpath(os.fsdecode(os.fspath(path)))
-    except (TypeError, ValueError):
-        return False
+        return os.readlink("/proc/self/fd/%d" % fd)
+    except (OSError, ValueError, OverflowError, TypeError):
+        return None
+
+def _inside(path, dir_fd=None, fd_ok=False):
+    # fd_ok: writing through an open descriptor, whose access was decided (and checked) when it
+    # was opened. Otherwise a descriptor (fchmod, ftruncate, ...) is resolved to its file, and a
+    # relative path is resolved against its dir_fd, not the working directory.
+    if isinstance(path, int):
+        if fd_ok or not _PROC_FD:
+            return True
+        target = _fd_path(path)
+        if target is None:
+            return False
+    else:
+        try:
+            target = os.fsdecode(os.fspath(path))
+        except (TypeError, ValueError):
+            return False
+        if dir_fd is not None and _PROC_FD and not os.path.isabs(target):
+            base = _fd_path(dir_fd)
+            if base is None:
+                return False
+            target = os.path.join(base, target)
+    p = os.path.realpath(target)
     s = SCRATCH[0]
     return s is not None and (p == s or p.startswith(s + os.sep))
 
@@ -878,11 +898,12 @@ def _guard(event, args):
         if (isinstance(mode, str) and any(c in mode for c in "wax+")) or (mode is None and flags & _WRITE_FLAGS):
             if _native(args[0]):
                 raise PermissionError("contract tests: world code may not write native extension files")
-            if not _inside(args[0]):
+            if not _inside(args[0], fd_ok=True):
                 raise PermissionError("contract tests: world code may not write outside its scratch directory")
     if event in _FS_EVENTS:
-        for i in _FS_EVENTS[event]:
-            if len(args) > i and not _inside(args[i]):
+        for i, d in _FS_EVENTS[event]:
+            dir_fd = args[d] if d is not None and len(args) > d else None
+            if len(args) > i and not _inside(args[i], dir_fd if isinstance(dir_fd, int) else None):
                 raise PermissionError("contract tests: world code may not change the filesystem outside its scratch directory (%s)" % event)
         if event in ("os.rename", "os.link", "os.symlink") and len(args) >= 2 and _native(args[1]):
             raise PermissionError("contract tests: world code may not create native extension files")
@@ -890,6 +911,19 @@ def _guard(event, args):
         raise PermissionError("contract tests: world code may not change its resource limits")
 
 sys.addaudithook(_guard)
+
+# The "open" audit event carries no dir_fd, so a relative path opened for writing against a
+# directory descriptor would be judged against the working directory. os.open is the only call
+# that takes dir_fd for an open; both names it has are replaced by a check that resolves it.
+_OS_OPEN = os.open
+
+def _open(path, flags, mode=0o777, *, dir_fd=None):
+    if dir_fd is not None and flags & _WRITE_FLAGS and not _inside(path, dir_fd):
+        raise PermissionError("contract tests: world code may not write outside its scratch directory")
+    return _OS_OPEN(path, flags, mode, dir_fd=dir_fd)
+
+os.open = _open
+sys.modules["posix"].open = _open
 
 def out(obj):
     PROTO.write(json.dumps(obj, sort_keys=True, separators=(",", ":")) + "\n")
@@ -996,12 +1030,26 @@ def load(rel, tag):
     guarded(spec.loader.exec_module, mod)
     return mod
 
+_EXTRAS = (typing.Required, typing.NotRequired, typing.Annotated)
+
+def bare(h):
+    while typing.get_origin(h) in _EXTRAS:
+        h = typing.get_args(h)[0]
+    return h
+
+def hints_of(obj):
+    # The annotations as the module or class evaluated them itself, in its own guarded top-level
+    # code. Nothing here evaluates an annotation (typing.get_type_hints would eval string
+    # annotations with the module's globals, code the import lint never sees): a string
+    # annotation, or a ForwardRef inside a type, stays unresolved and validate() refuses it.
+    ann = vars(obj).get("__annotations__")
+    return {k: bare(v) for k, v in ann.items()} if isinstance(ann, dict) else {}
+
+def unresolved(h):
+    return isinstance(h, (str, typing.ForwardRef))
+
 def state_hint(mod):
-    try:
-        hints = typing.get_type_hints(mod)
-    except Exception:
-        hints = {}
-    h = hints.get("INITIAL_STATE")
+    h = hints_of(mod).get("INITIAL_STATE")
     if h is not None:
         return h
     for name in sorted(vars(mod)):
@@ -1015,14 +1063,14 @@ def is_union(h):
     return o is typing.Union or o is types.UnionType
 
 def by_hint(v, h):
-    if h is None or h is typing.Any:
+    if h is None or h is typing.Any or unresolved(h):
         return v
     if h is bytes:
         return v.encode("utf-8") if isinstance(v, str) else v
     if isinstance(h, type) and typing.is_typeddict(h):
         if not isinstance(v, dict):
             return v
-        hints = typing.get_type_hints(h)
+        hints = hints_of(h)
         return {k: by_hint(x, hints.get(k)) for k, x in v.items()}
     o, a = typing.get_origin(h), typing.get_args(h)
     if o is dict and len(a) == 2 and isinstance(v, dict):
@@ -1040,6 +1088,8 @@ def by_hint(v, h):
 def validate(v, h, where, lenient):
     if h is None or h is typing.Any:
         return None
+    if unresolved(h):
+        return "%s: the state type is the string annotation %r; contract tests never evaluate string annotations, so write the type itself" % (where, getattr(h, "__forward_arg__", h))
     if h is type(None):
         return None if v is None else "%s: expected None" % where
     if h is bytes:
@@ -1053,7 +1103,7 @@ def validate(v, h, where, lenient):
     if isinstance(h, type) and typing.is_typeddict(h):
         if not isinstance(v, dict):
             return "%s: expected a %s record" % (where, h.__name__)
-        hints = typing.get_type_hints(h)
+        hints = hints_of(h)
         missing = sorted(set(h.__required_keys__) - set(v))
         extra = sorted(set(v) - set(hints))
         if missing or extra:
@@ -1109,20 +1159,34 @@ def _cpu_soft(seconds):
         seconds = min(seconds, _CPU_HARD)
     resource.setrlimit(resource.RLIMIT_CPU, (seconds, _CPU_HARD))
 
-def guarded(fn, *args):
-    # Two guards per step of world code: SIGALRM after STEP_SECONDS of host time (interrupts
-    # Python code), and a soft CPU limit of limits.cpu_ms plus one second (SIGXCPU, whose default
-    # action ends the worker even inside native code). The host deadline backs both.
+DEPTH = [0]
+
+def _arm():
+    IN_WORLD[0] = False
     used = resource.getrusage(resource.RUSAGE_SELF)
     _cpu_soft(int(used.ru_utime + used.ru_stime) + I.cpu_seconds)
     signal.alarm(STEP_SECONDS)
     IN_WORLD[0] = True
+
+def guarded(fn, *args):
+    # Two guards per step of world code: SIGALRM after STEP_SECONDS of host time (interrupts
+    # Python code), and a soft CPU limit of limits.cpu_ms plus one second (SIGXCPU, whose default
+    # action ends the worker even inside native code). The host deadline backs both. Every
+    # request but init runs guarded as a whole, because worker code touches world objects too
+    # (deepcopy, comparison, annotations, module attributes); a step nested in it gets fresh
+    # limits, and so does the rest of the request after it.
+    _arm()
+    DEPTH[0] += 1
     try:
         return fn(*args)
     finally:
-        IN_WORLD[0] = False
-        signal.alarm(0)
-        _cpu_soft(resource.RLIM_INFINITY)
+        DEPTH[0] -= 1
+        if DEPTH[0]:
+            _arm()
+        else:
+            IN_WORLD[0] = False
+            signal.alarm(0)
+            _cpu_soft(resource.RLIM_INFINITY)
 
 def describe(e):
     text = "%s: %s" % (type(e).__name__, e)
@@ -1361,7 +1425,8 @@ OPS = {"init": op_init, "reset": op_reset, "decode": op_decode, "call": op_call,
 for line in sys.stdin:
     try:
         req = json.loads(line)
-        out(OPS[req["op"]](req))
+        op = OPS[req["op"]]
+        out(op(req) if op is op_init else guarded(op, req))
     except Exception as e:
         out({"fatal": "contract-test worker: " + describe(e)})
 "#####;
@@ -1485,6 +1550,53 @@ mod tests {
                 .all(|k| matches!(*k, "PATH" | "PWD" | "LC_CTYPE")),
             "the worker sees the compiler's environment: {env:?}"
         );
+    }
+
+    /// A string annotation on a module's state is never evaluated by the worker (it would run
+    /// code the import lint cannot see); fixture state for that module is refused instead.
+    #[test]
+    fn string_state_annotations_are_refused_not_evaluated() {
+        if !have_python() {
+            eprintln!("skipped: no python3");
+            return;
+        }
+        let text = "INITIAL_STATE: \"open('evaluated.txt', 'w').close() or dict\" = {}\n";
+        let (root, scratch) = probe_root("annot", "probe", text);
+        let got = spawn(&root, &scratch, "probe").and_then(|mut w| {
+            w.request(&json!({"op": "reset", "state": {"probe": {}}, "seed": 0, "randoms": [], "cassette": []}))
+        });
+        let evaluated = scratch.join("evaluated.txt").exists();
+        let _ = std::fs::remove_dir_all(root.parent().expect("base"));
+        let r = got.expect("worker answered");
+        assert!(!evaluated, "the worker evaluated a string annotation");
+        let e = r.get("error").and_then(Value::as_str).unwrap_or("");
+        assert!(e.contains("string annotation"), "{r}");
+    }
+
+    /// A relative write through a directory descriptor outside scratch is refused: the audit
+    /// event of an open carries no dir_fd, so the worker resolves it itself.
+    #[test]
+    fn writes_through_an_outside_directory_descriptor_are_refused() {
+        if !have_python() {
+            eprintln!("skipped: no python3");
+            return;
+        }
+        let (root, scratch) = probe_root("dirfd", "probe", "");
+        let text = format!(
+            "import os\n\ndef write(state):\n    out = []\n    fd = os.open({:?}, os.O_RDONLY)\n    for call in (lambda: os.open('pwned.txt', os.O_WRONLY | os.O_CREAT, dir_fd=fd), lambda: os.mkdir('pwned.d', dir_fd=fd), lambda: os.chmod(fd, 0o777)):\n        try:\n            call()\n            out.append('wrote')\n        except OSError:\n            out.append('refused')\n    return out\n",
+            root.display().to_string()
+        );
+        std::fs::write(root.join("lib/probe.py"), text).expect("lib file");
+        let got = spawn(&root, &scratch, "probe").and_then(|mut w| call(&mut w, "probe.write"));
+        let pwned = root.join("pwned.txt").exists() || root.join("pwned.d").exists();
+        let _ = std::fs::remove_dir_all(root.parent().expect("base"));
+        let r = got.expect("worker answered");
+        assert_eq!(
+            r.get("result"),
+            Some(&json!(["refused", "refused", "refused"])),
+            "{r}"
+        );
+        assert!(!pwned);
     }
 
     /// A step of world code that loops in native code (where the in-worker alarm cannot

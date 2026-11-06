@@ -27,7 +27,9 @@
 //!      prose under `doc_only`) is covered by a `doc_only` change of the newest release that
 //!      names the prose (see step 5), or by any rule change (any kind but `doc_only`) of the
 //!      newest release: a release that changes rules rewrites the prose describing them. A
-//!      `doc_only` change on an unrelated target does not cover prose.
+//!      `doc_only` change on an unrelated target does not cover prose. That a rule change
+//!      covers prose whatever its target is the recorded deviation
+//!      `finding.task_1_2_rule_change_covers_all_prose` of `spec/cwr/qualification.kvx`.
 //! 4. Every `state_shape` entry needs a `state_shape` change for the module naming an
 //!    existing file under `migrations/`; otherwise CWR-M001.
 //! 5. A change of the newest release that matches no diff entry is refused: the changelog may

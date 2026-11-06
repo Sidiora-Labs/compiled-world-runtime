@@ -316,7 +316,9 @@ fn short(v: &Value) -> String {
 /// The declared adapter failures no case reached as compiler.md section 4 requires: through
 /// the gateway (`gateway`: codes of calls that passed parameter validation and every
 /// precondition), or, for a failure that is also one of the adapter's precondition codes, by
-/// that precondition (`reached` with an index).
+/// that precondition (`reached` with an index). The precondition allowance is the recorded
+/// deviation `finding.task_1_2_adapter_failure_reached_by_precondition` of
+/// `spec/cwr/qualification.kvx`.
 fn unreached_failures(
     failures: &[Code],
     precondition_codes: &BTreeSet<Code>,

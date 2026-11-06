@@ -527,3 +527,23 @@ log = "benchmark/cassettes/refworld-adapters timeout scenario"
 observed = "The manual and the publish.status doc tell the model to reconcile a TIMEOUT on publish.post with publish.status before posting under a new key. publish.status takes a post_id, which the model never receives after a TIMEOUT; an identical replay returns the stored TIMEOUT; and the stub completes the side effect before answering late, so the advised new-key repost can create a duplicate post."
 assumption = "The fix is a key-addressed status (publish.lookup(key) in the adapter contract and the stub) or the deterministic post id in the TIMEOUT detail, with the manual and reference-world.md section 4 rewritten to match. Any byte of examples/refworld changes the refworld Build hash that arms.kvx, the upgrade pairs and every cassette set record, so the change is made together with the next re-registration of the campaigns, not inside this review."
 product_evidence = false
+
+# Deviation of task 1.2 (clause 4.2, compiler.md section 4): adapter failure reachability.
+[finding.task_1_2_adapter_failure_reached_by_precondition]
+revision = "working-tree crates/cwr-compiler/src/contract_tests.rs 2026-11-06"
+command = "python3 tests/cwr/cases/1_2.py"
+exit_code = 0
+log = "contract test report tests.json of examples/refworld, adapter search.query, failure LIMIT"
+observed = "compiler.md section 4 requires every declared adapter failure to be reached by replaying a fixture response through the gateway. The contract tests count a declared adapter failure that is also one of the adapter's own precondition codes as reached when only that precondition produces it. refworld's search.query declares LIMIT both as precondition 2 (limit <= 50) and among its failures, and its fixtures reach LIMIT only through the precondition, because the stub never answers 413 to a request the precondition lets through."
+assumption = "The strict rule fails the refworld Build until search.query has a gateway fixture whose replayed response is a 413 (a synthetic_* case in examples/refworld/fixtures/search/query.kvx and its copies in examples/refworld-upgrades). Fixtures are copied into the Build, so that case changes the refworld Build hash that arms.kvx, the upgrade pairs and every cassette set record. Resolving the deviation needs the fixture added in the next re-registration of the campaigns, then unreached_failures in contract_tests.rs counting gateway outcomes only."
+product_evidence = false
+
+# Deviation of task 1.2 (clause 4.4, compiler.md section 6): changelog coverage of manual prose.
+[finding.task_1_2_rule_change_covers_all_prose]
+revision = "working-tree crates/cwr-compiler/src/changelog_gate.rs 2026-11-06"
+command = "python3 tests/cwr/cases/1_2.py"
+exit_code = 0
+log = "stdout of tests/cwr/cases/1_2.py, CLAUSE 4.4 lines; python3 examples/refworld-upgrades/pairs.py"
+observed = "The changelog gate covers a ContractDiff prose entry (manual/ text) by a doc_only change that names that prose, or by any rule change of the newest release, whatever the rule change's target. A doc_only change on an unrelated target does not cover prose, but a rule change on one module covers edits to the prose of every other module."
+assumption = "Upgrade pairs U1, U3, U4 and U5 change one rule and rewrite the manual prose that describes it without a separate doc_only change for the prose, and the clause 4.4 checks of tests/cwr/cases/1_2.py accept them. Matching each rule change to the prose regions it describes needs a mapping from manual sections to primitives that world-source.md section 11 does not define. Resolving the deviation needs that mapping in world-source.md, then prose coverage restricted to rule changes whose target the prose names, with the pairs' CHANGELOG.kvx files updated to match."
+product_evidence = false

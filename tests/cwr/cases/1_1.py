@@ -1127,15 +1127,12 @@ def imports() -> None:
     ]
     root = fresh("escapes")
     prefix = "import typing\nimport dataclasses\nimport re\nimport json\nimport collections.abc\n"
-    first = (
-        insert_after(
-            root,
-            "lib/kv.py",
-            "from typing import TYPE_CHECKING, Any, TypedDict",
-            prefix + "\n".join(escapes),
-        )
-        + prefix.count("\n")
-    )
+    first = insert_after(
+        root,
+        "lib/kv.py",
+        "from typing import TYPE_CHECKING, Any, TypedDict",
+        prefix + "\n".join(escapes),
+    ) + prefix.count("\n")
     rc, rep, _ = cwr("lint", root)
     d = [x for x in stage_diags(rep, "lint") if x["file"] == "lib/kv.py"]
     flagged = {x["line"] for x in d if x["code"] == "CWR-L001"}
@@ -1187,7 +1184,7 @@ def imports() -> None:
         root,
         "lib/kv.py",
         "from typing import TYPE_CHECKING, Any, TypedDict",
-        "import typing\ntype _Alias = int\n_U = \"\uff45\uff58\uff45\uff43 in a string\"  # \uff4f\uff53 in a comment\n"
+        'import typing\ntype _Alias = int\n_U = "\uff45\uff58\uff45\uff43 in a string"  # \uff4f\uff53 in a comment\n'
         "_V = dict(type=1)\n\n\nclass _D(TypedDict, total=False):\n    a: int\n\n\n"
         "class _E(typing.TypedDict):\n    b: str\n\n\ndef _private_helper(x):\n    return x\n",
     )

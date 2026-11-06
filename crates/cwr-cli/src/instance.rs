@@ -298,9 +298,11 @@ pub fn run(args: &[String]) -> i32 {
                 Ok(i) => i,
                 Err(e) => return fail(e),
             };
-            if let Err(e) = cwr_kernel::replay::record_probe(&inst, &calls) {
-                return fail(e);
-            }
+            let before = inst.meta.turn;
+            let marker = match cwr_kernel::replay::record_probe(&inst, &calls) {
+                Ok(p) => p,
+                Err(e) => return fail(e),
+            };
             // A probe line that cannot be written does not stop the turn (its records are already
             // durable), but the command then reports the lost output instead of success.
             let mut lost = 0;
@@ -312,7 +314,15 @@ pub fn run(args: &[String]) -> i32 {
             match outcome {
                 Ok(result) if lost == 0 => print_json(&result),
                 Ok(_) => lost,
-                Err(e) => fail(e),
+                Err(e) => {
+                    // A probe refused before its turn began left no turn: its call list goes too.
+                    if inst.meta.turn == before && inst.current_turn().is_none() {
+                        if let Err(r) = std::fs::remove_file(&marker) {
+                            eprintln!("cwr instance: remove {}: {r}", marker.display());
+                        }
+                    }
+                    fail(e)
+                }
             }
         }
         "snapshot" if one(0) => match Instance::open(&a.home, &id).and_then(|mut i| i.snapshot()) {

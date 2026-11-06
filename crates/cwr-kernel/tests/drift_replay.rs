@@ -137,6 +137,7 @@ fn drift_fires_on_a_refused_turn_and_replays() {
         initial,
         cassette: None,
         scripts: dir.join(replay::SCRIPTS_DIR),
+        builds: Vec::new(),
         home: h.join("replayed"),
         into: None,
         opts: cwr_kernel::TurnOptions::default(),

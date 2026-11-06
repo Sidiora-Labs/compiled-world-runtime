@@ -1598,9 +1598,10 @@ impl Instance {
 
     /// Instance-directory entries `destroy` releases: the state store, snapshots, the adapter
     /// gateway's idempotency store, recorded turn inputs, the recovery and commit files, stored
-    /// notices and the last result envelope. The ledger, the metadata, retained ledger lineages,
-    /// a defect seal and the proposal outbox (which only the human owner reads) are kept.
-    pub const RELEASED_ON_DESTROY: [&'static str; 9] = [
+    /// notices, the stored per-turn result envelopes and the last result envelope. The ledger, the
+    /// metadata, retained ledger lineages, a defect seal and the proposal outbox (which only the
+    /// human owner reads) are kept.
+    pub const RELEASED_ON_DESTROY: [&'static str; 10] = [
         "objects",
         "snapshots",
         crate::gateway::GATEWAY_DIR,
@@ -1610,6 +1611,7 @@ impl Instance {
         crate::recovery::COMMIT_FILE,
         crate::recovery::JOURNAL_FILE,
         crate::executor::LAST_ENVELOPE,
+        crate::surface::envelope_render::ENVELOPES_DIR,
     ];
 
     /// `cwr instance destroy`: seal and retain the ledger, release state and snapshots.

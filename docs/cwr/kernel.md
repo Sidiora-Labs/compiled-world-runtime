@@ -17,7 +17,7 @@ The kernel guarantees:
 | Atomic primitives | Every call happens completely or not at all, and a refusal names one of eleven codes. |
 | A frozen Build | An Instance stays on its Build until an operator upgrades it. The kernel refuses a Build whose bytes do not match its hash. |
 | An honest ledger | Every call, turn, upgrade and recovery is a ledger record. A truncated, reordered or edited ledger is refused unless the editor also recomputed the hash chain. See [Read the ledger](#read-the-ledger) for what the chain does not protect against. |
-| Reproducible turns | Replaying recorded scripts with recorded adapter responses produces an identical ledger. |
+| Reproducible turns | Replaying the recorded turn inputs with recorded adapter responses, and re-applying the recorded upgrades and restores, produces an identical ledger. Replay refuses a ledger in which a kernel crash interrupted a turn. |
 | Mediated side effects | Adapter calls follow their declared timeout, idempotency and failure rules, and are never retried silently. |
 
 This guide runs the reference world, `refworld`, and walks through every operator task.
@@ -303,8 +303,9 @@ no entry for this request; no socket was opened`. The cassette format is specifi
 ## Replay and compare
 
 `cwr instance replay` recreates an Instance from its seed, initial state, Build, recorded turn
-scripts and cassette, re-runs every turn and compares the new ledger with the original. Host
-timestamps, durations and the Instance id are ignored.
+scripts and cassette, re-runs every turn, re-applies every upgrade and restore between the turns,
+and compares the new ledger with the original. Host timestamps, durations and the Instance id are
+ignored.
 
 ```sh
 cwr instance replay "$SID" --cassette search.jsonl --into-home replayed
@@ -312,7 +313,8 @@ cwr instance replay "$SID" --cassette search.jsonl --into-home replayed
 
 `--into <new-id>` names the new Instance, a ULID that is not yet in the store. Without it the
 kernel picks a fresh id. `--build <dir>` or `--builds <root>` names the Build when the ledger is
-not in an Instance directory.
+not in an Instance directory. An upgrade's target Build is looked up by its hash in the
+`--builds` roots (default `build` and `xbuild`) and beside the Builds the Instance used.
 
 ```text
 {"divergence":null,"identical":true,"ignored_fields":["host_ts","duration_us","instance"],"into":"01M6RJJ2...","original":"01M6RJHR...","records":3,"state_digest":"sha256:504be005...","turns":1}
@@ -322,8 +324,17 @@ It exits 0 when the ledgers are identical and 7 on the first divergence, which i
 reproduces script turns, message turns and probe turns from the inputs the kernel records with
 each turn. An accepted message is replayed from its script. A refused message is replayed from a
 marker that names the rule it broke and its fence lines, so the refusal is reproduced too. The
-message text itself is never recorded. Replay refuses, before it creates anything, a ledger that holds a lifecycle record such as
-an upgrade or a recovery, and names the record.
+message text itself is never recorded.
+
+Replay re-applies lifecycle records through the same kernel operations. An `upgrade` record
+upgrades the new Instance to the Build it names, which re-runs the migrations. A `recovery`
+record written by `restore` snapshots the new Instance and restores that snapshot. Both records
+name a snapshot file, and a snapshot carries the id of the Instance that took it, so replay checks
+the new Instance's snapshot as if the original had taken it. A `recovery` record also names the
+records the restore abandoned and the file that retains them. Replay re-runs only the live
+lineage, so those two fields are not compared. Replay refuses, before it creates anything, a
+ledger in which a kernel crash interrupted a turn, and names the record. To replay such a ledger,
+replay a copy cut before the interrupted turn.
 
 `cwr instance compare <ledger-a> <ledger-b>` compares two ledgers field by field with the same
 rules and the same exit codes.
@@ -404,6 +415,13 @@ Your ledger is intact. The manual above describes 0.3.0.
 The notice lists only changes to primitives the Instance has used. After the next turn it is no
 longer pending.
 
+Replay re-applies the upgrade between the turns, so an upgraded Instance replays like any other.
+The target Build is found beside the Build the Instance is bound to:
+
+```sh
+cwr instance replay "$UP" --into-home replayed
+```
+
 The kernel refuses, with exit code 5 and no change, a target of another world, a version that is
 not strictly greater, the Build already bound, and an experimental Build without
 `--allow-experimental`:
@@ -440,7 +458,7 @@ cwr instance outbox "$UP"
 `destroy` releases the state and seals the ledger. The ledger stays readable and verifiable. A
 later turn is refused. Only an `idle` Instance can be destroyed. An Instance a crash left in a turn
 is recovered first. `destroy` removes the state store, snapshots, the adapter gateway's
-idempotency store, the recorded turn inputs, stored notices and the last result envelope. It keeps
+idempotency store, the recorded turn inputs, stored notices and the stored result envelopes. It keeps
 the ledger, the metadata, retained ledger lineages and the proposal outbox. Instance ids are
 ULIDs. Every command refuses any other id.
 
@@ -462,7 +480,7 @@ destroyed 01M6RJ... (ledger sealed and retained)
 | `cwr instance keys` | Print the adapter gateway's key idempotency store, one `done` entry per stored key | 0; 1 error |
 | `cwr instance ledger` | Check and summarise the ledger | 0; 1 tampered or truncated |
 | `cwr instance turn` | Run one turn | 0 for `ok`, `error` and `partial`; 1 kernel error; 2 hash mismatch; 3 experimental; 4 protocol refusal; 8 `CONFLICT` |
-| `cwr instance probe <id> <call>...` | Run a kernel-direct turn of `world` calls, for diagnostics. It is a real turn: it advances the turn counter and world time, draws from the random stream and appears in the model's ledger tail. | 0; 1 error |
+| `cwr instance probe <id> <call>...` | Run a kernel-direct turn of `world` calls, for diagnostics. A call is `name` or `name:<json params>`, for example `world.random` or `'world.history:{"n":5}'`. It is a real turn: it advances the turn counter and world time, draws from the random stream and appears in the model's ledger tail. A refused call list starts no turn. | 0; 1 error |
 | `cwr instance context` | Print the next turn's context | 0; 1 error; 2 hash mismatch |
 | `cwr instance snapshot`, `restore` | Snapshot and roll back | 0; 1 error; 2 hash mismatch |
 | `cwr instance recover` | Recover after a crash | 0; 1 error |

@@ -1390,6 +1390,11 @@ def main(argv: list[str] | None = None) -> int:
         "--rerun", action="store_true", help="replace a finished cell (moved aside)"
     )
     parser.add_argument("--prereg", default=str(DEFAULT_PATH))
+    parser.add_argument(
+        "--arms",
+        default=str(ARMS_PATH),
+        help="arm registration; its sha256 must equal the pre-registration's arms_kvx digest",
+    )
     parser.add_argument("--tasks-dir", default=str(TASKS))
     parser.add_argument("--suite", default=str(SUITE))
     parser.add_argument("--campaigns", default=str(CAMPAIGNS))
@@ -1442,6 +1447,7 @@ def main(argv: list[str] | None = None) -> int:
             build=args.build,
             allow_unregistered=args.allow_unregistered,
             prereg_path=Path(args.prereg),
+            arms_path=Path(args.arms),
             suite_path=Path(args.suite),
             tasks_dir=Path(args.tasks_dir),
             campaigns_dir=Path(args.campaigns),

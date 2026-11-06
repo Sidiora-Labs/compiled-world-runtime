@@ -403,15 +403,16 @@ def main() -> int:
             detail = "" if ok else out[-600:]
             evidence = f"tamper '{label}' -> rc={rc} status={(report or {}).get('status')} expected '{expect}' found={hit}"
             if ok and render_then_pass:
-                before_views = {
-                    n: (root / PACK_REL / n).read_bytes() if (root / PACK_REL / n).exists() else b""
-                    for n in DERIVED
-                }
+
+                def view(n: str) -> bytes:
+                    # A refused --render may leave a deleted view missing: that is a FAIL line.
+                    path = root / PACK_REL / n
+                    return path.read_bytes() if path.exists() else b""
+
+                before_views = {n: view(n) for n in DERIVED}
                 rc2, _report2, out2, _ = run_validator(root, "--render")
                 rc3, report3, _, _ = run_validator(root)
-                changed = [
-                    n for n in DERIVED if (root / PACK_REL / n).read_bytes() != before_views[n]
-                ]
+                changed = [n for n in DERIVED if view(n) != before_views[n]]
                 ok = (
                     rc2 == 0
                     and rc3 == 0

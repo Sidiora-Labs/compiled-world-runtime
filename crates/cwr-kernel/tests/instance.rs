@@ -247,6 +247,7 @@ fn replay_reproduces_protocol_refusals_and_probe_turns() {
         initial,
         cassette: None,
         scripts: dir.join(replay::SCRIPTS_DIR),
+        builds: Vec::new(),
         home: h.join("replayed"),
         into: None,
         opts: cwr_kernel::TurnOptions::default(),
@@ -257,7 +258,9 @@ fn replay_reproduces_protocol_refusals_and_probe_turns() {
 
     // The marker holds the rule broken, never the message text.
     let marker = replay::refusal_file(&dir.join(replay::SCRIPTS_DIR), 1);
-    assert!(!std::fs::read_to_string(&marker).unwrap().contains("Two plans"));
+    assert!(!std::fs::read_to_string(&marker)
+        .unwrap()
+        .contains("Two plans"));
     // Without the marker the refusal is named, not reported as a missing file.
     std::fs::remove_file(marker).unwrap();
     match replay::replay(&inputs) {
@@ -292,4 +295,93 @@ fn operator_ids_are_ulids_and_destroy_needs_idle() {
     ));
     let dir = Instance::dir_of(&h, &id);
     assert!(dir.join("objects").is_dir());
+}
+
+#[test]
+fn replay_reapplies_a_restore_and_reads_only_the_live_turn_input() {
+    use cwr_kernel::replay::{self, ReplayInputs};
+    use cwr_kernel::surface::protocol;
+
+    let h = home("replay-restore");
+    let build = fixture_for("replay-restore");
+    let mut inst = Instance::create(
+        &h,
+        &build,
+        CreateOptions {
+            seed: Some(5),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let id = inst.meta.id.clone();
+    let random = vec![ProbeCall {
+        primitive: "world.random".into(),
+        params: json!({}),
+    }];
+    replay::record_probe(&inst, &random).unwrap();
+    inst.probe(&random, |_| {}).unwrap();
+    let snap = inst.snapshot().unwrap();
+
+    // A refused probe records its calls before the kernel refuses them; its turn never begins.
+    let bad = vec![ProbeCall {
+        primitive: "world.nothing".into(),
+        params: json!({}),
+    }];
+    let refused_probe = replay::record_probe(&inst, &bad).unwrap();
+    assert!(inst.probe(&bad, |_| {}).is_err());
+    assert_eq!(inst.meta.turn, 1);
+    // Turn 2 is a protocol refusal, which the restore below abandons.
+    let violation = protocol::extract_script("no code here").unwrap_err();
+    let marker = replay::record_refusal(&inst, &violation).unwrap();
+    assert!(
+        !refused_probe.exists(),
+        "one recorded input per turn number"
+    );
+    protocol::refuse(&mut inst, &violation).unwrap();
+    drop(inst);
+    let (mut inst, rec) = Instance::restore(&h, &id, &snap).unwrap();
+    assert_eq!(rec["abandoned_from"], json!(3));
+    // The live turn 2 is a probe; recording it removes the abandoned turn's refusal marker.
+    replay::record_probe(&inst, &random).unwrap();
+    assert!(!marker.exists(), "the abandoned turn's input is superseded");
+    inst.probe(&random, |_| {}).unwrap();
+    let initial_hash = inst.records()[0]["initial_state"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drop(inst);
+
+    let dir = Instance::dir_of(&h, &id);
+    let initial: Value = serde_json::from_slice(
+        &cwr_kernel::ObjectStore::new(dir.join("objects"))
+            .get(&initial_hash)
+            .unwrap(),
+    )
+    .unwrap();
+    let inputs = ReplayInputs {
+        ledger: dir.join("ledger.jsonl"),
+        build_dir: build.clone(),
+        initial,
+        cassette: None,
+        scripts: dir.join(replay::SCRIPTS_DIR),
+        builds: Vec::new(),
+        home: h.join("replayed"),
+        into: None,
+        opts: cwr_kernel::TurnOptions::default(),
+    };
+    let report = replay::replay(&inputs).unwrap();
+    assert_eq!(report.divergence, None);
+    assert_eq!(report.turns, 2);
+    // The replay's recovery record names its own snapshot (which carries its own Instance id)
+    // and abandons nothing, so its raw chain differs; under the original identity it is equal.
+    let original = Instance::open(&h, &id).unwrap();
+    let replayed = Instance::open(&h.join("replayed"), &report.into).unwrap();
+    assert_eq!(replayed.records()[3]["kind"], "recovery");
+    assert_eq!(replayed.records()[3]["abandoned_from"], Value::Null);
+    let rewritten = replay::as_original(original.records(), &id, &replayed).unwrap();
+    assert_eq!(rewritten[3]["snapshot"], original.records()[3]["snapshot"]);
+    assert_eq!(
+        rewritten.last().unwrap()["chain"],
+        original.records().last().unwrap()["chain"]
+    );
 }

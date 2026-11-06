@@ -10,12 +10,15 @@
 //!                     [--into-home <dir>] [--debug-effects]
 //!     Recreates the Instance from its seed, initial state, Build, cassette and recorded turn
 //!     inputs (scripts, model messages, probe calls), re-runs every turn and compares the new
-//!     ledger with the original ignoring host_ts, duration_us and instance. Prints one JSON report
+//!     ledger with the original ignoring host_ts, duration_us and instance. Upgrade records and
+//!     restore recovery records are re-applied between the turns. Prints one JSON report
 //!     line with the new Instance id and its final state digest. `--into <new-id>` names the new
 //!     Instance (a ULID not yet in the store); without it a fresh ULID is chosen. The Build is
 //!     `--build`, else the header's Build hash resolved in the `--builds` roots, else the Build the
-//!     original Instance is bound to. Defaults, when the ledger lies in an Instance directory: its
-//!     scripts/ directory and its initial state object.
+//!     original Instance was created with, found beside the Build it is bound to. An upgrade's
+//!     target Build is resolved in the `--builds` roots (default `build` and `xbuild`), then
+//!     beside the original's bound Build and the replayed Build. Defaults, when the ledger lies in
+//!     an Instance directory: its scripts/ directory and its initial state object.
 //!     Exit 0 identical; 7 divergence (printed, new Instance sealed); 2 Build or initial-state hash
 //!     mismatch; 1 refused (tampered or truncated ledger, missing input) or any other error.
 //! cwr instance recover <id> [--home <dir>]
@@ -172,10 +175,27 @@ pub fn run(cmd: &str, args: &[String]) -> i32 {
                 },
                 _ => None,
             };
+            // The bound Build differs from the header's after an upgrade or a restore across one;
+            // the Build the Instance was created with then lies beside the bound one.
+            let bound = orig_meta
+                .as_ref()
+                .and_then(|m| m["build_dir"].as_str().map(PathBuf::from));
+            let bound_root: Vec<PathBuf> = bound
+                .as_ref()
+                .and_then(|b| b.parent().map(Path::to_path_buf))
+                .into_iter()
+                .collect();
+            let created_with = match (&header_build, &bound) {
+                (Some(hash), Some(_))
+                    if orig_meta.as_ref().and_then(|m| m["build"].as_str())
+                        != Some(hash.as_str()) =>
+                {
+                    Build::resolve(hash, &bound_root).ok()
+                }
+                _ => bound.clone(),
+            };
             let build_dir = match build.or(from_roots).or_else(|| {
-                orig_meta
-                    .as_ref()
-                    .and_then(|m| m["build_dir"].as_str().map(PathBuf::from))
+                created_with.or_else(|| bound.clone())
             }) {
                 Some(b) => b,
                 None => {
@@ -209,6 +229,13 @@ pub fn run(cmd: &str, args: &[String]) -> i32 {
                 initial: initial_value,
                 cassette,
                 scripts: scripts.unwrap_or_else(|| orig_dir.join(replay::SCRIPTS_DIR)),
+                builds: if roots.is_empty() {
+                    let mut r = vec![PathBuf::from("build"), PathBuf::from("xbuild")];
+                    r.extend(bound_root);
+                    r
+                } else {
+                    roots.iter().cloned().chain(bound_root).collect()
+                },
                 home: into_home.unwrap_or(home),
                 into,
                 opts,

@@ -228,10 +228,11 @@ python3 "$REPO/benchmark/stubs/record_refworld.py" record --set suite --tasks t0
 record_refworld: suite: 10 cassettes, 10 turns, digest sha256:7bd66d41...
 ```
 
-A full set holds every task. Its digest is registered, and ledgers recorded against different
-cassette digests are never pooled. `run.py` refuses a set whose digest differs from the campaign's
-registration, so the pilot below replays the registered set under
-[benchmark/cassettes/suite](../../benchmark/cassettes/suite).
+The set is written under `cassettes/suite`. A full set holds every task. Its digest is
+registered, and ledgers recorded against different cassette digests are never pooled. `run.py`
+refuses a set whose digest differs from the registered one. A campaign replays the registered set
+under [benchmark/cassettes/suite](../../benchmark/cassettes/suite). The pilot below replays the set
+you just recorded under a draft registration that registers no cassette digest.
 
 ## Run cells
 
@@ -245,13 +246,22 @@ by the stop rule. It never compiles a Build.
 | `stub` | A deterministic offline player that replays the task's reference solution and opens no socket. Use it to test the pipeline. |
 
 `--allow-unregistered` runs under a draft registration and marks each attempt
-`registered = false`. The pilot uses a scratch draft copy of the pre-registration, passed with
-`--prereg`, so its attempts can never be pooled with a campaign. It runs two seeds of both H2 arms
-with the stub player:
+`registered = false`. The pilot writes its own draft registration in the scratch directory, so its
+attempts can never be pooled with a campaign and it does not depend on the repository's frozen
+digests:
+
+| Draft file | Differs from the registration in |
+|---|---|
+| `arms.kvx` | The control and one-primitive Builds are the ones you just compiled |
+| `draft.kvx` | Status `draft`; the stub player `cwr-stub/reference-player-1` as the model, because `analyse.py` refuses a ledger whose model is not the registered one; the digests of the draft `arms.kvx` and the current `metrics.py`; no suite or cassette digest |
+
+`--prereg` and `--arms` pass the draft to `run.py`. The pilot runs two seeds of both H2 arms with
+the stub player:
 
 ```sh
-sed 's/^status = "registered"$/status = "draft"/' "$REPO/benchmark/preregistration.kvx" > draft.kvx
-pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --prereg draft.kvx --cassettes "$REPO/benchmark/cassettes/suite" --results results --home runs "$@"; }
+sed -e "/^\[control\]$/,/^$/ s/^build = .*/build = \"sha256:$CONTROL\"/" -e "/^\[arm.h2.one-primitive\]$/,/^$/ s/^build = .*/build = \"sha256:$ONE\"/" "$REPO/benchmark/harness/arms.kvx" > arms.kvx
+sed -e 's/^status = "registered"$/status = "draft"/' -e 's|^model = .*|model = "cwr-stub/reference-player-1"|' -e '/^\(suite\|cassette\)_digest = /d' -e "s/^arms_kvx = .*/arms_kvx = \"sha256:$(sha256sum arms.kvx | cut -c1-64)\"/" -e "s/^metrics_py = .*/metrics_py = \"sha256:$(sha256sum "$REPO/benchmark/harness/metrics.py" | cut -c1-64)\"/" "$REPO/benchmark/preregistration.kvx" > draft.kvx
+pilot() { python3 "$REPO/benchmark/harness/run.py" --hypothesis H2 --task t003-tennis-note --model stub --allow-unregistered --prereg draft.kvx --arms arms.kvx --cassettes cassettes/suite --results results --home runs "$@"; }
 pilot --arm script --seed 1 --builds build --build "$CONTROL"
 pilot --arm script --seed 2 --builds build --build "$CONTROL"
 pilot --arm one-primitive --seed 1 --builds xbuild --build "$ONE"
@@ -310,9 +320,14 @@ over Instances with a 95% percentile bootstrap interval from 10,000 resamples. I
 registered direction `consistent`, `inconsistent` or `inconclusive` from the interval of the
 difference.
 
+The pilot's draft has no campaign registrations, so the analysis reads an empty `campaigns`
+directory instead of the registered campaign files such as
+[benchmark/campaigns/h2.kvx](../../benchmark/campaigns/h2.kvx):
+
 ```sh
-python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --draft-ok
-python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --draft-ok --check results/analysis.json
+mkdir campaigns
+python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --arms arms.kvx --campaigns campaigns --draft-ok
+python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --arms arms.kvx --campaigns campaigns --draft-ok --check results/analysis.json
 ```
 
 ```text
@@ -321,13 +336,14 @@ report equals the recomputation from ledgers
 ```
 
 The analysis never pools bins, cassette digests or live and replay runs. It excludes, and reports,
-unregistered attempts, Instances with an `INVARIANT_VIOLATION` record and attempts that ended in a
-model or kernel error. Without `--draft-ok` it refuses a draft registration, such as the pilot's
-scratch copy:
+unregistered attempts, Instances with an `INVARIANT_VIOLATION` record, Instances with a record
+stamped `language_guard: false` (a turn run with the sandbox language guard switched off) and
+attempts that ended in a model or kernel error. Without `--draft-ok` it refuses a draft
+registration, such as the pilot's:
 
 ```text
-$ python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx
-analyse.py refused: pre-registration is a draft; missing: meta.status (must be "registered")
+$ python3 "$REPO/benchmark/analyse.py" --results results --prereg draft.kvx --arms arms.kvx --campaigns campaigns
+analyse.py refused: pre-registration is a draft; missing: campaign.suite_digest, campaign.cassette_digest, meta.status (must be "registered")
 ```
 
 | Exit | Meaning |
@@ -354,10 +370,10 @@ matrix: 60 tasks, 10 seeds and every arm.
 | `report` | Render the research reports |
 
 A campaign runs on a frozen copy of the task suite and the suite cassette set, taken when the
-campaign was registered and kept under `.cwr/campaign-1/frozen`. Their digests are registered in
-[benchmark/campaigns/h1.kvx](../../benchmark/campaigns/h1.kvx),
-[benchmark/campaigns/h2.kvx](../../benchmark/campaigns/h2.kvx) and the pre-registration, so a later
-edit under `benchmark/tasks` never reaches a running campaign. The copy is local state of the
+campaign was registered and kept under `.cwr/campaign-1/frozen`. Their paths and digests are
+registered in [benchmark/campaigns/h1.kvx](../../benchmark/campaigns/h1.kvx) and
+[benchmark/campaigns/h2.kvx](../../benchmark/campaigns/h2.kvx), so a later edit under
+`benchmark/tasks` never reaches a running campaign. The copy is local state of the
 checkout that registered the campaign. A release bundle does not carry it, so the subcommands run
 in that checkout:
 
@@ -397,7 +413,7 @@ The checker also runs on its own and reports the recorded status of a case:
 python3 "$REPO/tests/cwr/check_evidence.py" --status CWR-019 || echo "CWR-019 has no accepted attempt: exit $?"
 ```
 
-> **Verified (CWR-019).** The independent checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) accepts the registry's latest CWR-019 record, [20261106T153524Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T153524Z-1.json), written by the runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) under evidence schema version 2. Earlier records of the case were written under version 1, and the checker lists them as stale.
+> **Verified (CWR-019).** The independent checker [tests/cwr/check_evidence.py](../../tests/cwr/check_evidence.py) accepts the registry's latest CWR-019 record, [20261106T162259Z-1.json](../../tests/cwr/evidence/CWR-019/20261106T162259Z-1.json), written by the runner [tests/cwr/qualify.py](../../tests/cwr/qualify.py) under evidence schema version 2. Earlier records of the case were written under version 1, and the checker lists them as stale.
 
 A hypothesis result needs the complete arm matrix with the pre-registered metric definitions; a
 component attempt never implies one, and a run containing `INVARIANT_VIOLATION` is excluded.

@@ -10,7 +10,8 @@ imports only the Python standard library: never crates/cwr-*, the generated SDK 
 runner tests/cwr/qualify.py or the authoring validator. It starts no process and opens no network
 connection. It reads only attempt records, the files those records name (driver logs, ledgers and
 final state under the record's own attempt directory), the append-only attempt index, the registry
-tests/cwr/registry.kvx, the evidence schema that ships beside it and the case oracles.
+tests/cwr/registry.kvx, the evidence schema that ships beside it and the case oracles; for campaign
+records also the task suite, the task initial-state definitions and the suite cassettes.
 
 Outcomes are recomputed, never copied. For each record the checker
   * validates the record against evidence.schema.json (every field required, nothing extra);
@@ -22,6 +23,8 @@ Outcomes are recomputed, never copied. For each record the checker
     record's own sha256; its name must carry its start time and no time may lie in the future;
   * validates every ledger against the kernel ledger schema (spec/cwr/kernel.md section 8) and
     recomputes Build hashes, Instance ids, seeds, K, arms and model identity from the ledger headers;
+    a ledger with a record stamped `language_guard: false` (a turn run with the sandbox language
+    guard off, so closure was partly disabled) is never usable evidence;
   * recomputes every registered assertion with the case's independent oracle, which reads only the
     ledgers, final state and attempt records (never the driver's ASSERT lines). An assertion with no
     oracle is UNVERIFIED and can never be PASS, whatever the driver printed. CWR-019 has a built-in
@@ -37,8 +40,12 @@ Outcomes are recomputed, never copied. For each record the checker
     arm compared to the registered matrix after dropping case and every character but letters,
     digits and `-`, so `K=20` is `k20`), and binds its task label to recorded data: the label must
     be a task of benchmark/suite.kvx (an upgrade pair task `u<n>-...` for H4), the Instance's
-    initial-state digest must equal the ledger header's, every Instance of one task must start from
-    one initial state and two tasks never share one.
+    initial-state digest must equal the ledger header's and every Instance of one task must start
+    from one initial state. For a suite task the label is bound twice more: tasks whose
+    benchmark/tasks/<task>/initial.kvx define the same initial state must start from one ledger
+    initial state and tasks whose definitions differ never from the same one, and in replay mode
+    every adapter request the ledger records must be a request of the cassette
+    benchmark/cassettes/suite/<task>/seed-<seed>.jsonl of the labelled task and seed.
 
 Integrity and conformance are separate verdicts. Integrity (the record's own hashes, its attempt
 directory, logs, ledgers, final state, its index entry and the chain) is checked against the record
@@ -91,6 +98,8 @@ SHA = re.compile(r"^sha256:[0-9a-f]{64}$")
 RECORD_PATH = re.compile(r"^tests/cwr/evidence/CWR-\d{3}/\d{8}T\d{6}Z-[1-9]\d*\.json$")
 GENESIS = "sha256:" + "0" * 64
 SUITE_REL = "benchmark/suite.kvx"
+TASKS_REL = "benchmark/tasks"
+CASSETTES_REL = "benchmark/cassettes/suite"
 HYPOTHESIS_ARM = re.compile(r"^(H[1-4])/(.+)$")
 PAIR_TASK = re.compile(r"^u([1-9]\d*)-[a-z0-9-]+$")
 RUNNER_META_KEYS = {"index_length", "index_head"}
@@ -1188,6 +1197,13 @@ def check_record(
                 )
                 intact = False
                 break
+            if entry.get("language_guard") is False:
+                short.append(
+                    f"{label}: ledger record {position} is stamped language_guard=false: its turn ran "
+                    "with the sandbox language guard off, so closure was partly disabled"
+                )
+                intact = False
+                break
         schema_problems = ledger_schema_problems(ledger)
         if schema_problems:
             short.append(
@@ -1421,10 +1437,49 @@ def suite_tasks(store) -> tuple[set[str] | None, str | None]:
     return tasks, None
 
 
+def task_initial_class(store, task: str) -> tuple[str | None, str | None]:
+    """The initial state benchmark/tasks/<task>/initial.kvx defines, as the canonical digest of every
+    section but [meta]; two tasks with equal digests start from equal states. (None, why) otherwise."""
+    rel = f"{TASKS_REL}/{task}/initial.kvx"
+    if not store.is_file(rel):
+        return None, f"{rel} is missing"
+    try:
+        document = parse_kvx_text(store.read(rel).decode(), rel)
+    except (OSError, ValueError, UnicodeDecodeError) as error:
+        return None, f"{rel} is unreadable: {error}"
+    meta = document.pop("meta", {})
+    if isinstance(meta, dict) and meta.get("task") not in (None, task):
+        return None, f"{rel} names task {meta.get('task')!r}"
+    return canonical_digest(document), None
+
+
+def cassette_requests(store, task: str, seed) -> tuple[set | None, str | None]:
+    """The request hashes of the suite cassette of (task, seed), or (None, why)."""
+    rel = f"{CASSETTES_REL}/{task}/seed-{seed}.jsonl"
+    if type(seed) is not int or not store.is_file(rel):
+        return None, f"{rel} is missing"
+    hashes: set = set()
+    try:
+        lines = store.read(rel).decode().splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        return None, f"{rel} is unreadable: {error}"
+    for number, line in enumerate(lines[1:], start=2):
+        if not line.strip():
+            continue
+        try:
+            entry = strict_json(line)
+        except ValueError as error:
+            return None, f"{rel}:{number}: not JSON: {error}"
+        if isinstance(entry, dict) and isinstance(entry.get("request_hash"), str):
+            hashes.add(entry["request_hash"])
+    return hashes, None
+
+
 def campaign_matrix_problems(store, record: dict, ledgers: dict, matrix: dict) -> list[str]:
     """Shortfalls of a campaign record against the registered matrix. Hypothesis and arm come from each
-    ledger header, the task label is bound to the suite and to the header's initial-state digest, and
-    every registered (hypothesis, arm) must hold every task with every seed."""
+    ledger header; the task label is bound to the suite, to the header's initial-state digest, to the
+    initial state the suite defines for the task and, in replay mode, to the task's cassette; every
+    registered (hypothesis, arm) must hold every task with every seed."""
     problems: list[str] = []
     known, why = suite_tasks(store)
     if why:
@@ -1438,6 +1493,8 @@ def campaign_matrix_problems(store, record: dict, ledgers: dict, matrix: dict) -
     }
     cells: dict[tuple[str, str], dict[str, set]] = {key: {} for key in registered}
     initial: dict[tuple[str, str], set] = {}
+    classes: dict[str, str] = {}
+    cassettes: dict[tuple[str, int], tuple[set | None, str | None]] = {}
     for inst in record["instances"]:
         label = f"instance {inst['id']}"
         ledger = ledgers.get(inst["id"])
@@ -1460,9 +1517,8 @@ def campaign_matrix_problems(store, record: dict, ledgers: dict, matrix: dict) -
             problems.append(f"{label}: arm {header.get('arm')!r} is not in the registered matrix")
             continue
         task = inst["task"]
-        valid = isinstance(task, str) and (
-            bool(PAIR_TASK.match(task)) if hyp == "H4" else task in known
-        )
+        pair = hyp == "H4"
+        valid = isinstance(task, str) and (bool(PAIR_TASK.match(task)) if pair else task in known)
         if not valid:
             problems.append(f"{label}: task {task!r} is not a {SUITE_REL} task of {hyp}")
             continue
@@ -1476,6 +1532,36 @@ def campaign_matrix_problems(store, record: dict, ledgers: dict, matrix: dict) -
                 f"{inst['initial_state_digest']} != ledger header initial_state {digest}"
             )
             continue
+        if not pair:
+            if task not in classes:
+                defined, missing = task_initial_class(store, task)
+                classes[task] = defined or ""
+                if missing:
+                    problems.append(
+                        f"task {task} is not bound to recorded data: its initial state is not "
+                        f"defined ({missing})"
+                    )
+            if not classes[task]:
+                continue
+            requests = [
+                r["gateway"].get("request_hash")
+                for r in ledger
+                if r.get("kind") == "adapter" and isinstance(r.get("gateway"), dict)
+            ]
+            if header.get("cassette_digest") is not None and requests:
+                key = (task, header.get("seed"))
+                if key not in cassettes:
+                    cassettes[key] = cassette_requests(store, task, header.get("seed"))
+                hashes, missing = cassettes[key]
+                strays = [h for h in requests if hashes is None or h not in hashes]
+                if strays:
+                    problems.append(
+                        f"{label}: task {task} is not bound to recorded data: "
+                        f"{len(strays)} of {len(requests)} recorded adapter requests are not in the "
+                        f"cassette of task {task} seed {header.get('seed')}"
+                        + (f" ({missing})" if missing else "")
+                    )
+                    continue
         initial.setdefault((hyp, task), set()).add(digest)
         cells[(hyp, arm)].setdefault(task, set()).add(header.get("seed"))
     for (hyp, task), digests in sorted(initial.items()):
@@ -1483,14 +1569,27 @@ def campaign_matrix_problems(store, record: dict, ledgers: dict, matrix: dict) -
             problems.append(
                 f"{hyp} task {task} starts from {len(digests)} different initial states"
             )
-    by_digest: dict[tuple[str, str], set] = {}
+    by_class: dict[tuple[str, str], dict[str, set]] = {}
+    by_digest: dict[tuple[str, str], dict[str, set]] = {}
     for (hyp, task), digests in initial.items():
+        if not classes.get(task):
+            continue
         for digest in digests:
-            by_digest.setdefault((hyp, digest), set()).add(task)
-    for (hyp, _digest), tasks in sorted(by_digest.items()):
-        if len(tasks) > 1:
+            by_class.setdefault((hyp, classes[task]), {}).setdefault(digest, set()).add(task)
+            by_digest.setdefault((hyp, digest), {}).setdefault(classes[task], set()).add(task)
+    for (hyp, _defined), seen in sorted(by_class.items()):
+        if len(seen) > 1:
+            tasks = sorted(set().union(*seen.values()))
             problems.append(
-                f"{hyp} tasks {sorted(tasks)} share one initial state; task labels are not provable"
+                f"{hyp} tasks {tasks} define one initial state but start from {len(seen)} different "
+                "ledger initial states; their task labels are not bound to recorded data"
+            )
+    for (hyp, digest), seen in sorted(by_digest.items()):
+        if len(seen) > 1:
+            tasks = sorted(set().union(*seen.values()))
+            problems.append(
+                f"{hyp} tasks {tasks} define different initial states but start from the same "
+                f"ledger initial state {digest}; their task labels are not bound to recorded data"
             )
     for hyp, spec in sorted(matrix.items()):
         seeds_by_arm = {}

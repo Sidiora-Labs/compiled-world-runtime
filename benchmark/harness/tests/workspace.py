@@ -197,9 +197,20 @@ class Workspace:
             "tokens_input_total": 100,
             "tokens_output_total": 10,
         }
+        record["registration_digests"] = self.registration_digests()
         record.update(attempt)
+        if record["registration_digests"] is None:
+            del record["registration_digests"]
         write_kvx(cell / "attempt.kvx", {"attempt": record})
         return cell
+
+    def registration_digests(self) -> dict[str, str]:
+        """The stamp run.py writes into every attempt: digests of the current registration files."""
+        return {
+            "preregistration": sha256_file(self.prereg),
+            "metrics_py": sha256_file(self.metrics),
+            "arms_kvx": sha256_file(self.arms),
+        }
 
     # -- synthetic campaigns ---------------------------------------------------------------------
 

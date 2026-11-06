@@ -413,7 +413,7 @@ def register(args: argparse.Namespace) -> int:
         "tail": 20,
         "model": prereg["campaign"].get("model"),
         "sampling": prereg["campaign"].get("sampling"),
-        "suite_digest": read_kvx(SUITE)["suite"]["suite_digest"],
+        "suite_digest": frozen_suite_digest(),
         "cassette_digest": prereg["campaign"].get("cassette_digest"),
         "control_build": control["hash"],
         "build_roots": [str(BUILD_ROOT.relative_to(REPO)), str(XBUILD_ROOT.relative_to(REPO))],
@@ -544,13 +544,33 @@ def registration_blockers() -> list[str]:
     return blockers
 
 
+def frozen_suite_digest() -> str:
+    """The suite digest of the frozen task suite, recomputed from its files.
+
+    Computed by benchmark/predicates/common.py suite_digest over TASKS, the function analyse.py
+    and run.py use, and refused (CampaignError) unless it equals the [suite].suite_digest that
+    suite.kvx declares, so a registration never records a digest the files do not have.
+    """
+    from benchmark.analyse import recompute_suite_digest
+
+    actual = recompute_suite_digest(TASKS)
+    declared = read_kvx(SUITE).get("suite", {}).get("suite_digest")
+    if actual != declared:
+        raise CampaignError(
+            f"{SUITE.relative_to(REPO)} declares suite_digest {declared}, but its tasks digest to "
+            f"{actual}"
+        )
+    return actual
+
+
 def complete_registration(args: argparse.Namespace) -> int:
     """Fill the null campaign inputs of arms.kvx and preregistration.kvx and mark it registered.
 
     Refused once any H1 to H4 attempt exists or the registration is already registered. Only null
     inputs are filled; a non-null input that differs from the value the campaign needs (the
-    upgrades digest included) is a refusal, never an overwrite. Every check runs before the first
-    write, and the digests are recomputed last, after arms.kvx is final.
+    upgrades digest included) is a refusal, never an overwrite. Every check, the parse of both final
+    texts included, runs before the first write; the arms.kvx digest is taken from the exact bytes
+    then written, and the suite digest is recomputed from the frozen task files.
     """
     from benchmark.harness.model import GatewayClient, ModelError
     from benchmark.harness.run import cassette_set_digest
@@ -578,7 +598,7 @@ def complete_registration(args: argparse.Namespace) -> int:
     wanted = {
         "model": model,
         "sampling": {},
-        "suite_digest": read_kvx(SUITE)["suite"]["suite_digest"],
+        "suite_digest": frozen_suite_digest(),
         "cassette_digest": cassette_set_digest(CASSETTES),
         "upgrades_digest": sha256_file(REPO / "benchmark" / "upgrades.kvx"),
     }
@@ -589,11 +609,12 @@ def complete_registration(args: argparse.Namespace) -> int:
             text = _set_key(text, "campaign", key, value)
         elif campaign[key] != value:
             raise CampaignError(f"preregistration [campaign] {key} is registered as another value")
-    ARMS.write_text(arms_text, encoding="utf-8")
+    arms_bytes = arms_text.encode("utf-8")
     text = _set_key(text, "digests", "metrics_py", sha256_file(METRICS))
-    text = _set_key(text, "digests", "arms_kvx", sha256_file(ARMS))
+    text = _set_key(text, "digests", "arms_kvx", "sha256:" + hashlib.sha256(arms_bytes).hexdigest())
     text = _set_key(text, "meta", "status", "registered")
     parse_kvx(text, str(PREREG))
+    ARMS.write_bytes(arms_bytes)
     PREREG.write_text(text, encoding="utf-8")
     print("preregistration complete: status registered")
     return 0

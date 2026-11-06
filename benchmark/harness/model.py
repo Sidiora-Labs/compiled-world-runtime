@@ -498,9 +498,10 @@ _ENVELOPE_KEYS = ("status", "world", "trace")
 def envelope_from_context(context: str) -> dict[str, Any] | None:
     """The last result envelope rendered in a context: the last JSON object with status, world and trace.
 
-    Tries single lines first (the canonical one-line rendering), then fenced json blocks.
+    Tries single lines first (the canonical one-line rendering), then fenced json blocks. Lines end
+    at LF only, so an envelope string holding U+0085, U+2028 or U+2029 stays on its line.
     """
-    candidates = list(reversed(context.splitlines()))
+    candidates = list(reversed(context.split("\n")))
     blocks = context.split("```json")
     candidates += [b.split("```", 1)[0] for b in reversed(blocks[1:])]
     for text in candidates:

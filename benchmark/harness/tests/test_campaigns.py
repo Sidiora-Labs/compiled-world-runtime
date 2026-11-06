@@ -13,6 +13,7 @@ from unittest import mock
 # Make `benchmark` importable when this file runs directly under python3 -I.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from benchmark.analyse import recompute_suite_digest
 from benchmark.campaigns import h1h2
 from benchmark.harness.ledgerio import REPO
 
@@ -74,8 +75,13 @@ class CompleteRegistration(unittest.TestCase):
         )
         cassettes = self.tmp / "cassettes"
         cassettes.mkdir()
+        tasks = self.tmp / "tasks"
+        (tasks / "t001-task").mkdir(parents=True)
+        (tasks / "t001-task" / "success.py").write_text(
+            "def success(state, ledger):\n    return True\n"
+        )
         suite = self.tmp / "suite.kvx"
-        suite.write_text('[suite]\nsuite_digest = "sha256:1"\n')
+        suite.write_text(f'[suite]\nsuite_digest = "{recompute_suite_digest(tasks)}"\n')
         build = "sha256:" + "a" * 64
         campaigns = {
             "H1": {"registration": {"control_build": build}},
@@ -91,9 +97,12 @@ class CompleteRegistration(unittest.TestCase):
             mock.patch.object(h1h2, "load_campaign", campaigns.__getitem__),
             mock.patch.object(h1h2, "CASSETTES", cassettes),
             mock.patch.object(h1h2, "SUITE", suite),
+            mock.patch.object(h1h2, "TASKS", tasks),
             mock.patch.dict("os.environ", environ),
         ):
             self.assertIn("upgrades_digest is registered as another value", self.refused())
+            suite.write_text('[suite]\nsuite_digest = "sha256:1"\n')
+            self.assertIn("but its tasks digest to", self.refused())
 
     def test_blockers_are_empty_for_a_draft_without_results(self):
         self.assertEqual(h1h2.registration_blockers(), [])

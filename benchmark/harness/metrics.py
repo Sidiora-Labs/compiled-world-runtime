@@ -261,13 +261,29 @@ def rule_reuse(ledger: Ledger, primitive: str, code: str) -> int:
     return 1
 
 
+MISUSE_SCOPES = ("call", "uncaught_turn", "not_computable")
+
+
 def post_upgrade_misuse_rate(
-    ledger: Ledger, changed: Sequence[str], misuse_code: str | None
+    ledger: Ledger, changed: Sequence[str], misuse_code: str | None, scope: str = "call"
 ) -> float | None:
-    """Post-upgrade turns containing a changed primitive failing with the new rule's code, divided by post-upgrade turns."""
+    """Post-upgrade misuse turns divided by post-upgrade turns, per the pair's frozen misuse scope
+    (benchmark/upgrades.kvx [pair.UN].misuse_scope).
+
+    ``call``: a turn counts when it holds a record of a changed primitive failing with
+    ``misuse_code``. ``uncaught_turn``: a turn counts only when its turn record ends in error with
+    ``misuse_code`` and its last call record is a changed primitive failing with that code, so the
+    old handler let the failure escape; catching the code is correct use (U3, where CONFLICT is the
+    documented not-ready signal after the upgrade). ``not_computable``: None, because the ledger
+    names no primitive for the misuse (U2 and U5, refused inside the sandbox before any call
+    record; spec/cwr/qualification.kvx finding task_4_3_sandbox_refusal_misuse)."""
     validate_ledger(ledger)
     if misuse_code is not None and misuse_code not in ENVELOPE:
         raise MetricInputError(f"misuse code {misuse_code!r} outside the envelope")
+    if scope not in MISUSE_SCOPES:
+        raise MetricInputError(f"misuse scope {scope!r} is not one of {MISUSE_SCOPES}")
+    if scope == "not_computable":
+        return None
     upgrade = _first_upgrade(ledger)
     if upgrade is None:
         return None
@@ -276,12 +292,31 @@ def post_upgrade_misuse_rate(
     if not post_turns:
         return None
     misuse_turns = set()
-    if misuse_code is not None:
+    if misuse_code is not None and scope == "call":
         for record in after:
             if (
                 is_failure(record)
                 and record["outcome"]["code"] == misuse_code
                 and _matches(record["primitive"], changed)
+            ):
+                misuse_turns.add(record["turn"])
+    elif misuse_code is not None:
+        last_call: dict[int, Mapping[str, Any]] = {}
+        for record in after:
+            if record.get("kind") in CALL_KINDS:
+                last_call[record["turn"]] = record
+        for record in after:
+            if record.get("kind") != "turn":
+                continue
+            final = last_call.get(record["turn"])
+            code = record.get("code", (record.get("outcome") or {}).get("code"))
+            if (
+                turn_status(record) == "error"
+                and code == misuse_code
+                and final is not None
+                and is_failure(final)
+                and final["outcome"]["code"] == misuse_code
+                and _matches(final["primitive"], changed)
             ):
                 misuse_turns.add(record["turn"])
     return _ratio(sum(1 for t in post_turns if t in misuse_turns), len(post_turns))
@@ -352,7 +387,8 @@ def instance_metrics(
     """Every metric for one Instance. Values are None where undefined or not applicable.
 
     reuse_rule: {"primitive": ..., "code": ...} for rule-reuse tasks, else None.
-    upgrade_pair: {"changed_primitives": [...], "misuse_code": code or None} for H4 tasks, else None.
+    upgrade_pair: {"changed_primitives": [...], "misuse_code": code or None, "misuse_scope": scope}
+    for H4 tasks, else None; misuse_scope defaults to "call".
     """
     validate_ledger(ledger)
     out: dict[str, Any] = {
@@ -380,7 +416,10 @@ def instance_metrics(
     if upgrade_pair is not None:
         changed = list(upgrade_pair["changed_primitives"])
         out["post_upgrade_misuse_rate"] = post_upgrade_misuse_rate(
-            ledger, changed, upgrade_pair.get("misuse_code")
+            ledger,
+            changed,
+            upgrade_pair.get("misuse_code"),
+            upgrade_pair.get("misuse_scope") or "call",
         )
         out["turns_to_first_correct_use"] = turns_to_first_correct_use(ledger, changed)
         out["proposals_after_upgrade"] = proposals_after_upgrade(ledger)

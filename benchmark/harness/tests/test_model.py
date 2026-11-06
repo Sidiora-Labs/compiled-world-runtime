@@ -366,6 +366,11 @@ class ReferenceStub(unittest.TestCase):
         context = '{"not": "an envelope"}\nprose'
         self.assertIsNone(mm.envelope_from_context(context))
 
+    def test_envelope_from_context_keeps_unicode_line_separators(self):
+        envelope = {"status": "ok", "world": {"time": 2}, "trace": [], "out": "x\u2028y\x85z"}
+        context = "MANUAL\n" + json.dumps(envelope, ensure_ascii=False) + "\n# Task"
+        self.assertEqual(mm.envelope_from_context(context), envelope)
+
 
 if __name__ == "__main__":
     unittest.main()

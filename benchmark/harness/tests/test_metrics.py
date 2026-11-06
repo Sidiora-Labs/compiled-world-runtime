@@ -224,6 +224,43 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(m.proposals_after_upgrade(self.build()), 1)
 
 
+class UpgradeMisuseScope(unittest.TestCase):
+    """U3 counts only an escaped CONFLICT; U2 and U5 misuse is not computable from a ledger."""
+
+    def build(self):
+        b = LedgerBuilder(arm="H4/changelog")
+        b.call("jobs.submit", side_effect="mutating").turn()  # turn 1
+        b.upgrade(stamp=None)
+        b.call("jobs.result", "CONFLICT").call("jobs.status").turn()  # turn 2: caught, polled
+        b.call("jobs.result", "CONFLICT").turn("error")  # turn 3: escaped
+        b.call("jobs.result").turn()  # turn 4
+        ledger = b.build_ledger()
+        for record in ledger:
+            if record.get("kind") == "turn" and record.get("status") == "error":
+                record["code"] = "CONFLICT"
+        return ledger
+
+    def test_call_scope_counts_the_caught_poll(self):
+        self.assertAlmostEqual(
+            m.post_upgrade_misuse_rate(self.build(), ["jobs.result"], "CONFLICT"), 2 / 3
+        )
+
+    def test_uncaught_scope_counts_only_the_escaped_failure(self):
+        self.assertAlmostEqual(
+            m.post_upgrade_misuse_rate(self.build(), ["jobs.result"], "CONFLICT", "uncaught_turn"),
+            1 / 3,
+        )
+
+    def test_not_computable_scope_is_none(self):
+        self.assertIsNone(
+            m.post_upgrade_misuse_rate(self.build(), ["fs.move"], "INVALID", "not_computable")
+        )
+
+    def test_unknown_scope_is_refused(self):
+        with self.assertRaises(m.MetricInputError):
+            m.post_upgrade_misuse_rate(self.build(), ["jobs.result"], "CONFLICT", "maybe")
+
+
 class Success(unittest.TestCase):
     def ledger(self):
         return (

@@ -31,7 +31,7 @@ pillars = ["stability", "direct_action", "controlled_change"]
 [control]
 world = "refworld"
 source = "examples/refworld"
-build = null
+build = "sha256:c38c08f495b5df39a2d5930708d7845a88654f54caa1cb1897c6c9c04403985e"
 doc = "refworld compiled with no experimental flag; the control Build of every hypothesis."
 
 [arm.h1.frozen]
@@ -98,7 +98,7 @@ flag = "--x-one-primitive"
 pillar_ablated = "direct_action"
 experimental_stamp = "x-one-primitive"
 build_binding = "flag"
-build = null
+build = "sha256:5e97e87c8d542fb292961962e2fc055cf1b6d2ee8da925c8a49b000e7c851f1f"
 tail = 20
 task_set = "suite:all"
 doc = "The second primitive call in a turn returns LIMIT with primitive_calls=1; the manual states the limit."

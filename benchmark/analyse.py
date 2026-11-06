@@ -439,10 +439,20 @@ DIGEST_STAMPS = ("preregistration", "metrics_py", "arms_kvx")
 
 
 def digest_errors(ctx: Context, cell: Cell, where: str) -> list[str]:
-    """An attempt stamped with registration digests must have run under the current ones."""
+    """An attempt must carry the registration digests it ran under, and they must be the current ones.
+
+    run.py stamps every attempt with the sha256 of preregistration.kvx, metrics.py and arms.kvx. An
+    unstamped attempt cannot show that it ran before a post-registration edit, so a registered
+    analysis refuses it; only a draft analysis tolerates one and counts it in the report.
+    """
     stamped = cell.attempt.get("registration_digests")
     if stamped is None:
-        return []
+        if ctx.draft:
+            return []
+        return [
+            f"{where}: attempt carries no registration_digests, so nothing shows it ran under "
+            "this registration"
+        ]
     if not isinstance(stamped, dict):
         return [f"{where}: attempt registration_digests is not an object"]
     return [

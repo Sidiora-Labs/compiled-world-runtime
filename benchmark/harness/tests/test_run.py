@@ -435,6 +435,28 @@ class Preflight(unittest.TestCase):
             "upgrades.kvx digest", self.refused(hypothesis="H4", arm="silent", task="u1-task")
         )
 
+    def test_malformed_pair_fields_are_typed_refusals(self):
+        from benchmark.harness.ledgerio import write_kvx
+
+        good = read_kvx(self.ws.campaigns / "h4.kvx")
+        cases = [
+            ({"upgrade_after_turn": "one"}, "upgrade_after_turn must be a positive integer"),
+            ({"upgrade_after_turn": None}, "upgrade_after_turn must be a positive integer"),
+            ({"upgrade_after_turn": 0}, "upgrade_after_turn must be a positive integer"),
+            ({"task_dir": None}, "task_dir must be a path string"),
+            ({"changed_primitives": "fs.delete"}, "changed_primitives must be a list"),
+            ({"misuse_code": 3}, "misuse_code must be a string or null"),
+            ({"misuse_scope": "turn"}, "misuse_scope 'turn' is not one of"),
+        ]
+        for change, message in cases:
+            with self.subTest(change=change):
+                h4 = {name: dict(body) for name, body in good.items()}
+                h4["pair.U1"].update(change)
+                write_kvx(self.ws.campaigns / "h4.kvx", h4)
+                text = self.refused(hypothesis="H4", arm="silent", task="u1-task")
+                self.assertIn("pair U1", text)
+                self.assertIn(message, text)
+
     def test_registration_gates(self):
         self.ws.arms.write_text(self.ws.arms.read_text() + "\n")
         self.assertIn("arms_kvx digest", self.refused(code=3))
@@ -513,22 +535,27 @@ class Recomputation(unittest.TestCase):
             def pred(state, ledger):
                 return state.get("task", {}).get("progress", 0) >= 2
 
+            (ws.tasks / "t001-short" / "success.py").write_text(
+                'def success(state, ledger):\n    return state.get("task", {}).get("progress", 0) >= 2\n'
+            )
+            # The predicate is part of the registered suite: register the new suite digest before
+            # the runs, so each attempt is stamped with the registration it ran under.
+            digest = suite_digest(ws.tasks)
+            for path in [*ws.root.glob("*.kvx"), *ws.root.rglob("campaigns/*.kvx")]:
+                path.write_text(path.read_text().replace(ws.suite_digest, digest))
             direct = {}
             for seed, steps in scripts.items():
-                run.run_episode(
-                    spec(ws.results, seed=seed, limit=10), FakeKernel(), FakeModel(steps), pred
+                cell_spec = spec(
+                    ws.results,
+                    seed=seed,
+                    limit=10,
+                    registration_digests=ws.registration_digests(),
                 )
+                run.run_episode(cell_spec, FakeKernel(), FakeModel(steps), pred)
                 cell = ws.results / "h1" / "frozen" / "t001-short" / str(seed)
                 direct[seed] = metrics.instance_metrics(
                     read_ledger(cell / "ledger.jsonl"), read_kvx(cell / "final_state.kvx"), pred
                 )
-            (ws.tasks / "t001-short" / "success.py").write_text(
-                'def success(state, ledger):\n    return state.get("task", {}).get("progress", 0) >= 2\n'
-            )
-            # The predicate is part of the registered suite: register the new suite digest.
-            digest = suite_digest(ws.tasks)
-            for path in [*ws.root.glob("*.kvx"), *ws.root.rglob("campaigns/*.kvx")]:
-                path.write_text(path.read_text().replace(ws.suite_digest, digest))
             out = tmp / "r.json"
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
                 code = analyse.main(ws.argv("--out", str(out)), make_kernel=replay_kernel)
@@ -602,6 +629,21 @@ class CommandLine(unittest.TestCase):
             shutil.rmtree(root)
 
 
+class TurnEnvelope(unittest.TestCase):
+    """The envelope `cwr instance turn` prints is split on LF only."""
+
+    def test_unicode_line_separators_stay_inside_the_envelope(self):
+        envelope = {"status": "ok", "world": {"time": 1}, "trace": [], "out": "a\u2028b\x85c\u2029"}
+        stdout = "progress\n" + json.dumps(envelope, ensure_ascii=False) + "\n"
+        self.assertEqual(run._last_envelope(stdout), envelope)
+
+    def test_output_that_is_not_an_envelope_is_a_kernel_command_error(self):
+        for stdout in ("{truncated\n", "[1, 2]\n"):
+            with self.subTest(stdout=stdout), self.assertRaises(run.KernelCommandError):
+                run._last_envelope(stdout)
+        self.assertEqual(run._last_envelope("\n  \n")["status"], "error")
+
+
 class CliBindingHelpers(unittest.TestCase):
     def test_extract_blocks(self):
         one = "say\n```python\nimport fs\n```\nbye"
@@ -646,7 +688,8 @@ class CliBindingHelpers(unittest.TestCase):
                 "seq": 1,
                 "kind": "adapter",
                 "primitive": "publish.post",
-                "gateway": {"request_hash": "h"},
+                "gateway": {"request_hash": "h", "via": "service"},
+                "outcome": {"status": "ok", "code": None},
                 "world_time": 1,
                 "turn": 1,
             },

@@ -106,10 +106,12 @@ class LedgerBuilder:
         return self
 
     def upgrade(self, new_build: str = BUILD_B, stamp: str | None = None) -> LedgerBuilder:
-        record = self._base("upgrade", turn=self.turn_no - 1)
-        record.update({"old_build": self.build, "new_build": new_build, "migrations": []})
-        self.records.append(record)
+        # As the kernel writes it: the upgrade record already carries the new Build and its stamp.
+        old_build = self.build
         self.build, self.stamp = new_build, stamp
+        record = self._base("upgrade", turn=self.turn_no - 1)
+        record.update({"old_build": old_build, "new_build": new_build, "migrations": []})
+        self.records.append(record)
         return self
 
     def build_ledger(self) -> list[dict[str, Any]]:
@@ -152,7 +154,18 @@ class FakeKernel:
         self.instances: dict[str, dict[str, Any]] = {}
         self.destroyed: list[str] = []
 
-    def create_instance(self, *, build, seed, tail, arm, model, allow_experimental, initial_state):
+    def create_instance(
+        self,
+        *,
+        build,
+        seed,
+        tail,
+        arm,
+        model,
+        allow_experimental,
+        initial_state,
+        cassette_digest=None,
+    ):
         stamp = (
             "x-drift"
             if allow_experimental and "drift" in arm
@@ -160,7 +173,13 @@ class FakeKernel:
         )
         iid = f"inst-{arm}-{seed}".replace("/", "-")
         builder = LedgerBuilder(
-            arm=arm, seed=seed, tail=tail, model=model, build=build, stamp=stamp
+            arm=arm,
+            seed=seed,
+            tail=tail,
+            model=model,
+            build=build,
+            stamp=stamp,
+            cassette=cassette_digest or CASSETTE,
         )
         self.instances[iid] = {
             "ledger": builder,
@@ -168,6 +187,9 @@ class FakeKernel:
             "allow": allow_experimental,
         }
         return iid
+
+    def bind_cassette(self, instance, cassette):
+        self.instances[instance]["cassette"] = cassette
 
     def context(self, instance):
         b = self.instances[instance]["ledger"]

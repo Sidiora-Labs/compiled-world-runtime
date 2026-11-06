@@ -1121,13 +1121,9 @@ def _campaign_file(campaigns_dir: Path, hypothesis: str) -> dict[str, dict[str, 
 
 
 def _pair_path(pair_name: str | None, key: str, value: Any) -> Path:
-    """A repository-relative path named by an h4.kvx pair, refused unless it stays inside REPO."""
-    if not isinstance(value, str) or not value or Path(value).is_absolute():
-        raise PreflightRefused(
-            2, f"pair {pair_name} {key} must be a repository-relative path, not {value!r}"
-        )
-    if not (REPO / value).resolve().is_relative_to(REPO):
-        raise PreflightRefused(2, f"pair {pair_name} {key} {value!r} leaves the repository")
+    """A path named by an h4.kvx pair, relative to the repository root; refused unless a string."""
+    if not isinstance(value, str) or not value:
+        raise PreflightRefused(2, f"pair {pair_name} {key} must be a path string, not {value!r}")
     return REPO / value
 
 

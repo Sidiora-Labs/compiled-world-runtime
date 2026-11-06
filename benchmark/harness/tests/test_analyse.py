@@ -387,8 +387,28 @@ class EndToEnd(unittest.TestCase):
         attempt["attempt"]["registration_digests"]["arms_kvx"] = sha256_file(self.ws.arms)
         write_kvx(cell / "attempt.kvx", attempt)
         report = self.analyse_ok()
-        # 18 H1 and 12 H4 Instances are included; only this one carries the stamp.
-        self.assertEqual(report["attempts_without_registration_digests"], 29)
+        self.assertEqual(report["attempts_without_registration_digests"], 0)
+
+    def test_unstamped_attempt_refused_unless_draft(self):
+        cell = self.ws.results / "h1" / "frozen" / "t001-short" / "1"
+        attempt = read_kvx(cell / "attempt.kvx")
+        del attempt["attempt"]["registration_digests"]
+        write_kvx(cell / "attempt.kvx", attempt)
+        code, _, err = run(self.ws.argv("--out", str(self.out)))
+        self.assertEqual(code, 4)
+        self.assertIn("attempt carries no registration_digests", err)
+
+        ws = Workspace(self.tmp / "unstamped-draft", status="draft")
+        ws.populate_h1()
+        cell = ws.results / "h1" / "frozen" / "t001-short" / "1"
+        attempt = read_kvx(cell / "attempt.kvx")
+        del attempt["attempt"]["registration_digests"]
+        write_kvx(cell / "attempt.kvx", attempt)
+        code, _, err = run(ws.argv("--out", str(self.out), "--draft-ok"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            json.loads(self.out.read_text())["attempts_without_registration_digests"], 1
+        )
 
     def test_campaign_registered_under_other_arms_refused(self):
         self.ws.write_campaigns(arms_kvx="sha256:" + "0" * 64)

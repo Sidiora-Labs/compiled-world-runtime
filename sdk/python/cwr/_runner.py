@@ -596,6 +596,21 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
 
     # ------------------------------------------------------------------ the returned value
 
+    type_name_of = type.__dict__["__name__"].__get__
+
+    def type_name(obj):
+        """The name of ``type(obj)`` read from the type itself, never through a metaclass attribute.
+
+        A script class may define ``__name__`` on its metaclass, or ``__class__`` on itself, so that
+        reading either raises; this reads the type slot directly and returns ``"object"`` if even
+        that fails, so reporting a turn never raises.
+        """
+        try:
+            name = type_name_of(type(obj))
+            return str.__str__(name) if type(name) is str else "object"
+        except BaseException:
+            return "object"
+
     class UnencodableError(Exception):
         """The returned value cannot cross the codec: a cycle, too deep, or a type outside it."""
 
@@ -627,7 +642,7 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
         if isinstance(v, bytearray):
             return bytes(bytearray.copy(v))
         if not isinstance(v, (list, tuple, dict)):
-            raise UnencodableError(type(v).__name__)
+            raise UnencodableError(type_name(v))
         if depth >= max_depth or id(v) in open_ids:
             raise UnencodableError("cycle or nesting too deep")
         open_ids.add(id(v))
@@ -655,7 +670,7 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
             result = namespace.pop("__cwr_turn__")()
         except BaseException as e:  # every escape is reported; nothing reaches the host
             outcome = "raised"
-            if isinstance(e, errors.WorldError):
+            if issubclass(type(e), errors.WorldError):  # never reads e.__class__
                 try:
                     failure = {
                         "code": e.code,
@@ -665,20 +680,21 @@ def _cwr_main():  # everything lives in this frame so that module globals expose
                         "limit": e.limit,
                         "detail": e.detail,
                     }
-                    json.dumps(failure, allow_nan=False)
+                    # Rebuilt from plain JSON so that the end frame never reads a script object again.
+                    failure = json.loads(json.dumps(failure, allow_nan=False))
                 except BaseException:  # attributes the script replaced: the kernel ignores them
                     failure = None
             try:
-                exception = f"{type(e).__name__}: {e}"[:500]
-            except BaseException:  # str(e) itself raised: report the type alone
-                exception = type(e).__name__
+                exception = f"{type_name(e)}: {str.__str__(str(e))}"[:500]
+            except BaseException:  # str(e) itself raised or returned a str subclass: the type alone
+                exception = type_name(e)
         else:
             try:
                 returned = _codec.encode(plain(result, 0, set()))
             except BaseException:  # a cycle, nesting too deep, or a value outside the codec
                 outcome, exception = (
                     "unencodable",
-                    f"returned value of type {type(result).__name__} is outside the SDK codec",
+                    f"returned value of type {type_name(result)} is outside the SDK codec",
                 )
     hook_state[1] = True
     send(

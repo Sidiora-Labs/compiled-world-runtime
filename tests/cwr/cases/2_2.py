@@ -835,6 +835,10 @@ def check_hostile_runner(world: World, ctl: Path) -> None:
         "deep nesting": "v = 1\nfor _ in range(500):\n    v = [v]\nreturn v\n",
         "non-finite float": "return float('nan')\n",
         "set": "return {1, 2}\n",
+        "value whose metaclass __name__ raises": (
+            "class M(type):\n    @property\n    def __name__(cls):\n        raise RuntimeError\n"
+            "class X(metaclass=M):\n    pass\nreturn X()\n"
+        ),
     }
     for name, script in unencodable.items():
         rc, env, _ = world.turn(iid, script)
@@ -846,6 +850,28 @@ def check_hostile_runner(world: World, ctl: Path) -> None:
             and err(env)[:2] == ("INVALID", "turn.return")
             and not spurious,
             f"a returned {name} is INVALID turn.return with no spurious closure refusal: {summary(env)} trace={spurious}",
+        )
+    hostile_raises = {
+        "metaclass __name__ raises": (
+            "class M(type):\n    @property\n    def __name__(cls):\n        raise RuntimeError\n"
+            "class E(Exception, metaclass=M):\n    pass\nraise E()\n"
+        ),
+        "__class__ raises": (
+            "class E(Exception):\n    @property\n    def __class__(self):\n        raise RuntimeError\n"
+            "raise E('x')\n"
+        ),
+    }
+    for name, script in hostile_raises.items():
+        rc, env, _ = world.turn(iid, script)
+        spurious = [t["primitive"] for t in (env or {}).get("trace", [])]
+        R.check(
+            "6.4",
+            rc == 0
+            and env["status"] == "error"
+            and err(env)[:2] == ("INVALID", "turn.script")
+            and "uncaught exception" in (env["error"].get("detail") or "")
+            and not spurious,
+            f"an exception whose {name} is INVALID turn.script with no spurious closure refusal: {summary(env)} trace={spurious}",
         )
     overriding = (
         "class D(dict):\n"

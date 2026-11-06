@@ -45,6 +45,7 @@ MAX_FRAME = 64 * 1024 * 1024
 _HEADER = struct.Struct(">I")
 
 _sock = None
+_broken = None  # why the channel lost its framing; every later call refuses with this reason
 _next_id = 1
 _last = None
 _count = 0
@@ -56,33 +57,44 @@ class RpcError(RuntimeError):
 
 def install(sock) -> None:
     """Install a connected stream socket as the channel (used by the sandbox runner)."""
-    global _sock
+    global _sock, _broken
     _sock = sock
+    _broken = None
 
 
 def close() -> None:
     """Close the channel if one is open; the next call opens a new one from the environment."""
-    global _sock
+    global _sock, _broken
     if _sock is not None:
         try:
             _sock.close()
         finally:
             _sock = None
+            _broken = None
 
 
 def _channel():
     """The open channel, opening it from the environment on first use; raises RpcError if none."""
     global _sock
+    if _broken is not None:
+        raise RpcError(f"RPC channel unusable after an earlier defect: {_broken}")
     if _sock is not None:
         return _sock
     fd = os.environ.get("CWR_RPC_FD")
     if fd:
-        _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=int(fd))
+        try:
+            _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=int(fd))
+        except (ValueError, OSError) as e:
+            raise RpcError(f"CWR_RPC_FD does not name a usable socket: {e}") from None
         return _sock
     path = os.environ.get("CWR_RPC_SOCKET")
     if path:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.connect(path)
+        try:
+            s.connect(path)
+        except OSError as e:
+            s.close()
+            raise RpcError(f"cannot connect to CWR_RPC_SOCKET: {e}") from None
         _sock = s
         return _sock
     raise RpcError(
@@ -129,7 +141,7 @@ def call(primitive: str, params: dict, content_guaranteed: bool = True):
     ``content_guaranteed`` is the Build's own label for the primitive (False for adapters); a response
     whose label differs is a channel defect, so the clause 2.5 label cannot be lost or forged in transit.
     """
-    global _next_id, _last, _count
+    global _next_id, _last, _count, _broken
     s = _channel()
     rid = _next_id
     _next_id += 1
@@ -140,10 +152,23 @@ def call(primitive: str, params: dict, content_guaranteed: bool = True):
         "params": _codec.encode(dict(params)),
     }
     text = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    send_frame(s, text.encode("utf-8"))
-    _count += 1
+    payload = text.encode("utf-8")
+    if len(payload) > MAX_FRAME:
+        raise RpcError(f"frame of {len(payload)} bytes exceeds {MAX_FRAME}")
+    # From the first byte sent until the whole response is read, a failure leaves the stream at an
+    # unknown position: the channel is marked broken so that no later call reads a stale response.
     try:
-        response = json.loads(recv_frame(s).decode("utf-8"))
+        send_frame(s, payload)
+        _count += 1
+        raw = recv_frame(s)
+    except RpcError as e:
+        _broken = str(e)
+        raise
+    except OSError as e:
+        _broken = f"RPC channel failed: {e}"
+        raise RpcError(_broken) from None
+    try:
+        response = json.loads(raw.decode("utf-8"))
     except ValueError as e:
         raise RpcError(f"malformed RPC response: {e}") from None
     if not isinstance(response, dict) or response.get("id") != rid or response.get("v") != PROTOCOL:

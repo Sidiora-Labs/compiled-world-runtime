@@ -381,8 +381,7 @@ exit_code = 1
 log = "tests/cwr/evidence/CWR-007/20261106T151322Z-1/2.2/driver.stdout.log"
 observed = "task 2.2 driver for CWR-007 (case scope): exit 1; record outcome FAIL, checker accepted True; 0 of 0 observed assertions PASS for 7 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-007.a1', 'CWR-007.a2', 'CWR-007.a3', 'CWR-007.a4', 'CWR-007.a5', 'CWR-007.a6', 'CWR-007.a7']; task 2.2 driver exited 1"
 assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
-product_evidence = true
-evidence = "tests/cwr/evidence/CWR-007/20261106T151322Z-1.json"
+product_evidence = false
 
 [progress.attempt_0030_2_3]
 revision = "index seq 30; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cc61d65a81a41297b8ed38dbdca74f47e0638445dd9f41e749e4e68a40e433e6; kernel sha256:b48ba699fb6dd57cd2cb9a490d31418cfbc0d75e704f36627e799a1d00af501d; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
@@ -391,8 +390,7 @@ exit_code = 1
 log = "tests/cwr/evidence/CWR-009/20261106T151334Z-1/2.3/driver.stdout.log"
 observed = "task 2.3 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted True; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
 assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
-product_evidence = true
-evidence = "tests/cwr/evidence/CWR-009/20261106T151334Z-1.json"
+product_evidence = false
 
 [progress.attempt_0030_4_1]
 revision = "index seq 30; spec sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9; compiler sha256:cc61d65a81a41297b8ed38dbdca74f47e0638445dd9f41e749e4e68a40e433e6; kernel sha256:b48ba699fb6dd57cd2cb9a490d31418cfbc0d75e704f36627e799a1d00af501d; sdk sha256:ece70c57a202dd3062e654c3cbb1f960af33bbb909d7486ac1395c409937c416"
@@ -401,8 +399,7 @@ exit_code = 1
 log = "tests/cwr/evidence/CWR-009/20261106T151334Z-1/4.1/driver.stdout.log"
 observed = "task 4.1 driver for CWR-009 (case scope): exit 1; record outcome FAIL, checker accepted True; 0 of 0 observed assertions PASS for 9 registered; diagnostics: the driver reported no assertions; an exit code alone is never a PASS; coverage gaps: ['CWR-009.a1', 'CWR-009.a2', 'CWR-009.a3', 'CWR-009.a4', 'CWR-009.a5', 'CWR-009.a6', 'CWR-009.a7', 'CWR-009.a8', 'CWR-009.a9']; task 2.3 driver exited 1"
 assumption = "Outcome as written by tests/cwr/qualify.py and re-checked by tests/cwr/check_evidence.py; a driver exit code alone is never a PASS and a component record never changes a case status."
-product_evidence = true
-evidence = "tests/cwr/evidence/CWR-009/20261106T151334Z-1.json"
+product_evidence = false
 
 [finding.blocked_task_1_3]
 revision = "attempt index seq >= 3"
@@ -557,4 +554,15 @@ exit_code = 1
 log = "RepositoryRegistration.test_analyse_refuses_the_committed_registration_only_while_it_is_a_draft: suite digest recomputed from benchmark/tasks is not the registered one"
 observed = "Commit 6ec82b5 marked benchmark/preregistration.kvx registered with metrics_py sha256:2d1ce9d7 and arms_kvx sha256:a34dd6a8 but committed neither file; the next review:harness commit adds both, byte-identical to the files every H1, H2 and H3 attempt is stamped with. The same commit rewrote [metric.post_upgrade_misuse_rate].definition (misuse_scope) and [rules].c7 and changed the CWR-019 status line of docs/cwr/experiments.md. The amendment comment says the metrics.py change came before any H1 or H2 result. It changes only an H4 metric, and H3 and H4 executions under earlier working-tree registrations already existed. They are kept under benchmark/results/h3/_superseded and benchmark/results/h4/_superseded, which analyse.py never reads. The registration committed in d7b8dee, whose sha256 every current attempt carries, amends suite_digest to sha256:7c4f31a3. Only the campaign's frozen copy under .cwr/campaign-1/frozen has that digest. Committed benchmark/tasks has sha256:39002624 and the working tree has sha256:21b81c44."
 assumption = "preregistration.kvx is not edited to restate these amendments, because analyse.py refuses every attempt whose registration_digests differ from the current file. The H4 misuse_scope definition is the one H4 runs under, since no unsuperseded H4 attempt predates it, and the H4 report states it as a deviation. Resolving the suite part needs the owner to commit the frozen suite as benchmark/tasks or re-register suite_digest at the next campaign registration. Until then, H1 and H2 are analysed with --suite and --tasks-dir of the frozen copy."
+product_evidence = false
+
+# Deviation of task 2.2 (clause 6.1): the memory monitor can still be made to report a forged limit.
+
+[finding.task_2_2_memory_limit_forged_without_frame]
+revision = "working-tree sdk/python/cwr/_runner.py 2026-11-06"
+command = "cwr instance turn with a script that throws a MemoryError into a generator that has already finished"
+exit_code = 0
+log = "envelope of that turn: error LIMIT memory_mb, although the script caught the exception"
+observed = "The runner's RAISE callback treats a MemoryError as an interpreter allocation failure unless it was raised at a script-raise instruction, carries arguments or was seen by PY_THROW. A MemoryError the script hands to C code that re-raises it without running a Python frame (throw into a finished generator, for example) meets none of these tests, so the runner itself sends the token-bearing limit frame and the kernel reports LIMIT memory_mb. Script-raised, re-raised, nested and live-generator cases are ordinary exceptions and the 2.2 driver checks them."
+assumption = "Closing this needs a test that tells an allocation failure from a pre-existing script MemoryError at any instruction. Until then a script can end its own turn as LIMIT memory_mb; it cannot raise any other code, change state or affect another turn."
 product_evidence = false

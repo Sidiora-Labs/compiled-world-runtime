@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t054-cancel-twice"
 PRIMITIVES = 32  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+TURNS = 4
 
 
 def script(body, **data):
@@ -60,6 +60,12 @@ def turns():
     yield script(
         cancel
         + """
-        cancel_unfinished(["z1", "z2", "z3", "z4"])
+        cancel_unfinished(["z1", "z2"])
+    """
+    )
+    yield script(
+        cancel
+        + """
+        cancel_unfinished(["z3", "z4"])
     """
     )

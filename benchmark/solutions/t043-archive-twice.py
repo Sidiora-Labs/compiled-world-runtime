@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t043-archive-twice"
 PRIMITIVES = 30  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+TURNS = 4
 
 
 def script(body, **data):
@@ -54,5 +54,8 @@ def turns():
         import fs
         fs.delete(path="/archive/q2.txt")
         fs.move(src="/inbox/q2.txt", dst="/archive/q2.txt")
+    """)
+    yield script("""
+        import fs
         fs.move(src="/inbox/q3.txt", dst="/archive/q3.txt")
     """)

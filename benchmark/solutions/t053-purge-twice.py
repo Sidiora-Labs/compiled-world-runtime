@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t053-purge-twice"
 PRIMITIVES = 30  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+TURNS = 4
 
 
 def script(body, **data):
@@ -60,6 +60,12 @@ def turns():
     yield script(
         purge
         + """
-        purge(["stale-3.job", "stale-4.job"])
+        purge(["stale-3.job"])
+    """
+    )
+    yield script(
+        purge
+        + """
+        purge(["stale-4.job"])
     """
     )

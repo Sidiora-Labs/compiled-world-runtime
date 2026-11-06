@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t050-locked-pages-twice"
 PRIMITIVES = 33  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+TURNS = 4
 
 
 def script(body, **data):
@@ -61,6 +61,11 @@ def turns():
         page
         + """
         publish_page("about")
+    """
+    )
+    yield script(
+        page
+        + """
         publish_page("contact")
     """
     )

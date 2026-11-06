@@ -88,12 +88,15 @@ def t042_turns():
             clean = "".join(line.rstrip(" ") + "\\n" for line in text.splitlines())
             fs.write(path="/reports/clean/" + path[len("/reports/raw/"):], content=clean.encode())
     """)
-    yield script("""
-        import fs
-        for name in ["build.tmp", "cache.tmp"]:
+    for name in ["build.tmp", "cache.tmp"]:
+        yield script(
+            """
+            import fs
             fs.unlock(path="/scratch/" + name)
             fs.delete(path="/scratch/" + name)
-    """)
+        """,
+            name=name,
+        )
 
 
 # t043 fs.move[3]:CONFLICT ----------------------------------------------------------------------
@@ -125,6 +128,9 @@ def t043_turns():
         import fs
         fs.delete(path="/archive/q2.txt")
         fs.move(src="/inbox/q2.txt", dst="/archive/q2.txt")
+    """)
+    yield script("""
+        import fs
         fs.move(src="/inbox/q3.txt", dst="/archive/q3.txt")
     """)
 
@@ -167,11 +173,17 @@ def t044_turns():
         store("/big/a.txt")
     """
     )
-    yield script("""
-        import fs
-        for path in fs.list(prefix="/docs/"):
-            fs.write(path=path, content=fs.read(path=path).lower())
-    """)
+    for half in [0, 1]:
+        yield script(
+            """
+            import fs
+            paths = fs.list(prefix="/docs/")
+            cut = len(paths) // 2
+            for path in (paths[:cut] if half == 0 else paths[cut:]):
+                fs.write(path=path, content=fs.read(path=path).lower())
+        """,
+            half=half,
+        )
     yield script(
         store
         + """
@@ -209,15 +221,17 @@ def t045_turns():
         for path in fs.list(prefix="/letters/"):
             fs.write(path=path, content=b"Dear team,\\n" + fs.read(path=path))
     """)
-    yield script("""
-        import fs, kv
-        e2 = fs.read(path="/in/e2.txt").decode()
-        e3 = fs.read(path="/in/e3.txt").decode()
-        kv.del_(ns="cache", key="stale-01")
-        kv.set(ns="cache", key="e2", value=e2.encode())
-        kv.del_(ns="cache", key="stale-02")
-        kv.set(ns="cache", key="e3", value=e3.encode())
-    """)
+    for entry, stale in [("e2", "stale-01"), ("e3", "stale-02")]:
+        yield script(
+            """
+            import fs, kv
+            value = fs.read(path="/in/" + entry + ".txt")
+            kv.del_(ns="cache", key=stale)
+            kv.set(ns="cache", key=entry, value=value)
+        """,
+            entry=entry,
+            stale=stale,
+        )
 
 
 # t046 publish.post[1]:INVALID ------------------------------------------------------------------
@@ -571,6 +585,11 @@ def t050_turns():
         page
         + """
         publish_page("about")
+    """
+    )
+    yield script(
+        page
+        + """
         publish_page("contact")
     """
     )
@@ -603,11 +622,17 @@ def t051_turns():
         lock_all("/legal/")
     """
     )
-    yield script("""
-        import fs, kv
-        for path in fs.list(prefix="/memos/"):
-            kv.set(ns="memos", key=path, value=fs.read(path=path))
-    """)
+    for half in [0, 1]:
+        yield script(
+            """
+            import fs, kv
+            paths = fs.list(prefix="/memos/")
+            cut = len(paths) // 2
+            for path in (paths[:cut] if half == 0 else paths[cut:]):
+                kv.set(ns="memos", key=path, value=fs.read(path=path))
+        """,
+            half=half,
+        )
     yield script(
         lock_all
         + """
@@ -710,7 +735,13 @@ def t053_turns():
     yield script(
         purge
         + """
-        purge(["stale-3.job", "stale-4.job"])
+        purge(["stale-3.job"])
+    """
+    )
+    yield script(
+        purge
+        + """
+        purge(["stale-4.job"])
     """
     )
 
@@ -754,7 +785,13 @@ def t054_turns():
     yield script(
         cancel
         + """
-        cancel_unfinished(["z1", "z2", "z3", "z4"])
+        cancel_unfinished(["z1", "z2"])
+    """
+    )
+    yield script(
+        cancel
+        + """
+        cancel_unfinished(["z3", "z4"])
     """
     )
 

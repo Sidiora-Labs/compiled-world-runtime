@@ -21,8 +21,8 @@ rule_id_grammar = "<module>.<primitive>[<N>|rate|key|shape|clock|stream][:<CODE>
 turn_limit = 200
 suite_digest = "sha256:21b81c446b254856196c794bfd9ae5c63fa874c9670f0cbfc0a5bf58e8cc5233"
 suite_digest_scope = "every file of every benchmark/tasks/tNNN-slug directory; paths relative to benchmark/tasks; layout of spec/cwr/compiler.md section 7"
-solutions_digest = "sha256:967f988615d0324439c914b9b188b13d8c576c09c1ecdc916c34beb566912b2c"
-predicates_common_digest = "sha256:e02ef2cf14ad4986ff0c73ced84a1213a23cd33aeb85b8d07376ce49f7eb29f1"
+solutions_digest = "sha256:bcc27282298e7f93f69b30c0bc78cb5592c5291b4872c2c7f5c8b6f203380d2a"
+predicates_common_digest = "sha256:bc98033d3e1c887a3bc680c4480bbcc95c6a10e3640c2041c899253aa9a8d456"
 cassette_digest = "sha256:c4d99f432d3f4fe76a04e5b3d8fc3d2db0d50785d3acfdaaaa9d2013234418e9"
 cassette_digest_note = "frozen by task 4.1 after recording the reference solutions against the stub servers; null until then"
 
@@ -501,7 +501,7 @@ solution = "benchmark/solutions/t041-poll-then-reuse.py"
 [task.t042-cleanup-twice]
 bin = "long"
 primitive_count = 31
-turns = 3
+turns = 4
 rules = ["fs.delete[2]:LOCKED", "fs.delete[1]:NOT_FOUND", "fs.write[1]:LOCKED"]
 rule_reuse = true
 reused_rule = "fs.delete[2]:LOCKED"
@@ -512,7 +512,7 @@ solution = "benchmark/solutions/t042-cleanup-twice.py"
 [task.t043-archive-twice]
 bin = "long"
 primitive_count = 30
-turns = 3
+turns = 4
 rules = ["fs.move[3]:CONFLICT", "fs.delete[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "fs.move[3]:CONFLICT"
@@ -522,23 +522,23 @@ solution = "benchmark/solutions/t043-archive-twice.py"
 
 [task.t044-chunks-twice]
 bin = "long"
-primitive_count = 32
-turns = 3
+primitive_count = 33
+turns = 4
 rules = ["kv.set[1]:INVALID"]
 rule_reuse = true
 reused_rule = "kv.set[1]:INVALID"
-reuse_positions = {"first": 1, "first_late": 29, "last_early": 2}
+reuse_positions = {"first": 1, "first_late": 30, "last_early": 2}
 digest = "sha256:cfb891f81ec7468bedf61534cdb5b4585f76678ebf884169c202051e2734e226"
 solution = "benchmark/solutions/t044-chunks-twice.py"
 
 [task.t045-quota-twice]
 bin = "long"
 primitive_count = 34
-turns = 3
+turns = 4
 rules = ["kv.set[2]:LIMIT", "kv.del[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "kv.set[2]:LIMIT"
-reuse_positions = {"first": 2, "first_late": 31, "last_early": 2}
+reuse_positions = {"first": 2, "first_late": 30, "last_early": 2}
 digest = "sha256:13adf88fa19f607151585eac7eafb312b1e954e66b62668e9132b02da9129f17"
 solution = "benchmark/solutions/t045-quota-twice.py"
 
@@ -589,7 +589,7 @@ solution = "benchmark/solutions/t049-slots-twice.py"
 [task.t050-locked-pages-twice]
 bin = "long"
 primitive_count = 33
-turns = 3
+turns = 4
 rules = ["fs.write[1]:LOCKED", "fs.lock[2]:CONFLICT"]
 rule_reuse = true
 reused_rule = "fs.write[1]:LOCKED"
@@ -599,12 +599,12 @@ solution = "benchmark/solutions/t050-locked-pages-twice.py"
 
 [task.t051-lock-sets-twice]
 bin = "long"
-primitive_count = 40
-turns = 3
+primitive_count = 41
+turns = 4
 rules = ["fs.lock[2]:CONFLICT", "fs.unlock[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "fs.lock[2]:CONFLICT"
-reuse_positions = {"first": 2, "first_late": 33, "last_early": 8}
+reuse_positions = {"first": 2, "first_late": 34, "last_early": 8}
 digest = "sha256:c9c963a7b022379c04e0eee0b0254daf3991149ccf13b4dd6b36f39cd7d187b1"
 solution = "benchmark/solutions/t051-lock-sets-twice.py"
 
@@ -622,7 +622,7 @@ solution = "benchmark/solutions/t052-collect-twice.py"
 [task.t053-purge-twice]
 bin = "long"
 primitive_count = 30
-turns = 3
+turns = 4
 rules = ["fs.delete[2]:LOCKED", "kv.del[1]:NOT_FOUND", "kv.get[1]:NOT_FOUND"]
 rule_reuse = true
 reused_rule = "fs.delete[2]:LOCKED"
@@ -633,7 +633,7 @@ solution = "benchmark/solutions/t053-purge-twice.py"
 [task.t054-cancel-twice]
 bin = "long"
 primitive_count = 32
-turns = 3
+turns = 4
 rules = ["jobs.cancel[2]:CONFLICT", "jobs.status[clock]"]
 rule_reuse = true
 reused_rule = "jobs.cancel[2]:CONFLICT"

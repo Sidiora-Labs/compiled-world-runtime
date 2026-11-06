@@ -11,8 +11,8 @@ with `cwr instance turn`. The helpers below run on the driver side only.
 import textwrap
 
 TASK = "t044-chunks-twice"
-PRIMITIVES = 32  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+PRIMITIVES = 33  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
+TURNS = 4
 
 
 def script(body, **data):
@@ -52,11 +52,17 @@ def turns():
         store("/big/a.txt")
     """
     )
-    yield script("""
-        import fs
-        for path in fs.list(prefix="/docs/"):
-            fs.write(path=path, content=fs.read(path=path).lower())
-    """)
+    for half in [0, 1]:
+        yield script(
+            """
+            import fs
+            paths = fs.list(prefix="/docs/")
+            cut = len(paths) // 2
+            for path in (paths[:cut] if half == 0 else paths[cut:]):
+                fs.write(path=path, content=fs.read(path=path).lower())
+        """,
+            half=half,
+        )
     yield script(
         store
         + """

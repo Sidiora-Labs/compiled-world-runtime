@@ -12,7 +12,7 @@ import textwrap
 
 TASK = "t045-quota-twice"
 PRIMITIVES = 34  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+TURNS = 4
 
 
 def script(body, **data):
@@ -48,12 +48,14 @@ def turns():
         for path in fs.list(prefix="/letters/"):
             fs.write(path=path, content=b"Dear team,\\n" + fs.read(path=path))
     """)
-    yield script("""
-        import fs, kv
-        e2 = fs.read(path="/in/e2.txt").decode()
-        e3 = fs.read(path="/in/e3.txt").decode()
-        kv.del_(ns="cache", key="stale-01")
-        kv.set(ns="cache", key="e2", value=e2.encode())
-        kv.del_(ns="cache", key="stale-02")
-        kv.set(ns="cache", key="e3", value=e3.encode())
-    """)
+    for entry, stale in [("e2", "stale-01"), ("e3", "stale-02")]:
+        yield script(
+            """
+            import fs, kv
+            value = fs.read(path="/in/" + entry + ".txt")
+            kv.del_(ns="cache", key=stale)
+            kv.set(ns="cache", key=entry, value=value)
+        """,
+            entry=entry,
+            stale=stale,
+        )

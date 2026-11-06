@@ -36,6 +36,10 @@ Rules every predicate follows, checked by ``check_predicate_source``:
   ``PREDICATE_API`` as ``c.<name>``; ``load_predicate`` hands it a module holding nothing else;
 * it never reads model text, sandbox stdout, kernel internals, cassettes or adapter payloads;
 * it never opens files, never calls eval/exec, and never mutates its arguments;
+* on any value other than ``c`` it names only the public methods of the data types the state
+  view and the ledger are made of (``DATA_ATTRIBUTES``), so it cannot walk generator, frame or
+  traceback attributes to another frame's globals, and it formats only literal templates whose
+  fields look nothing up;
 * two evaluations over one state and ledger return the same value and leave the inputs they
   were given unchanged (``evaluate_twice``).
 
@@ -54,6 +58,7 @@ import copy
 import hashlib
 import json
 import re
+import string
 from pathlib import Path
 
 STATE_VIEW_VERSION = 1
@@ -708,6 +713,42 @@ FORBIDDEN_CALLS = frozenset(
 FORBIDDEN_NAMES = frozenset({"__builtins__", "__loader__", "__spec__", "__file__"})
 
 
+def _public_attributes(*types) -> frozenset:
+    return frozenset(name for kind in types for name in dir(kind) if not name.startswith("_"))
+
+
+# The only attributes a predicate may name on a value other than ``c``: the public methods and
+# properties of the data types a state view and a ledger are built from. Frame, code, generator,
+# coroutine and traceback attributes (gi_frame, f_back, f_globals, tb_frame, co_code, ...) are none
+# of them, so no introspection chain can reach another frame's globals. format_map is left out and
+# format is admitted only on a literal template whose replacement fields name no attribute or item
+# (``_safe_template``), because a field such as "{0.gi_frame}" is attribute access in a string.
+DATA_ATTRIBUTES = _public_attributes(
+    str, bytes, dict, list, set, frozenset, tuple, int, float, bool
+) - {"format_map"}
+
+
+def _safe_template(node) -> bool:
+    """Whether node is a str literal whose replacement fields, nested ones included, are only
+    automatic, positional or keyword names (no ``.attr`` and no ``[item]`` lookups)."""
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return False
+
+    def fields_ok(template: str) -> bool:
+        try:
+            parsed = list(string.Formatter().parse(template))
+        except ValueError:
+            return False
+        for _literal, field, spec, _conversion in parsed:
+            if field is not None and ("." in field or "[" in field):
+                return False
+            if spec and not fields_ok(spec):
+                return False
+        return True
+
+    return fields_ok(node.value)
+
+
 def predicate_api():
     """A module object named ``common`` that holds exactly the ``PREDICATE_API`` names of this
     module. It is what ``import common as c`` yields inside a loaded predicate."""
@@ -768,6 +809,18 @@ def check_predicate_source(source: str) -> list:
             problems.append(f"line {node.lineno}: global state")
         elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             problems.append(f"line {node.lineno}: dunder attribute {node.attr}")
+        elif isinstance(node, ast.Attribute) and id(node.value) not in api_values:
+            if node.attr not in DATA_ATTRIBUTES:
+                problems.append(f"line {node.lineno}: attribute {node.attr} is not a data method")
+            elif node.attr == "format" and not _safe_template(node.value):
+                problems.append(
+                    f"line {node.lineno}: format on anything but a literal template without "
+                    "attribute or item fields"
+                )
+        elif isinstance(node, ast.MatchClass):
+            for attr in node.kwd_attrs:
+                if attr not in DATA_ATTRIBUTES:
+                    problems.append(f"line {node.lineno}: class pattern reads attribute {attr}")
     return problems
 
 

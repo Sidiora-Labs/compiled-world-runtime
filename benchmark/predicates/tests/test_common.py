@@ -112,6 +112,55 @@ class PurityAudit(unittest.TestCase):
         self.assertTrue(any("c.Path" in p for p in problems), problems)
         self.assertTrue(self.audit("    return c.json is None\n"))
 
+    def test_frame_introspection_is_refused(self):
+        body = (
+            "    holder = []\n"
+            "    def walk():\n"
+            "        yield holder[0].gi_frame.f_back.f_back.f_globals['Path']('/etc/hostname')\n"
+            "    holder.append(walk())\n"
+            "    return len(next(holder[0]).read_text()) > 0\n"
+        )
+        problems = self.audit(body)
+        for attr in ("gi_frame", "f_back", "f_globals", "read_text"):
+            self.assertTrue(any(f"attribute {attr} " in p for p in problems), (attr, problems))
+        for attr in ("tb_frame", "f_locals", "gi_code", "cr_frame", "co_consts", "f_builtins"):
+            self.assertTrue(self.audit(f"    return state.{attr} is None\n"), attr)
+
+    def test_frame_introspection_cannot_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "success.py").write_text(
+                "import common as c\n\n\ndef success(state, ledger):\n"
+                "    holder = []\n"
+                "    def walk():\n"
+                "        yield holder[0].gi_frame.f_back.f_globals\n"
+                "    holder.append(walk())\n"
+                "    return len(next(holder[0])) > 0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                c.load_predicate(tmp)
+
+    def test_format_fields_cannot_look_up_attributes(self):
+        self.assertEqual(self.audit("    return '{}={}'.format(1, 2) == '1=2'\n"), [])
+        self.assertEqual(self.audit("    return '{0:>{1}}'.format('a', 3) != ''\n"), [])
+        self.assertTrue(self.audit("    return '{0.gi_frame}'.format(state) != ''\n"))
+        self.assertTrue(self.audit("    return '{0[k]}'.format(state) != ''\n"))
+        self.assertTrue(self.audit("    return '{0:{1.f_back}}'.format(1, state) != ''\n"))
+        self.assertTrue(self.audit("    t = '{0.x}'\n    return t.format(state) != ''\n"))
+        self.assertTrue(self.audit("    return str.format('{0.x}', state) != ''\n"))
+        self.assertTrue(self.audit("    return '{x.y}'.format_map(state) != ''\n"))
+
+    def test_class_patterns_cannot_read_attributes(self):
+        body = "    match state:\n        case dict(gi_frame=f):\n            return True\n    return False\n"
+        self.assertTrue(any("gi_frame" in p for p in self.audit(body)))
+
+    def test_every_suite_predicate_passes_the_audit(self):
+        tasks = Path(__file__).resolve().parents[2] / "tasks"
+        for source in sorted(tasks.glob("t*/success.py")):
+            self.assertEqual(
+                c.check_predicate_source(source.read_text(encoding="utf-8")), [], source
+            )
+
     def test_aliasing_the_module_is_refused(self):
         self.assertTrue(self.audit("    m = c\n    return m is None\n"))
 

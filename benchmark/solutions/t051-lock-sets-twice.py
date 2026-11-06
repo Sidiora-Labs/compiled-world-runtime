@@ -11,8 +11,8 @@ with `cwr instance turn`. The helpers below run on the driver side only.
 import textwrap
 
 TASK = "t051-lock-sets-twice"
-PRIMITIVES = 40  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
-TURNS = 3
+PRIMITIVES = 41  # measured from kernel replay ledgers by tests/cwr/cases/4_2.py
+TURNS = 4
 
 
 def script(body, **data):
@@ -51,11 +51,17 @@ def turns():
         lock_all("/legal/")
     """
     )
-    yield script("""
-        import fs, kv
-        for path in fs.list(prefix="/memos/"):
-            kv.set(ns="memos", key=path, value=fs.read(path=path))
-    """)
+    for half in [0, 1]:
+        yield script(
+            """
+            import fs, kv
+            paths = fs.list(prefix="/memos/")
+            cut = len(paths) // 2
+            for path in (paths[:cut] if half == 0 else paths[cut:]):
+                kv.set(ns="memos", key=path, value=fs.read(path=path))
+        """,
+            half=half,
+        )
     yield script(
         lock_all
         + """

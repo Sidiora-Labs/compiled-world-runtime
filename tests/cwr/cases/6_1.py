@@ -5,15 +5,17 @@
 
 Case CWR-020 (assertions a4 and a5). Exercises clauses 14.2 and 14.3 against the real release:
 
-1. Builds the `cwr` binary with `cargo build --release --locked` and bundles the tree with the real
-   bundler, `python3 tools/release.py --output <scratch>`, which writes `cwr-<version>.tar.gz`
+1. Builds the `cwr` binary as RELEASE.md packages it (`cargo build --release --locked` with the two
+   `--remap-path-prefix` flags) and bundles the tree with the real bundler, `python3 tools/release.py --output <scratch>`, which writes `cwr-<version>.tar.gz`
    (sources plus `bin/cwr`) and its `.sha256` file.
 2. Executes every command of every `sh` block in README.md, RELEASE.md and the three guides under
    docs/cwr, exactly as written, in one bash shell per document. README.md runs in the directory that
    holds the bundle (it verifies, unpacks and installs it); the others run in the unpacked bundle with
    only the installed `cwr` on PATH and a private HOME. RELEASE.md packages the CLI and SDK from the
    bundle's own sources, runs `cwr release pin --write` (which must leave benchmark/release.kvx
-   byte-identical: the pins reproduce) and `cwr release check` (which must exit 0).
+   byte-identical: the pins reproduce) and `cwr release check` (which must exit 0). The installed
+   binary must equal the pinned CLI artifact, and `cwr build`, `cwr instance create`, `turn`,
+   `upgrade` and `replay` must each appear in a documented command that exits 0.
 3. Checks every relative link of the documentation set and the status markers against the evidence
    registry. The shape is fixed: every top-level document and guide carries exactly one marker line,
    the first prose line under its title, naming its qualification cases; the experiments guide also
@@ -69,7 +71,7 @@ GUIDES = ["docs/cwr/world-source.md", "docs/cwr/kernel.md", "docs/cwr/experiment
 # their qualification cases.
 MARKED = ["README.md", "RELEASE.md", "docs/cwr/README.md", *GUIDES]
 # The one marker allowed below a title: the qualification section of the experiments guide carries
-# the Verified marker of the evidence registry case.
+# the marker of the evidence registry case, Verified only while the checker accepts its record.
 SECTION_MARKERS = {"docs/cwr/experiments.md": ["CWR-019"]}
 # Source areas the documentation must describe with links (clause 14.2).
 AREAS = {
@@ -77,6 +79,15 @@ AREAS = {
     "kernel": "crates/cwr-kernel/",
     "model surface": "crates/cwr-kernel/src/surface/",
     "harness": "benchmark/harness/",
+}
+# The lifecycle task 6.1 exercises from the packaged artifacts (do_3); each verb must appear in a
+# documented command that exits 0.
+LIFECYCLE = {
+    "cwr build": re.compile(r"(^|[\s(;|&])cwr build\b"),
+    "cwr instance create": re.compile(r"\bcwr instance create\b"),
+    "cwr instance turn": re.compile(r"\bcwr instance turn\b"),
+    "cwr instance upgrade": re.compile(r"\bcwr instance upgrade\b"),
+    "cwr instance replay": re.compile(r"\bcwr instance replay\b"),
 }
 PER_DOC_TIMEOUT = 3600
 FENCE = re.compile(r"^```(\S*)\s*$")
@@ -335,13 +346,11 @@ def check_marker_shape(doc: str, text: str, problems: list[str]) -> list[tuple[i
     elif top is not None:
         problems.append(f"{doc}:{top[0]} carries a status marker but is not a marked document")
     extra = [(n, line) for n, line in markers if top is None or n != top[0]]
-    sections = [
-        (n, line) for n, line in extra if line.startswith("> **Verified") and CASE_ID.findall(line)
-    ]
+    sections = [(n, line) for n, line in extra if CASE_ID.findall(line)]
     if sorted({c for _, line in sections for c in CASE_ID.findall(line)}) != sorted(allowed):
         problems.append(
-            f"{doc} section markers {[n for n, _ in sections]} must be exactly the Verified "
-            f"markers of {allowed or 'no case'}"
+            f"{doc} section markers {[n for n, _ in sections]} must cover exactly "
+            f"{allowed or 'no case'}"
         )
     for number, line in extra:
         if (number, line) not in sections:
@@ -351,6 +360,20 @@ def check_marker_shape(doc: str, text: str, problems: list[str]) -> list[tuple[i
 
 def check_markers(results: Results) -> None:
     cases = registry_cases()
+    verdicts: dict[str, bool] = {}
+
+    def accepted(case: str) -> bool:
+        """Registry PASS that the independent checker still accepts (not stale, not tampered)."""
+        if case not in verdicts:
+            ok = cases.get(case, {}).get("status") == "PASS"
+            if ok:
+                code, _, _ = run(
+                    [sys.executable, "-I", "tests/cwr/check_evidence.py", "--status", case], REPO
+                )
+                ok = code == 0
+            verdicts[case] = ok
+        return verdicts[case]
+
     problems, counts, areas = [], {"Verified": 0, "Implemented": 0, "Proposed": 0}, set()
     for doc in DOC_SET:
         text = (REPO / doc).read_text(encoding="utf-8")
@@ -396,7 +419,7 @@ def check_markers(results: Results) -> None:
                 sources = [p for _, p in links if p.exists() and p.is_file()]
                 if not sources:
                     problems.append(f"{where} Implemented without a link to existing source")
-                if named and all(cases.get(c, {}).get("status") == "PASS" for c in named):
+                if named and all(accepted(c) for c in named):
                     problems.append(
                         f"{where} says not qualified but {', '.join(named)} hold PASS: mark Verified"
                     )
@@ -579,6 +602,28 @@ def check_release(results: Results, cwr: Path, bundle: Path, scratch: Path, env:
     return report["pins"]
 
 
+def check_lifecycle(results: Results, ran: list[dict]) -> None:
+    """Each lifecycle verb of task 6.1 ran from the installed, packaged cwr and exited 0."""
+    seen: dict[str, list[str]] = {verb: [] for verb in LIFECYCLE}
+    failed: dict[str, list[str]] = {verb: [] for verb in LIFECYCLE}
+    for result in ran:
+        for verb, pattern in LIFECYCLE.items():
+            if pattern.search(result["command"]):
+                where = f"{result['doc']}:{result['line']}"
+                (seen if result["exit"] == 0 else failed)[verb].append(where)
+    missing = [verb for verb in LIFECYCLE if not seen[verb]]
+    broken = [f"{verb} at {', '.join(failed[verb][:3])}" for verb in LIFECYCLE if failed[verb]]
+    results.check(
+        "14.2",
+        not missing and not broken,
+        "packaged cwr exercised the lifecycle with exit 0: "
+        + "; ".join(f"{verb} ({len(seen[verb])}x, first {seen[verb][0]})" for verb in LIFECYCLE)
+        if not missing and not broken
+        else f"lifecycle verbs never run with exit 0: {missing or 'none'}; failed: {broken or 'none'}",
+        "a4",
+    )
+
+
 def write_attempt(pins: list) -> None:
     out = os.environ.get("CWR_EVIDENCE_DIR")
     if not out:
@@ -631,8 +676,17 @@ def drive(results: Results, target: Path, scratch: Path) -> int:
 
     base_env = {k: v for k, v in os.environ.items() if k not in {"CWR_HOME", "PYTHONPATH"}}
     base_env["CARGO_TARGET_DIR"] = str(target)
+    # The release CLI is built as RELEASE.md packages it: locked dependencies and the two
+    # --remap-path-prefix flags, so the bundle's bin/cwr is the binary artifact.cli.sha256 pins.
+    build_env = dict(base_env)
+    cargo_home = os.environ.get("CARGO_HOME") or str(
+        Path(os.environ.get("HOME", "/root")) / ".cargo"
+    )
+    build_env["RUSTFLAGS"] = (
+        f"--remap-path-prefix={cargo_home}=/cargo --remap-path-prefix={REPO}=/cwr"
+    )
     code, out, err = run(
-        ["cargo", "build", "--release", "--locked", "-p", "cwr-cli"], REPO, base_env, 3600
+        ["cargo", "build", "--release", "--locked", "-p", "cwr-cli"], REPO, build_env, 3600
     )
     if code != 0:
         results.check("14.2", False, f"cargo build --release --locked failed: {tail(err)}")
@@ -722,6 +776,7 @@ def drive(results: Results, target: Path, scratch: Path) -> int:
                 else "cwr release pin --write changed benchmark/release.kvx in the bundle: "
                 "the recorded pins do not reproduce",
             )
+    check_lifecycle(results, all_results)
     out_dir = os.environ.get("CWR_EVIDENCE_DIR")
     if out_dir:
         for log in logs.iterdir():

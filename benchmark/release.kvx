@@ -16,7 +16,7 @@ schema_version = 2
 status = "pinned; no release claim until closure and owner acceptance (task 6.2)"
 release = "0.1.0"
 date = "2026-11-06"
-spec_sha256 = "sha256:04b4ec190dc619ae28985167acb4b43312655bdada266ca3cdc6c896507a45b9"
+spec_sha256 = "sha256:68382b29c9e41fd70d6b529cdd659b6f3f10862fe92688413a951fe01670d61c"
 owner = "release"
 tasks = ["6.1", "6.2"]
 
@@ -29,25 +29,25 @@ diagnostic = "CWR-R016"
 [pin.compiler]
 crate = "cwr-compiler"
 path = "crates/cwr-compiler"
-revision = "sha256:d03c6a4a336d3e86e6755bd305c57a4d20b9667bb9d31e725447924f71079388"
+revision = "sha256:cc98fa05e90f34a2f46939073f7dee23da252256d02b95658dfacf6303476a97"
 diagnostic = "CWR-R001"
 
 [pin.kernel]
 crate = "cwr-kernel"
 path = "crates/cwr-kernel"
-revision = "sha256:5212aa75c27189261d241d28b94b7c065775a8d21af6336140d1ea63fc6364c6"
+revision = "sha256:9ce483d4de5ac0c23016b116662df86ebfad13d5606730749d5dafcf914ede89"
 diagnostic = "CWR-R002"
 
 [pin.sdk]
 package = "cwr-sdk"
 path = "sdk/python"
-revision = "sha256:61c77856244576e52377e337b968670761100fd833b7dbb2d77d2f37bd7a72c6"
+revision = "sha256:14a642b4d5d25a4e50c8d499d568e4c703c6ed5f6443f40e54d7d48eed1725ef"
 diagnostic = "CWR-R003"
 
 [pin.cli]
 crate = "cwr-cli"
 path = "crates/cwr-cli"
-revision = "sha256:6e8ccc0e625a12fbd333b1bba153fe947d43966770db0c68b0b79569f8a089f3"
+revision = "sha256:52e8258ff7cc8a7a22329a4107a11bff29878e9dfb1180b36962e1718302cc93"
 diagnostic = "CWR-R004"
 
 # Every crate dependency is pinned by Cargo.lock; packaging builds with cargo --locked.
@@ -115,31 +115,31 @@ diagnostic = "CWR-R010"
 path = "benchmark/cassettes/suite"
 sets = "benchmark/cassettes/refworld.kvx"
 frozen_in = "benchmark/suite.kvx"
-digest = "sha256:1fd2260cddbcf1a545e500893472cc3d9bcb4c1d483a5b6218d086d59957741c"
+digest = "sha256:c4d99f432d3f4fe76a04e5b3d8fc3d2db0d50785d3acfdaaaa9d2013234418e9"
 diagnostic = "CWR-R011"
 
 [suite]
 path = "benchmark/tasks"
 frozen_in = "benchmark/suite.kvx"
 tasks = 60
-digest = "sha256:7c4f31a3d56a7218148b2212d97b9cdca450cf33c09653993b9053367ab244eb"
+digest = "sha256:21b81c446b254856196c794bfd9ae5c63fa874c9670f0cbfc0a5bf58e8cc5233"
 diagnostic = "CWR-R012"
 
 # Packaged artifacts (RELEASE.md, "Package"): path relative to the repository root and checksum.
 [artifact.cli]
 path = "artifacts/cwr-0.1.0-x86_64-linux-gnu"
-sha256 = "sha256:5c8bba733e8d325b2920c4e4315df57d6a8d2c13b383c64571c99f06d2e6f799"
+sha256 = "sha256:81e5314d5d51070b93c04b24e239772009b54a1f0fdb6d5e0626286b68a81280"
 diagnostic = "CWR-R013"
 
 [artifact.sdk]
 path = "artifacts/cwr_sdk-0.1.0-py3-none-any.whl"
-sha256 = "sha256:e636074c43fd9b619a6dcb4836018f8a235d643dc3ef4dff15b5d725383044e2"
+sha256 = "sha256:ed05f09001fded54d29bd5a24567e1e638db7601cd49e4e5cbc0a1715de95db7"
 diagnostic = "CWR-R014"
 
 # Campaign results: tree digest of each hypothesis result directory.
 [results]
 paths = {"h1": "benchmark/results/h1", "h2": "benchmark/results/h2", "h3": "benchmark/results/h3", "h4": "benchmark/results/h4"}
-digests = {"h1": "sha256:3b3ce8ef2f299c1846ff17637f3ab6c7b771486e114138c2b438f3c54059d68f", "h2": "sha256:352281ba4850f091d5c17c1a9b10b74a799c69cd4f2288ef2bbf7b5e9c0292fd", "h3": "sha256:25c2fe44eeae42c9db2525cd1ba74fb1c4bfa1c40e7aa016c7f4b19c5abde42c", "h4": "sha256:64048808e774f24d9669bce453bdaecdde67daa345eacfd5c1e80db845bd6580"}
+digests = {"h1": "sha256:3a5be7806bcd3197c3b48b953c0d110ed69a03284d1bafff60f2fa0214d7175e", "h2": "sha256:1764c18a431734ad85da9228f8a0c184b2c0e3331adf0002b403694800ca1a9f", "h3": "sha256:cb84f781ce6c5135e83eaf5fbd7a3887030d36e4966bfe4a2ba1ffa93774b82a", "h4": "sha256:711ccc85e9e55873b482b311ce2f5c1c45c8871178950355b9c958d0fb99931d"}
 diagnostic = "CWR-R018"
 
 # Evidence the release claim depends on. Closure and owner acceptance are produced by task 6.2 and
@@ -147,7 +147,7 @@ diagnostic = "CWR-R018"
 [evidence]
 registry = "tests/cwr/registry.kvx"
 preregistration = "benchmark/preregistration.kvx"
-preregistration_sha256 = "sha256:2925767cbb2cc4d07ab14310db3311ab3cb126e4e0dd98c59ce37af32ec62f08"
+preregistration_sha256 = "sha256:632679a7152173fda0dfb44f6669b36a2a083ca5704bc9002ae813104d31d6e8"
 reports = ["research/h1-stability.md", "research/h2-direct-action.md", "research/h3-long-context.md", "research/h4-controlled-change.md"]
 closure = null
 owner_acceptance = null
